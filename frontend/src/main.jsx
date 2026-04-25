@@ -46,11 +46,11 @@ const modulePageKeys = {
 };
 
 const modules = {
-  dashboard: { label: 'Dashboard', icon: Activity },
-  businessAi: { label: 'Business AI', icon: Activity },
-  reports: { label: 'Reports', icon: Download },
+  dashboard: { label: 'Command Center', icon: Activity },
+  businessAi: { label: 'Intelligence Core', icon: Activity },
+  reports: { label: 'Data Intelligence', icon: Download },
   management: { label: 'Management Portal', icon: LayoutDashboard },
-  billing: { label: 'Billing', icon: ReceiptText },
+  billing: { label: 'Money Engine', icon: ReceiptText },
   clients: { label: 'Clients', icon: Users },
   userAccess: { label: 'User Access', icon: Users },
   vos: {
@@ -93,7 +93,7 @@ const modules = {
     ],
   },
   rdps: {
-    label: 'RDP / Media Servers',
+    label: 'Media Nodes',
     icon: MonitorCog,
     endpoint: '/rdps',
     titleField: 'name',
@@ -109,7 +109,7 @@ const modules = {
     ],
   },
   gateways: {
-    label: 'Routing Gateways',
+    label: 'Traffic Control',
     icon: Router,
     endpoint: '/routing-gateways',
     titleField: 'gateway_name',
@@ -155,12 +155,37 @@ async function request(path, options = {}) {
 }
 
 function StatusPill({ value }) {
-  return <span className={`status ${String(value || 'Unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>{value || 'Unknown'}</span>;
+  const raw = String(value || 'Unknown');
+  const normalized = raw.toLowerCase().trim();
+  const statusText = {
+    active: '🟢 ONLINE',
+    pending: '🟡 WARMING',
+    inactive: '🔴 OFFLINE',
+    'high usage': '⚡ HIGH LOAD',
+    'high load': '⚡ HIGH LOAD',
+  }[normalized] || raw;
+  const className = normalized === 'high usage' ? 'high-load' : normalized.replace(/[^a-z0-9]+/g, '-');
+  return <span className={`status ${className}`}>{statusText}</span>;
 }
 
 function canDo(user, pageKey, action = 'can_view') {
   if (user?.role === 'admin') return true;
   return Boolean(user?.permissions?.[pageKey]?.[action]);
+}
+
+function cyberAlertMessage(alert) {
+  const message = String(alert?.message || alert || '');
+  if (/rdp|media/i.test(message)) return `🚨 Media node overloaded — ${message}`;
+  if (/payment|outstanding|billing/i.test(message)) return `💸 Payment pending – follow up before it disappears`;
+  return message;
+}
+
+function cyberInsightText(item, fallbackClient = 'ROLEX') {
+  const text = String(item || '');
+  if (/outstanding|cashflow|payment/i.test(text)) return `🧠 Suggestion: improve cashflow from ${fallbackClient}`;
+  if (/revenue|billing|growth/i.test(text)) return `⚡ Growth Signal: ${text}`;
+  if (/rdp|gateway|risk|drop/i.test(text)) return `🚨 Risk Signal: ${text}`;
+  return `🧠 ${text}`;
 }
 
 function ledgerQuery(filters = {}, defaultLimit = true) {
@@ -336,7 +361,7 @@ function App() {
       <main>
         <header className="topbar">
           <div>
-            <span className="eyebrow">Global VoIP Operations</span>
+            <span className="eyebrow">NOC360 – Global VoIP Command Grid</span>
             <h1><ActiveIcon size={28} /> {activeModules[activeKey]?.label || 'No Access'}</h1>
           </div>
           <div className="hudGrid">
@@ -613,6 +638,12 @@ function BusinessAIPage({ data }) {
   useEffect(() => { load(); }, []);
   const cards = summary?.cards || {};
   const chartRows = summary?.charts?.[selectedChart] || [];
+  const highestOutstanding = cards.highest_outstanding_client || 'ROLEX';
+  const insightGroups = [
+    ['Growth Signal', insights.filter((item) => /billing|revenue|growth|top/i.test(item)).slice(0, 3)],
+    ['Risk Signal', insights.filter((item) => /drop|risk|rdp|gateway|outstanding/i.test(item)).slice(0, 3)],
+    ['Cashflow Signal', insights.filter((item) => /payment|cashflow|outstanding/i.test(item)).slice(0, 3)],
+  ].map(([label, rows]) => [label, rows.length ? rows : [`Suggestion: improve cashflow from ${highestOutstanding}`]]);
   return (
     <section className="businessAi">
       <div className="reportFilters">
@@ -649,7 +680,12 @@ function BusinessAIPage({ data }) {
         </div>
         <div className="panel insightPanel">
           <h2>Business AI Insights</h2>
-          {insights.map((item, index) => <div className="insightBox" key={index}><AlertTriangle size={17} />{item}</div>)}
+          {insightGroups.map(([label, rows]) => (
+            <div className="signalPanel" key={label}>
+              <h3>{label}</h3>
+              {rows.map((item, index) => <div className="insightBox" key={`${label}-${index}`}><AlertTriangle size={17} />{cyberInsightText(item, highestOutstanding)}</div>)}
+            </div>
+          ))}
         </div>
       </div>
     </section>
@@ -913,7 +949,7 @@ function BillingCards({ summary }) {
   return (
     <div className="cards billingCards">
       {cards.map(([label, value, inrValue]) => (
-        <div className={`metric ${label.includes('Outstanding') && Number(value) > 0 ? 'metricAlert' : ''}`} key={label}><span>{label}</span><strong>{dualMoney(value, inrValue)}</strong></div>
+        <div className={`metric ${label.includes('Outstanding') && Number(value) > 0 ? 'metricAlert' : ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`} key={label}><span>{label}</span><strong>{dualMoney(value, inrValue)}</strong></div>
       ))}
     </div>
   );
@@ -1125,6 +1161,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   return (
     <section>
       <BillingCards summary={billing.ledgerSummary || {}} />
+      {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">💸 Payment pending – follow up before it disappears</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
       {false && (
         <form className="inlineForm billingEntryForm" onSubmit={save}>
@@ -1150,8 +1187,8 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       )}
       {canCreate && !editingLedger && ledgerEntryForm}
       {editingLedger && (
-        <div className="modalBackdrop">
-          <div className="modal ledgerModal">
+        <div className="modalBackdrop modal-overlay">
+          <div className="modal modal-box ledgerModal">
             <div className="modalHeader">
               <h2>Edit Ledger Entry</h2>
               <button type="button" className="iconButton" onClick={cancelEdit} title="Close"><X size={18} /></button>
@@ -1278,7 +1315,7 @@ function ClientsPage({ clients, reload, user }) {
       <div className="tableWrap"><table><thead><tr><th>Client</th><th>Status</th><th>Username</th><th>Outstanding USD</th><th>Outstanding INR</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead><tbody>{clients.map((client) => (
         <tr key={client.id}><td><button className="linkButton" onClick={() => openDetail(client.id)}>{client.name}</button></td><td><StatusPill value={client.status} /></td><td>{client.username || '-'}</td><td className={client.outstanding_usd > 0 ? 'outstandingText' : ''}>{usd(client.outstanding_usd)}</td><td className={client.outstanding_inr > 0 ? 'outstandingText' : ''}>{inr(client.outstanding_inr)}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button onClick={() => setResetClient(client)}>Reset Login Password</button>}{canDelete && <button className="iconButton danger" onClick={() => remove(client.id)}><Trash2 size={16} /></button>}</td>}</tr>
       ))}</tbody></table></div>
-      {resetClient && <div className="modalBackdrop"><div className="modal"><div className="modalHeader"><h2>Reset {resetClient.name}</h2><button className="iconButton" onClick={() => setResetClient(null)}><X size={18} /></button></div><input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /><button className="primary" onClick={resetPassword}>Reset Password</button></div></div>}
+      {resetClient && <div className="modalBackdrop modal-overlay"><div className="modal modal-box"><div className="modalHeader"><h2>Reset {resetClient.name}</h2><button className="iconButton" onClick={() => setResetClient(null)}><X size={18} /></button></div><input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /><button className="primary" onClick={resetPassword}>Reset Password</button></div></div>}
       {detail && <ClientDetailModal detail={detail} onClose={() => setDetail(null)} canExport={canExport} />}
     </section>
   );
@@ -1391,8 +1428,8 @@ function UserAccessPage({ users, clients, reload, user }) {
 
 function ClientDetailModal({ detail, onClose, canExport = true }) {
   return (
-    <div className="modalBackdrop">
-      <div className="modal clientDetailModal">
+    <div className="modalBackdrop modal-overlay">
+      <div className="modal modal-box clientDetailModal">
         <div className="clientHero"><div><span className="eyebrow">Client Command Profile</span><h2>{detail.client.name}</h2><StatusPill value={detail.client.status} /></div><button className="iconButton" onClick={onClose}><X size={18} /></button></div>
         <h2>Billing Summary</h2>
         <div className="cards billingCards">
@@ -1476,7 +1513,7 @@ function Dashboard({ dashboard, data, setActive }) {
         <h2><AlertTriangle size={19} /> Alerts</h2>
         <div className="alertList">
           {(dashboard?.alerts || []).length === 0 && <p className="muted">No duplicate or missing-IP alerts.</p>}
-          {(dashboard?.alerts || []).map((alert, index) => <div className={`alert ${alert.type}`} key={`${alert.message}-${index}`}><AlertTriangle size={17} />{alert.message}</div>)}
+          {(dashboard?.alerts || []).map((alert, index) => <div className={`alert ${alert.type}`} key={`${alert.message}-${index}`}><AlertTriangle size={17} />{cyberAlertMessage(alert)}</div>)}
         </div>
       </div>
     </section>
@@ -1488,7 +1525,7 @@ function BriefTable({ title, rows, columns, moneyKey, moneyInrKey }) {
     <div className="managementSection">
       <h2>{title}</h2>
       <div className="tableWrap"><table><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => (
-        <tr key={index}>{columns.map(([key]) => <td key={key} className={moneyKey === key && row[key] > 0 ? 'outstandingText' : ''}>{moneyKey === key ? (moneyInrKey ? dualMoney(row[key], row[moneyInrKey]) : money(row[key])) : (key === 'status' ? <StatusPill value={row[key]} /> : row[key] || '-')}</td>)}</tr>
+        <tr key={index}>{columns.map(([key]) => <td key={key} className={moneyKey === key && row[key] > 0 ? 'outstandingText' : ''}>{moneyKey === key ? (moneyInrKey ? dualMoney(row[key], row[moneyInrKey]) : money(row[key])) : (key.includes('status') ? <StatusPill value={row[key]} /> : row[key] || '-')}</td>)}</tr>
       ))}</tbody></table></div>
     </div>
   );
@@ -1626,8 +1663,8 @@ function Editor({ config, record, rdps, rtngs = [], clients = [], saving, onClos
   };
 
   return (
-    <div className="modalBackdrop">
-      <form className="modal" onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
+    <div className="modalBackdrop modal-overlay">
+      <form className="modal modal-box" onSubmit={(event) => { event.preventDefault(); onSave(form); }}>
         <div className="modalHeader">
           <h2>{record.id ? 'Edit' : 'Add'} {config.label}</h2>
           <button type="button" className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>

@@ -2055,3 +2055,348 @@ tbody tr:hover {
     opacity: 0.32;
   }
 }
+
+/* Cyber Command Mode final layer */
+:root {
+  --bg-0: #0a0f1c;
+  --bg-1: #111827;
+  --glass: rgba(10, 15, 28, 0.68);
+  --glass-strong: rgba(10, 15, 28, 0.9);
+  --line: rgba(0, 240, 255, 0.22);
+  --cyan: #00f0ff;
+  --violet: #8b5cf6;
+  --green: #00ff9c;
+  --amber: #ffb800;
+  --red: #ff3b3b;
+  --text: #f6fbff;
+  --muted: #9db2d1;
+}
+
+body {
+  background:
+    radial-gradient(circle at 12% 0%, rgba(0, 240, 255, 0.14), transparent 30%),
+    radial-gradient(circle at 88% 8%, rgba(139, 92, 246, 0.17), transparent 28%),
+    radial-gradient(circle at 54% 100%, rgba(0, 255, 156, 0.08), transparent 35%),
+    linear-gradient(135deg, #0a0f1c 0%, #060b16 52%, #0a0f1c 100%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.024) 0 1px, transparent 1px 5px);
+  opacity: 0.18;
+  mix-blend-mode: screen;
+}
+
+.sidebar {
+  background:
+    linear-gradient(180deg, rgba(10, 15, 28, 0.96), rgba(5, 9, 18, 0.9)),
+    radial-gradient(circle at top, rgba(0, 240, 255, 0.12), transparent 38%);
+  border-right: 1px solid rgba(0, 240, 255, 0.34);
+  box-shadow: 18px 0 80px rgba(0, 240, 255, 0.06), inset -1px 0 0 rgba(139, 92, 246, 0.18);
+}
+
+.brand strong {
+  color: #ffffff;
+  text-shadow: 0 0 20px rgba(0, 240, 255, 0.34);
+}
+
+.brand span,
+.eyebrow {
+  color: #a8f8ff;
+}
+
+nav button {
+  border: 1px solid rgba(0, 240, 255, 0.12);
+}
+
+nav button:hover,
+nav button.active {
+  color: #ffffff;
+  background: linear-gradient(90deg, rgba(0, 240, 255, 0.14), rgba(139, 92, 246, 0.16));
+  border-color: rgba(0, 240, 255, 0.62);
+  box-shadow: inset 3px 0 0 #00f0ff, 0 0 24px rgba(0, 240, 255, 0.16);
+}
+
+.topbar {
+  border-color: rgba(0, 240, 255, 0.3);
+  background:
+    linear-gradient(100deg, rgba(10, 15, 28, 0.88), rgba(15, 23, 42, 0.66)),
+    radial-gradient(circle at 10% 0%, rgba(0, 240, 255, 0.13), transparent 38%);
+  box-shadow: 0 0 44px rgba(0, 240, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.topbar h1 {
+  color: #ffffff;
+  text-shadow: 0 0 28px rgba(0, 240, 255, 0.24);
+}
+
+.panel,
+.tableWrap,
+.metric,
+.modal,
+.loginBox,
+.search,
+input,
+select,
+textarea {
+  background:
+    linear-gradient(145deg, rgba(10, 15, 28, 0.72), rgba(5, 9, 18, 0.62)),
+    radial-gradient(circle at top left, rgba(0, 240, 255, 0.08), transparent 34%);
+  border-color: rgba(0, 240, 255, 0.2);
+  box-shadow:
+    0 20px 80px rgba(0, 0, 0, 0.36),
+    0 0 30px rgba(0, 240, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.panel:hover,
+.tableWrap:hover,
+.metric:hover {
+  border-color: rgba(0, 240, 255, 0.5);
+  box-shadow:
+    0 26px 90px rgba(0, 0, 0, 0.38),
+    0 0 34px rgba(0, 240, 255, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+button {
+  background: linear-gradient(180deg, rgba(10, 26, 44, 0.92), rgba(5, 10, 20, 0.86));
+  border-color: rgba(0, 240, 255, 0.28);
+}
+
+button:hover {
+  border-color: rgba(0, 240, 255, 0.78);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.18);
+}
+
+.primary {
+  color: #06111e;
+  background: linear-gradient(135deg, #00ff9c, #00f0ff);
+  border-color: rgba(0, 240, 255, 0.9);
+  box-shadow: 0 0 28px rgba(0, 240, 255, 0.2), 0 0 18px rgba(0, 255, 156, 0.14);
+}
+
+.metric.revenue {
+  border-color: rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 34px rgba(0, 240, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.metric.payment {
+  border-color: rgba(0, 255, 156, 0.5);
+  box-shadow: 0 0 34px rgba(0, 255, 156, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.metricAlert,
+.metric.outstanding,
+.billingAlert {
+  border-color: rgba(255, 59, 59, 0.72);
+  box-shadow: 0 0 36px rgba(255, 59, 59, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.billingAlert {
+  margin-bottom: 14px;
+  color: #ffd7d7;
+  background: rgba(255, 59, 59, 0.12);
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: rgba(10, 15, 28, 0.98);
+  color: #a8f8ff;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.26);
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+tbody tr:hover {
+  background: rgba(0, 240, 255, 0.08);
+  box-shadow: inset 3px 0 0 #00f0ff, 0 0 24px rgba(0, 240, 255, 0.08);
+}
+
+.billingCards tbody tr:hover,
+.debitRow:hover,
+.creditRow:hover {
+  transform: translateX(2px);
+}
+
+.status {
+  border-color: rgba(0, 240, 255, 0.3);
+  background: rgba(10, 15, 28, 0.7);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.08);
+}
+
+.status.active {
+  color: #d8ffef;
+  border-color: rgba(0, 255, 156, 0.72);
+  background: rgba(0, 255, 156, 0.14);
+  box-shadow: 0 0 18px rgba(0, 255, 156, 0.18);
+}
+
+.status.pending {
+  color: #fff0bd;
+  border-color: rgba(255, 184, 0, 0.76);
+  background: rgba(255, 184, 0, 0.14);
+  box-shadow: 0 0 18px rgba(255, 184, 0, 0.18);
+}
+
+.status.inactive {
+  color: #ffd0d0;
+  border-color: rgba(255, 59, 59, 0.7);
+  background: rgba(255, 59, 59, 0.12);
+  box-shadow: 0 0 18px rgba(255, 59, 59, 0.16);
+}
+
+.status.high-load,
+.status.used-in-routing,
+.status.conflict {
+  color: #fff0bd;
+  border-color: rgba(255, 184, 0, 0.8);
+  background: rgba(255, 184, 0, 0.14);
+  box-shadow: 0 0 20px rgba(255, 184, 0, 0.2);
+}
+
+.outstandingText {
+  color: #ffb7b7;
+  text-shadow: 0 0 14px rgba(255, 59, 59, 0.32);
+}
+
+.creditText,
+.creditRow td {
+  color: #baffdf;
+  text-shadow: 0 0 12px rgba(0, 255, 156, 0.16);
+}
+
+.debitRow td {
+  color: #ffe1a1;
+}
+
+.aiHero {
+  border-color: rgba(0, 240, 255, 0.36);
+  background:
+    radial-gradient(circle at 10% 0%, rgba(0, 240, 255, 0.2), transparent 36%),
+    radial-gradient(circle at 96% 18%, rgba(139, 92, 246, 0.2), transparent 34%),
+    linear-gradient(135deg, rgba(10, 15, 28, 0.84), rgba(4, 8, 18, 0.72));
+}
+
+.signalStrip span,
+.signalPanel h3 {
+  border-color: rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.08);
+  color: #d9fbff;
+}
+
+.signalPanel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  margin-top: 12px;
+  border: 1px solid rgba(0, 240, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(10, 15, 28, 0.42);
+}
+
+.signalPanel h3 {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.insightBox {
+  border-color: rgba(139, 92, 246, 0.28);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.12), rgba(0, 240, 255, 0.06));
+}
+
+.chartBar i {
+  background: linear-gradient(90deg, #00f0ff, #8b5cf6, #00ff9c);
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.2);
+}
+
+/* Zoom-safe modal system */
+.modalBackdrop,
+.modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  padding: clamp(12px, 2vw, 24px) !important;
+  margin: 0 !important;
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+  z-index: 9999 !important;
+  overflow: hidden !important;
+}
+
+.modal,
+.modal-box {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(95vw, 900px) !important;
+  max-width: 900px !important;
+  max-height: 90vh !important;
+  height: auto !important;
+  margin: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border-radius: 16px !important;
+  padding: 20px !important;
+  animation: fadeInScale 0.2s ease both !important;
+}
+
+.clientDetailModal,
+.ledgerModal {
+  width: min(95vw, 900px) !important;
+  max-width: 900px !important;
+}
+
+.ledgerModal .billingEntryForm {
+  margin-top: 0 !important;
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -60%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (max-width: 980px) {
+  .modal,
+  .modal-box {
+    width: 90vw !important;
+    max-height: 90vh !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .modalBackdrop,
+  .modal-overlay {
+    padding: 10px !important;
+  }
+
+  .modal,
+  .modal-box {
+    width: 95vw !important;
+    padding: 16px !important;
+  }
+}
