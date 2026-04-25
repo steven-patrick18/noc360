@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000').replace(/\/api\/?$/, '').replace(/\/$/, '');
+const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment'];
@@ -224,6 +224,8 @@ function App() {
   const [settings, setSettings] = useState({ usd_to_inr_rate: 83 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [toast, setToast] = useState('');
 
   const refreshBillingData = async (ledgerFilters = {}) => {
     if (!auth) return;
@@ -287,19 +289,49 @@ function App() {
     loadAll();
   }, [auth]);
 
+  useEffect(() => {
+    if (!auth?.token) return undefined;
+    let mounted = true;
+    request('/auth/me')
+      .then((user) => {
+        if (!mounted) return;
+        localStorage.setItem('noc360_user', JSON.stringify(user));
+        setAuth((current) => (current?.token === auth.token ? { ...current, user } : current));
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [auth?.token]);
+
+  const showToast = (message) => {
+    setToast(message);
+    window.setTimeout(() => setToast(''), 2600);
+  };
+
+  const updateStoredUser = (user) => {
+    localStorage.setItem('noc360_user', JSON.stringify(user));
+    setAuth((current) => (current ? { ...current, user } : current));
+    setProfileOpen(false);
+    showToast('Profile updated');
+  };
+
   const login = async (username, password) => {
     const result = await request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
     localStorage.setItem('noc360_token', result.access_token);
     localStorage.setItem('noc360_user', JSON.stringify(result.user));
     setAuth({ token: result.access_token, user: result.user });
     setActive(result.user.role === 'customer' ? 'myDashboard' : 'dashboard');
+    if (window.location.pathname === '/login') window.history.replaceState({}, '', '/');
   };
 
   const logout = () => {
     localStorage.removeItem('noc360_token');
     localStorage.removeItem('noc360_user');
     setAuth(null);
+    setProfileOpen(false);
     setActive('dashboard');
+    if (window.location.pathname !== '/login') window.history.pushState({}, '', '/login');
   };
 
   if (!auth) return <LoginScreen onLogin={login} />;
@@ -368,12 +400,13 @@ function App() {
             {shellStats.map(([label, value]) => <div className="hudCell" key={label}><span>{label}</span><strong>{value}</strong></div>)}
           </div>
           <div className="topActions">
-            <span className="rolePill">{auth.user.role}</span>
+            <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
             <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh Data</button>
             <button className="iconButton" onClick={logout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
 
+        {toast && <div className="toastSuccess appToast">{toast}</div>}
         {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
         {loading && <div className="loading">Syncing NOC inventory...</div>}
 
@@ -416,6 +449,7 @@ function App() {
           )}
         </section>
       </main>
+      {profileOpen && <AccountSettingsModal user={auth.user} onClose={() => setProfileOpen(false)} onUpdated={updateStoredUser} onLogout={logout} />}
     </div>
   );
 }
@@ -446,6 +480,95 @@ function LoginScreen({ onLogin }) {
         <label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         <button className="primary">{loading ? 'Signing in...' : 'Login'}</button>
         <p className="muted">Customer samples: im1 / 123, im2 / 123, rolex / 123</p>
+      </form>
+    </div>
+  );
+}
+
+function AccountSettingsModal({ user, onClose, onUpdated, onLogout }) {
+  const [email, setEmail] = useState(user?.email || '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setEmail(user?.email || '');
+  }, [user?.email]);
+
+  const save = async (event) => {
+    event.preventDefault();
+    setError('');
+    if (!currentPassword) {
+      setError('Current password is required.');
+      return;
+    }
+    if (newPassword || confirmPassword) {
+      if (newPassword.length < 6) {
+        setError('New password must be at least 6 characters.');
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setError('New password and confirm password must match.');
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      const updatedUser = await request('/auth/update-profile', {
+        method: 'PUT',
+        body: JSON.stringify({
+          email,
+          current_password: currentPassword,
+          new_password: newPassword || null,
+        }),
+      });
+      onUpdated(updatedUser);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modalBackdrop modal-overlay">
+      <form className="modal modal-box accountModal" onSubmit={save}>
+        <div className="modalHeader accountHero">
+          <div>
+            <span className="eyebrow">Secure operator profile</span>
+            <h2>Account Settings</h2>
+          </div>
+          <button type="button" className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>
+        </div>
+        {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+        <div className="formGrid accountForm">
+          <label>
+            <span>Username</span>
+            <input value={user?.username || ''} readOnly />
+          </label>
+          <label>
+            <span>Email</span>
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="user@example.com" />
+          </label>
+          <label className="wide">
+            <span>Current Password</span>
+            <input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" />
+          </label>
+          <label>
+            <span>New Password</span>
+            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" />
+          </label>
+          <label>
+            <span>Confirm Password</span>
+            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" />
+          </label>
+        </div>
+        <div className="modalActions accountActions">
+          <button type="button" onClick={onLogout}><LogOut size={16} /> Logout</button>
+          <button className="primary" disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
+        </div>
       </form>
     </div>
   );

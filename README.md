@@ -1,8 +1,36 @@
 # NOC360
 
-NOC360 is a FastAPI + React Vite telecom NOC dashboard for VOS portals, dialer clusters, RDP/media servers, and routing gateways.
+NOC360 is a FastAPI + React Vite telecom NOC command dashboard for VOS portals, dialer clusters, RDP/media nodes, routing gateways, client billing, reports, and business intelligence.
 
-## Backend
+## Installation
+
+Quick install on Ubuntu 22.04/24.04:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/steven-patrick18/noc360/main/install.sh) --demo
+```
+
+Open:
+
+```text
+http://SERVER_IP
+```
+
+Default login:
+
+```text
+admin / admin123
+```
+
+Update after pushing new code:
+
+```bash
+bash /opt/noc360/update.sh
+```
+
+Full install guide: [docs/INSTALLATION.md](docs/INSTALLATION.md)
+
+## Local Backend
 
 ```powershell
 cd backend
@@ -12,9 +40,9 @@ python seed.py --reset
 python -m uvicorn main:app --reload
 ```
 
-The API runs locally on `http://localhost:8000`. SQLite is used by default. If `DATABASE_URL` exists, the backend uses it, which makes the same code ready for PostgreSQL on Render.
+The local API runs on `http://127.0.0.1:8000`. SQLite is used by default. If `DATABASE_URL` exists, the backend uses PostgreSQL.
 
-## Frontend
+## Local Frontend
 
 ```powershell
 cd frontend
@@ -22,7 +50,13 @@ npm install
 npm run dev
 ```
 
-The dashboard runs on `http://localhost:5173` and talks to the local backend. Set `VITE_API_URL` if the API is hosted somewhere else.
+The Vite dev server proxies `/api` to `http://127.0.0.1:8000`. For production builds, use:
+
+```bash
+VITE_API_URL=/api npm run build
+```
+
+Do not commit `frontend/.env.local`.
 
 ## Render
 
@@ -35,13 +69,10 @@ uvicorn main:app --host 0.0.0.0 --port $PORT
 ## Features
 
 - VOS Portal Master is the source of truth for RDP/media and RTNG inventory.
-- Management Portal is the main assignment page for cluster accounts, RDP-to-cluster assignment, and RTNG media mapping.
-- Customer Billing Portal with role-based login, ledger billing, customer-only data scoping, and CSV exports.
+- Management Portal controls cluster/client, RDP-to-cluster, and RTNG media mappings.
+- Client billing ledger with USD/INR totals, payments, outstanding, reports, and customer-only access.
+- Business AI billing intelligence dashboard.
+- User Access page with page/action permissions.
+- RDP/media and routing validation with duplicate/missing alerts.
 - Demo seed reset: `cd backend` then `python seed.py --reset`.
 - Seed logins: `admin / admin123`, `noc / noc123`, `viewer / viewer123`, `im1 / 123`, `im2 / 123`, `rolex / 123`.
-- RDP / Media Servers is generated from VOS records whose `portal_type` starts with `RDP`; only assignment fields are edited there.
-- Routing Gateway Manager selects `RTNG*` gateways and `RDP*` media servers from VOS Portal Master and auto-fills IPs.
-- Prevents assigning the same active RDP to multiple active clusters.
-- Auto-fills `assigned_rdp_ip` from the selected VOS RDP portal.
-- Dashboard alerts for duplicate assignments and missing IP values including `#N/A`.
-- Search, status dropdowns, RDP assignment dropdown, CSV export, and seeded telecom sample data.

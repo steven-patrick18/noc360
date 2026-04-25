@@ -8,6 +8,11 @@ import secrets
 from collections import Counter
 from datetime import date, datetime, timedelta
 
+try:
+    import bcrypt
+except ImportError:  # Keep local/dev imports working until requirements are installed.
+    bcrypt = None
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -149,6 +154,12 @@ class RoutingMediaAssignmentIn(BaseModel):
     status: str = "Active"
 
 
+class ProfileUpdateIn(BaseModel):
+    email: str | None = None
+    current_password: str
+    new_password: str | None = None
+
+
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -158,12 +169,18 @@ def b64url_decode(data: str) -> bytes:
 
 
 def hash_password(password: str, salt: str | None = None) -> str:
+    if salt is None and bcrypt is not None:
+        return f"bcrypt${bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()}"
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000)
     return f"pbkdf2_sha256${salt}${digest.hex()}"
 
 
 def verify_password(password: str, stored_hash: str) -> bool:
+    if stored_hash.startswith("bcrypt$"):
+        if bcrypt is None:
+            return False
+        return bcrypt.checkpw(password.encode(), stored_hash.removeprefix("bcrypt$").encode())
     try:
         _, salt, digest = stored_hash.split("$", 2)
     except ValueError:
@@ -503,7 +520,8 @@ def normalize_ledger_currency(db: Session):
 def startup():
     create_database()
     with SessionLocal() as db:
-        if not db.query(Client).first():
+        auto_seed = os.getenv("AUTO_SEED", "true").lower() not in {"0", "false", "no", "off"}
+        if auto_seed and not db.query(Client).first():
             from seed import seed_database
 
             seed_database(clear=False, db=db)
@@ -540,6 +558,25 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
 def me(user: User = Depends(current_user)):
     with SessionLocal() as db:
         return user_out(db, db.get(User, user.id))
+
+
+@app.put("/api/auth/update-profile")
+@app.put("/auth/update-profile")
+def update_profile(payload: ProfileUpdateIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    record = db.get(User, user.id)
+    if not record:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not payload.current_password or not verify_password(payload.current_password, record.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    new_password = (payload.new_password or "").strip()
+    if new_password:
+        if len(new_password) < 6:
+            raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+        record.password_hash = hash_password(new_password)
+    record.email = (payload.email or "").strip() or None
+    db.commit()
+    db.refresh(record)
+    return user_out(db, record)
 
 
 def seed_data(db: Session):

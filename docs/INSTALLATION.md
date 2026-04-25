@@ -1,0 +1,207 @@
+# NOC360 Installation
+
+## Server Requirements
+
+- Ubuntu 22.04 or Ubuntu 24.04
+- Root or sudo access
+- Recommended VPS: 4 GB RAM or higher
+- Open inbound HTTP port 80
+- Optional domain name for SSL
+
+## One-Line Install
+
+Install NOC360 with demo telecom data:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/steven-patrick18/noc360/main/install.sh) --demo
+```
+
+Install without demo data:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/steven-patrick18/noc360/main/install.sh) --no-demo
+```
+
+If you already cloned the repository on the server:
+
+```bash
+bash install.sh --demo
+bash install.sh --no-demo
+```
+
+The installer will:
+
+- Install Node.js 20 LTS
+- Install Python, PostgreSQL, Nginx, Git, and Curl
+- Clone NOC360 to `/opt/noc360`
+- Create a PostgreSQL database
+- Install backend dependencies
+- Build the frontend with `VITE_API_URL=/api`
+- Configure Nginx
+- Create and start the `noc360` systemd service
+- Verify `/health` and `/api/health`
+
+## Open NOC360
+
+After install:
+
+```text
+http://SERVER_IP
+```
+
+Default admin login:
+
+```text
+admin / admin123
+```
+
+Demo customer logins when installed with `--demo`:
+
+```text
+im1 / 123
+im2 / 123
+rolex / 123
+```
+
+## Update After Git Push
+
+```bash
+bash /opt/noc360/update.sh
+```
+
+The updater pulls the latest code, updates backend requirements, rebuilds the frontend with `/api`, restarts services, and verifies `/api/health`.
+
+## Service Commands
+
+Check backend status:
+
+```bash
+systemctl status noc360
+```
+
+Restart backend:
+
+```bash
+systemctl restart noc360
+```
+
+Restart Nginx:
+
+```bash
+systemctl restart nginx
+```
+
+Watch backend logs:
+
+```bash
+journalctl -u noc360 -f
+```
+
+Check Nginx config:
+
+```bash
+nginx -t
+```
+
+## Health Checks
+
+Backend directly:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Through Nginx:
+
+```bash
+curl http://127.0.0.1/api/health
+```
+
+Both should return:
+
+```json
+{"status":"ok"}
+```
+
+## Common Errors
+
+### Nginx shows the default page
+
+The frontend build probably failed or the Nginx site is not enabled.
+
+```bash
+cd /opt/noc360/frontend
+rm -f .env.local
+VITE_API_URL=/api npm run build
+nginx -t
+systemctl restart nginx
+```
+
+### Login request failed
+
+Make sure the frontend was built with `/api`:
+
+```bash
+grep -R "127.0.0.1:800" /opt/noc360/frontend/dist || true
+```
+
+There should be no frontend calls to port `8000`.
+
+Check backend health through Nginx:
+
+```bash
+curl http://127.0.0.1/api/health
+```
+
+### Node version error
+
+NOC360 requires Node.js 20+.
+
+```bash
+node -v
+```
+
+Re-run the installer if Node is older.
+
+### Backend does not start
+
+```bash
+journalctl -u noc360 -n 100 --no-pager
+cat /opt/noc360/backend/.env
+```
+
+Check PostgreSQL:
+
+```bash
+systemctl status postgresql
+```
+
+## Domain and SSL
+
+Point your domain A record to the VPS IP, then update Nginx:
+
+```bash
+nano /etc/nginx/sites-available/noc360
+```
+
+Change:
+
+```nginx
+server_name _;
+```
+
+to:
+
+```nginx
+server_name yourdomain.com;
+```
+
+Install Certbot and enable SSL:
+
+```bash
+apt-get update
+apt-get install -y certbot python3-certbot-nginx
+certbot --nginx -d yourdomain.com
+```
+
+Renewal is handled automatically by Certbot.

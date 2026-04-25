@@ -549,6 +549,22 @@ main {
   font-size: 12px;
 }
 
+.accountTrigger {
+  min-height: 36px;
+  border-color: rgba(0, 240, 255, 0.34);
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(139, 92, 246, 0.14));
+  color: #dffbff;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  box-shadow: 0 0 18px rgba(0, 240, 255, 0.08);
+}
+
+.accountTrigger:hover {
+  color: #ffffff;
+  border-color: rgba(0, 240, 255, 0.72);
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.18), 0 0 34px rgba(139, 92, 246, 0.12);
+}
+
 .loginPage {
   min-height: 100vh;
   display: grid;
@@ -2367,6 +2383,52 @@ tbody tr:hover {
 
 .ledgerModal .billingEntryForm {
   margin-top: 0 !important;
+}
+
+.accountModal {
+  width: min(95vw, 680px) !important;
+  max-width: 680px !important;
+  border-color: rgba(0, 240, 255, 0.42) !important;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(0, 240, 255, 0.16), transparent 34%),
+    radial-gradient(circle at 96% 12%, rgba(139, 92, 246, 0.18), transparent 36%),
+    linear-gradient(145deg, rgba(8, 18, 34, 0.94), rgba(3, 9, 21, 0.92)) !important;
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.55), 0 0 34px rgba(0, 240, 255, 0.14) !important;
+}
+
+.accountHero {
+  position: relative;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(0, 240, 255, 0.18);
+}
+
+.accountHero h2 {
+  font-size: 25px;
+}
+
+.accountForm {
+  margin-bottom: 18px;
+}
+
+.accountForm input[readonly] {
+  color: #9fb4d0;
+  background: rgba(15, 23, 42, 0.62);
+  border-color: rgba(148, 163, 184, 0.22);
+  cursor: not-allowed;
+}
+
+.accountActions {
+  justify-content: flex-end;
+}
+
+.appToast {
+  position: fixed;
+  top: 22px;
+  right: 22px;
+  z-index: 10000;
+  margin: 0;
+  animation: valuePulse 260ms ease;
 }
 
 @keyframes fadeInScale {
