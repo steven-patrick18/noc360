@@ -23,6 +23,9 @@ class VOSPortalBase(BaseModel):
     assigned_to: Optional[str] = None
     assigned_cluster: Optional[str] = None
     notes: Optional[str] = None
+    vos_port: Optional[int] = 80
+    vos_desktop_enabled: Optional[bool] = False
+    vos_notes: Optional[str] = None
 
 
 class VOSPortalCreate(VOSPortalBase):

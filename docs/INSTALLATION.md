@@ -69,7 +69,15 @@ rolex / 123
 bash /opt/noc360/update.sh
 ```
 
-The updater pulls the latest code, updates backend requirements, rebuilds the frontend with `/api`, restarts services, and verifies `/api/health`.
+The updater backs up the database first, fetches the latest code, resets the app code to the selected GitHub branch, updates backend requirements, rebuilds the frontend with `/api`, restarts services, and verifies `/api/health`.
+
+Production update safety:
+
+- `update.sh` does not run `seed.py`.
+- `update.sh` does not reset, drop, or delete database tables.
+- SQLite backups are written to `/opt/noc360/backend/backups/`.
+- PostgreSQL installs are backed up with `pg_dump` before code changes.
+- On backend startup, NOC360 creates missing tables and adds missing columns only. Existing rows and values are not overwritten.
 
 ## Service Commands
 

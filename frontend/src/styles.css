@@ -2431,6 +2431,148 @@ tbody tr:hover {
   animation: valuePulse 260ms ease;
 }
 
+.vosDesktopPage {
+  display: grid;
+  gap: 18px;
+}
+
+.vosDesktopHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 520px);
+  gap: 18px;
+  align-items: end;
+  border-color: rgba(0, 240, 255, 0.28);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(0, 240, 255, 0.14), transparent 32%),
+    radial-gradient(circle at 95% 8%, rgba(139, 92, 246, 0.18), transparent 34%),
+    linear-gradient(145deg, rgba(8, 18, 34, 0.86), rgba(3, 9, 21, 0.78));
+}
+
+.vosDesktopHero h2 {
+  font-size: 24px;
+}
+
+.launcherStats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.launcherStats span,
+.typeBadge {
+  border: 1px solid rgba(0, 240, 255, 0.24);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(0, 240, 255, 0.08);
+  color: #bae6fd;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.launcherSettingsPanel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.launcherSettingsPanel h2 {
+  font-size: 20px;
+}
+
+.wideLauncherField {
+  grid-column: span 2;
+}
+
+.vosPathControl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.vosDesktopTable td:first-child {
+  width: 78px;
+  text-align: center;
+}
+
+.vosDesktopTable td:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+
+.vosDesktopTable td:nth-child(2) small {
+  display: block;
+}
+
+.favoriteButton {
+  grid-row: span 2;
+  color: #9fb4d0;
+}
+
+.favoriteButton.isFavorite {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.54);
+  box-shadow: 0 0 18px rgba(251, 191, 36, 0.16);
+}
+
+.favoriteButton.isFavorite svg {
+  fill: currentColor;
+}
+
+.vosActions {
+  min-width: 640px;
+}
+
+.vosActions button {
+  white-space: nowrap;
+}
+
+.vosGroup h2 {
+  color: #dffbff;
+  text-shadow: 0 0 18px rgba(0, 240, 255, 0.12);
+}
+
+.credentialRow td {
+  background: rgba(0, 240, 255, 0.06);
+  border-top: 1px solid rgba(0, 240, 255, 0.14);
+  color: #dffbff;
+}
+
+.credentialRow td {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.credentialRow b {
+  color: #ffffff;
+}
+
+input[type="checkbox"] {
+  width: 20px;
+  min-height: 20px;
+  accent-color: var(--cyan);
+}
+
+@media (max-width: 980px) {
+  .vosDesktopHero {
+    grid-template-columns: 1fr;
+  }
+
+  .launcherSettingsPanel {
+    grid-template-columns: 1fr;
+  }
+
+  .wideLauncherField {
+    grid-column: auto;
+  }
+
+  .vosPathControl > div {
+    grid-template-columns: 1fr;
+  }
+}
+
 @keyframes fadeInScale {
   from {
     opacity: 0;

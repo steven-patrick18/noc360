@@ -28,6 +28,8 @@ Update after pushing new code:
 bash /opt/noc360/update.sh
 ```
 
+Updates are production-safe: the script backs up the database first, does not run seed/reset, and backend startup only creates missing tables/columns.
+
 Full install guide: [docs/INSTALLATION.md](docs/INSTALLATION.md)
 
 ## Local Backend

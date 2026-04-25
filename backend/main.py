@@ -104,6 +104,7 @@ PAGE_KEYS = [
     "cdr",
     "my_cdr",
     "vos_portals",
+    "vos_desktop_launcher",
     "dialer_clusters",
     "rdp_media",
     "routing_gateways",
@@ -124,7 +125,7 @@ MODULE_PAGE_MAP = {
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "dialer_clusters", "rdp_media", "routing_gateways"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports"],
 }
@@ -158,6 +159,56 @@ class ProfileUpdateIn(BaseModel):
     email: str | None = None
     current_password: str
     new_password: str | None = None
+
+
+class VOSDesktopOut(BaseModel):
+    id: int
+    vos_name: str
+    portal_type: str
+    vos_type: str
+    server_ip: str | None = None
+    status: str | None = None
+    username: str | None = None
+    anti_hack_url: str | None = None
+    web_panel_url: str | None = None
+    vos_port: int | None = 80
+    vos_desktop_enabled: bool = False
+    vos_notes: str | None = None
+    has_password: bool = False
+
+
+class VOSDesktopLoginOut(BaseModel):
+    server: str | None = None
+    username: str | None = None
+    password: str | None = None
+    anti_hack_url: str | None = None
+    anti_hack_password: str | None = None
+
+
+class VOSLaunchIn(BaseModel):
+    launcher_path: str | None = None
+    shortcut_path: str | None = None
+    vos_path: str | None = None
+
+
+class VOSLaunchOut(BaseModel):
+    launcher_path: str
+    shortcut_path: str
+    anti_hack_url: str | None = None
+    command: str
+
+
+class VOSDesktopUpdateIn(BaseModel):
+    server_ip: str | None = None
+    status: str | None = None
+    username: str | None = None
+    password: str | None = None
+    anti_hack_url: str | None = None
+    anti_hack_password: str | None = None
+    web_panel_url: str | None = None
+    vos_port: int | None = None
+    vos_desktop_enabled: bool | None = None
+    vos_notes: str | None = None
 
 
 def b64url(data: bytes) -> str:
@@ -295,6 +346,19 @@ def require_page(page_key: str, action: str = "can_view"):
     return checker
 
 
+def require_vos_desktop(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"admin", "noc_user"}:
+            raise HTTPException(status_code=403, detail="VOS Desktop access is restricted to admin and NOC users")
+        if user.role == "admin":
+            return user
+        permission = permission_dict(db, user).get("vos_desktop_launcher")
+        if not permission or not permission.get(action):
+            raise HTTPException(status_code=403, detail="VOS Desktop permission denied")
+        return user
+    return checker
+
+
 def has_page_permission(db: Session, user: User, page_key: str, action: str = "can_view"):
     if user.role == "admin":
         return True
@@ -328,97 +392,60 @@ def is_missing(value):
     return stripped is None or stripped.upper() == "#N/A"
 
 
-def repair_sqlite_schema():
-    if not str(engine.url).startswith("sqlite"):
-        return
+def column_default_sql(column):
+    default = column.default
+    if default is None or not default.is_scalar:
+        return ""
+    value = default.arg
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return " DEFAULT TRUE" if value else " DEFAULT FALSE"
+    if isinstance(value, (int, float)):
+        return f" DEFAULT {value}"
+    escaped = str(value).replace("'", "''")
+    return f" DEFAULT '{escaped}'"
+
+
+def ensure_database_schema():
+    """Create missing tables and add missing columns without touching live rows."""
+    Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
-    table_names = inspector.get_table_names()
-    missing_by_table = {}
-    if "rdp" in table_names:
-        missing_by_table["rdp"] = {
-            "assigned_cluster": "VARCHAR",
-            "notes": "TEXT",
-        }
-    if "vos_portals" in table_names:
-        missing_by_table["vos_portals"] = {
-            "assigned_to": "VARCHAR",
-            "assigned_cluster": "VARCHAR",
-            "notes": "TEXT",
-        }
-    if "dialer_clusters" in table_names:
-        missing_by_table["dialer_clusters"] = {
-            "client_id": "INTEGER",
-            "rdp_vos_id": "INTEGER",
-        }
-    if "users" in table_names:
-        missing_by_table["users"] = {
-            "full_name": "VARCHAR",
-            "email": "VARCHAR",
-            "created_at": "DATETIME",
-        }
-    if "client_ledger" in table_names:
-        missing_by_table["client_ledger"] = {
-            "amount_usd": "FLOAT",
-            "exchange_rate": "FLOAT",
-            "amount_inr": "FLOAT",
-            "debit_usd": "FLOAT",
-            "credit_usd": "FLOAT",
-            "debit_inr": "FLOAT",
-            "credit_inr": "FLOAT",
-            "balance_usd": "FLOAT",
-            "balance_inr": "FLOAT",
-        }
-    if "routing_gateways" in table_names:
-        missing_by_table["routing_gateways"] = {
-            "rtng_vos_id": "INTEGER",
-            "client_id": "INTEGER",
-            "media1_vos_id": "INTEGER",
-            "media2_vos_id": "INTEGER",
-            "notes": "TEXT",
-        }
-    if "data_costs" in table_names:
-        missing_by_table["data_costs"] = {
-            "rate_usd": "FLOAT",
-            "total_cost_usd": "FLOAT",
-            "exchange_rate": "FLOAT",
-            "total_cost_inr": "FLOAT",
-        }
+    table_names = set(inspector.get_table_names())
+    preparer = engine.dialect.identifier_preparer
     with engine.begin() as connection:
-        for table, missing_columns in missing_by_table.items():
-            columns = {column["name"] for column in inspector.get_columns(table)}
-            for column, column_type in missing_columns.items():
-                if column not in columns:
-                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"))
+        for table in Base.metadata.sorted_tables:
+            if table.name not in table_names:
+                continue
+            existing_columns = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                column_type = column.type.compile(dialect=engine.dialect)
+                table_name = preparer.quote(table.name)
+                column_name = preparer.quote(column.name)
+                ddl = f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}{column_default_sql(column)}"
+                logger.info("Adding missing database column: %s.%s", table.name, column.name)
+                connection.execute(text(ddl))
 
 
 def create_database():
-    Base.metadata.create_all(bind=engine)
-    repair_sqlite_schema()
+    ensure_database_schema()
 
 
 def seed_user_access_defaults(db: Session):
     clients_by_name = {client.name: client for client in db.query(Client).all()}
-    default_users = [
+    existing_user_count = db.query(User).count()
+    bootstrap_users = [
         ("admin", "admin123", "admin", None, "System Admin", "admin@noc360.local"),
         ("noc", "noc123", "noc_user", None, "NOC Operator", "noc@noc360.local"),
         ("viewer", "viewer123", "viewer", None, "Read Only Viewer", "viewer@noc360.local"),
-        ("im1", "123", "customer", "IM1", "IM1 Customer", "billing@im1.example"),
-        ("im2", "123", "customer", "IM2", "IM2 Customer", "billing@im2.example"),
-        ("rolex", "123", "customer", "ROLEX", "ROLEX Customer", "billing@rolex.example"),
     ]
-    for username, password, role, client_name, full_name, email in default_users:
-        client = clients_by_name.get(client_name) if client_name else None
-        user = db.query(User).filter(User.username == username).first()
-        if not user:
+    if existing_user_count == 0:
+        for username, password, role, client_name, full_name, email in bootstrap_users:
+            client = clients_by_name.get(client_name) if client_name else None
             db.add(User(username=username, password_hash=hash_password(password), role=role, client_id=client.id if client else None, status="Active", full_name=full_name, email=email))
-        else:
-            user.role = role
-            user.client_id = client.id if client else user.client_id
-            user.full_name = user.full_name or full_name
-            user.email = user.email or email
-            if username in {"noc", "viewer", "im1", "im2", "rolex"}:
-                user.password_hash = hash_password(password)
-    db.flush()
+        db.flush()
     for user in db.query(User).all():
         if user.role == "admin":
             pages = PAGE_KEYS
@@ -431,7 +458,10 @@ def seed_user_access_defaults(db: Session):
         existing = {row.page_key for row in db.query(PagePermission).filter(PagePermission.user_id == user.id).all()}
         for page in pages:
             if page not in existing:
-                db.add(PagePermission(user_id=user.id, page_key=page, **rights))
+                page_rights = rights
+                if user.role == "noc_user" and page == "vos_desktop_launcher":
+                    page_rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
+                db.add(PagePermission(user_id=user.id, page_key=page, **page_rights))
         if user.client_id and not db.query(ClientAccess).filter(ClientAccess.user_id == user.id, ClientAccess.client_id == user.client_id).first():
             db.add(ClientAccess(user_id=user.id, client_id=user.client_id))
     db.commit()
@@ -520,7 +550,7 @@ def normalize_ledger_currency(db: Session):
 def startup():
     create_database()
     with SessionLocal() as db:
-        auto_seed = os.getenv("AUTO_SEED", "true").lower() not in {"0", "false", "no", "off"}
+        auto_seed = os.getenv("AUTO_SEED", "false").lower() not in {"0", "false", "no", "off"}
         if auto_seed and not db.query(Client).first():
             from seed import seed_database
 
@@ -1618,6 +1648,96 @@ def system_audit(db: Session):
             if row.client_id and row.client_id not in clients:
                 audit["missing_client_references"].append({"type": label, "id": row.id, "client_id": row.client_id})
     return audit
+
+
+def vos_desktop_records(db: Session):
+    return db.query(VOSPortal).order_by(VOSPortal.portal_type.asc()).all()
+
+
+def vos_type(portal_type: str | None):
+    value = (portal_type or "").upper()
+    if value.startswith("RDP"):
+        return "RDP"
+    if value.startswith("RTNG"):
+        return "RTNG"
+    if value.startswith("DID") or "DID" in value:
+        return "DID"
+    return "Other"
+
+
+def vos_desktop_out(portal: VOSPortal):
+    return {
+        "id": portal.id,
+        "vos_name": portal.portal_type,
+        "portal_type": portal.portal_type,
+        "vos_type": vos_type(portal.portal_type),
+        "server_ip": portal.server_ip,
+        "status": portal.status,
+        "username": portal.username,
+        "anti_hack_url": portal.anti_hack_url,
+        "web_panel_url": portal.web_panel_url,
+        "vos_port": portal.vos_port or 80,
+        "vos_desktop_enabled": bool(portal.vos_desktop_enabled),
+        "vos_notes": portal.vos_notes,
+        "has_password": bool(portal.password),
+    }
+
+
+def get_vos_desktop_portal(db: Session, record_id: int):
+    return get_record(db, VOSPortal, record_id)
+
+
+@app.get("/api/vos-desktop", response_model=list[VOSDesktopOut])
+@app.get("/vos-desktop", response_model=list[VOSDesktopOut])
+def get_vos_desktop(db: Session = Depends(get_db), user: User = Depends(require_vos_desktop())):
+    return [vos_desktop_out(portal) for portal in vos_desktop_records(db)]
+
+
+@app.get("/api/vos-desktop/{record_id}/login", response_model=VOSDesktopLoginOut)
+@app.get("/vos-desktop/{record_id}/login", response_model=VOSDesktopLoginOut)
+def get_vos_desktop_login(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
+    portal = get_vos_desktop_portal(db, record_id)
+    return {"server": portal.server_ip, "username": portal.username, "password": portal.password, "anti_hack_url": portal.anti_hack_url, "anti_hack_password": portal.anti_hack_password}
+
+
+@app.put("/api/vos-desktop/{record_id}", response_model=VOSDesktopOut)
+@app.put("/vos-desktop/{record_id}", response_model=VOSDesktopOut)
+def update_vos_desktop(record_id: int, payload: VOSDesktopUpdateIn, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
+    portal = get_vos_desktop_portal(db, record_id)
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(portal, key, value)
+    db.commit()
+    db.refresh(portal)
+    return vos_desktop_out(portal)
+
+
+@app.post("/api/vos-desktop/{record_id}/launch")
+@app.post("/vos-desktop/{record_id}/launch")
+def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))) -> VOSLaunchOut:
+    portal = get_vos_desktop_portal(db, record_id)
+    launcher_path = normalize(payload.launcher_path) or normalize(payload.vos_path)
+    shortcut_path = normalize(payload.shortcut_path)
+    if not launcher_path:
+        raise HTTPException(status_code=400, detail="Launcher not configured. Please create vos_launcher.bat in D:\\NOC360\\Launcher")
+    if not shortcut_path:
+        raise HTTPException(status_code=400, detail="Please set local VOS shortcut/app path first.")
+    if is_missing(portal.server_ip):
+        raise HTTPException(status_code=400, detail="Server IP is missing")
+    anti_hack_url = portal.anti_hack_url or ""
+    command = f'"{launcher_path}" "{anti_hack_url}" "{shortcut_path}"'
+    return {
+        "launcher_path": launcher_path,
+        "shortcut_path": shortcut_path,
+        "anti_hack_url": anti_hack_url,
+        "command": command,
+    }
+
+
+@app.post("/api/vos-desktop/{record_id}/last-used")
+@app.post("/vos-desktop/{record_id}/last-used")
+def mark_vos_desktop_last_used(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
+    get_vos_desktop_portal(db, record_id)
+    return {"updated": True}
 
 
 @app.get("/api/vos-portals", response_model=list[VOSPortalOut])

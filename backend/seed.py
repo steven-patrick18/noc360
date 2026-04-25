@@ -12,11 +12,11 @@ USD_TO_INR = 83.0
 PAGE_KEYS = [
     "dashboard", "my_dashboard", "business_ai", "reports", "my_reports", "management_portal",
     "billing", "my_ledger", "clients", "cdr", "my_cdr", "vos_portals", "dialer_clusters",
-    "rdp_media", "routing_gateways", "user_access",
+    "rdp_media", "routing_gateways", "vos_desktop_launcher", "user_access",
 ]
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "dialer_clusters", "rdp_media", "routing_gateways"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports"],
 }
@@ -171,7 +171,10 @@ def create_users(db, clients):
         readonly = user.role in {"viewer", "customer"}
         rights = {"can_view": 1, "can_create": 0 if readonly else 1, "can_edit": 0 if readonly else 1, "can_delete": 1 if user.role == "admin" else 0, "can_export": 1}
         for page in pages:
-            db.add(PagePermission(user_id=user.id, page_key=page, **rights))
+            page_rights = rights
+            if user.role == "noc_user" and page == "vos_desktop_launcher":
+                page_rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
+            db.add(PagePermission(user_id=user.id, page_key=page, **page_rights))
         if user.client_id:
             db.add(ClientAccess(user_id=user.id, client_id=user.client_id))
 
@@ -196,6 +199,9 @@ def create_vos_portals(db):
             cdr_panel_url=f"http://{ip}/cdr",
             web_panel_url=f"http://{ip}/",
             notes="Media/RDP server from master inventory",
+            vos_port=80,
+            vos_desktop_enabled=True,
+            vos_notes="VOS Desktop launcher enabled",
         )
         db.add(portal)
         rdp_portals[name] = portal

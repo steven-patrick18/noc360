@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -23,6 +23,9 @@ class VOSPortal(Base):
     assigned_to = Column(String, nullable=True)
     assigned_cluster = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
+    vos_port = Column(Integer, default=80)
+    vos_desktop_enabled = Column(Boolean, default=False)
+    vos_notes = Column(Text, nullable=True)
 
 
 class Client(Base):

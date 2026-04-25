@@ -3,12 +3,17 @@ import { createRoot } from 'react-dom/client';
 import {
   Activity,
   AlertTriangle,
+  Copy,
   Download,
   Edit3,
+  ExternalLink,
+  Eye,
+  EyeOff,
   Globe2,
   LayoutDashboard,
   LogOut,
   MonitorCog,
+  Play,
   Plus,
   ReceiptText,
   RadioTower,
@@ -16,6 +21,7 @@ import {
   Router,
   Search,
   Server,
+  Star,
   Trash2,
   Users,
   X,
@@ -26,7 +32,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment'];
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -39,6 +45,7 @@ const modulePageKeys = {
   clients: 'clients',
   myCdr: 'my_cdr',
   vos: 'vos_portals',
+  vosDesktop: 'vos_desktop_launcher',
   clusters: 'dialer_clusters',
   rdps: 'rdp_media',
   gateways: 'routing_gateways',
@@ -70,8 +77,12 @@ const modules = {
       ['uuid', 'UUID', 'text'],
       ['cdr_panel_url', 'CDR Panel URL', 'text'],
       ['web_panel_url', 'Web Panel URL', 'text'],
+      ['vos_port', 'VOS Port', 'number'],
+      ['vos_desktop_enabled', 'Desktop Enabled', 'boolean'],
+      ['vos_notes', 'VOS Notes', 'textarea'],
     ],
   },
+  vosDesktop: { label: 'VOS Desktop', icon: Play },
   clusters: {
     label: 'Dialer Clusters',
     icon: RadioTower,
@@ -136,7 +147,7 @@ const customerModules = {
 };
 
 function emptyRecord(fields) {
-  return Object.fromEntries(fields.map(([key, , type]) => [key, type === 'number' ? 0 : key === 'status' ? 'Active' : '']));
+  return Object.fromEntries(fields.map(([key, , type]) => [key, type === 'number' ? 0 : type === 'boolean' ? false : key === 'status' ? 'Active' : '']));
 }
 
 async function request(path, options = {}) {
@@ -219,7 +230,7 @@ function App() {
   const [active, setActive] = useState(auth?.user?.role === 'customer' ? 'myDashboard' : 'dashboard');
   const [dashboard, setDashboard] = useState(null);
   const [management, setManagement] = useState({ summary: null, cluster: [], rdpCluster: [], routing: [] });
-  const [data, setData] = useState({ vos: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
+  const [data, setData] = useState({ vos: [], vosDesktop: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
   const [billing, setBilling] = useState({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
   const [settings, setSettings] = useState({ usd_to_inr_rate: 83 });
   const [loading, setLoading] = useState(false);
@@ -261,13 +272,14 @@ function App() {
 
       if (auth.user.role !== 'customer') {
         const can = (pageKey) => canDo(auth.user, pageKey);
-        const [dash, summary, clusterAssignments, rdpClusterAssignments, routingAssignments, vos, clusters, rdps, gateways, clients, users] = await Promise.all([
+        const [dash, summary, clusterAssignments, rdpClusterAssignments, routingAssignments, vos, vosDesktop, clusters, rdps, gateways, clients, users] = await Promise.all([
           can('dashboard') ? request('/dashboard') : Promise.resolve(null),
           can('management_portal') ? request('/management/summary') : Promise.resolve(null),
           can('management_portal') ? request('/management/cluster-assignments') : Promise.resolve([]),
           can('management_portal') ? request('/management/rdp-cluster-assignments') : Promise.resolve([]),
           can('management_portal') ? request('/management/routing-media-assignments') : Promise.resolve([]),
           can('vos_portals') || can('management_portal') ? request('/vos-portals') : Promise.resolve([]),
+          can('vos_desktop_launcher') ? request('/vos-desktop') : Promise.resolve([]),
           can('dialer_clusters') || can('management_portal') ? request('/dialer-clusters') : Promise.resolve([]),
           can('rdp_media') || can('management_portal') ? request('/rdps') : Promise.resolve([]),
           can('routing_gateways') || can('management_portal') ? request('/routing-gateways') : Promise.resolve([]),
@@ -276,7 +288,7 @@ function App() {
         ]);
         setDashboard(dash);
         setManagement({ summary, cluster: clusterAssignments, rdpCluster: rdpClusterAssignments, routing: routingAssignments });
-        setData({ vos, clusters, rdps, gateways, clients, users });
+        setData({ vos, vosDesktop, clusters, rdps, gateways, clients, users });
       }
     } catch (err) {
       setError(err.message);
@@ -427,6 +439,8 @@ function App() {
             <BusinessAIPage data={data} />
           ) : activeKey === 'reports' ? (
             <ReportsPage data={data} user={auth.user} />
+          ) : activeKey === 'vosDesktop' ? (
+            <VOSDesktopPage rows={data.vosDesktop} user={auth.user} reload={loadAll} />
           ) : activeKey === 'billing' ? (
             <BillingPage billing={billing} data={data} reload={loadAll} refreshBilling={refreshBillingData} user={auth.user} settings={settings} />
           ) : activeKey === 'clients' ? (
@@ -571,6 +585,406 @@ function AccountSettingsModal({ user, onClose, onUpdated, onLogout }) {
         </div>
       </form>
     </div>
+  );
+}
+
+function loadLauncherSettings() {
+  const defaults = {
+    launcherPath: 'D:\\NOC360\\Launcher\\vos_launcher.bat',
+    v1Name: 'VOS v1',
+    v1Path: 'C:\\Users\\ASUS\\Desktop\\VOS Shortcuts\\VOS3000-v1.lnk',
+    v2Name: 'VOS v2',
+    v2Path: 'C:\\Users\\ASUS\\Desktop\\VOS Shortcuts\\VOS3000-v2.lnk',
+    customPath: '',
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem('vos_launcher_paths') || '{}');
+    const savedKeys = Object.keys(saved).filter((key) => !['Custom', '__launcher_path'].includes(key));
+    const v1Name = savedKeys[0] || defaults.v1Name;
+    const v2Name = savedKeys[1] || defaults.v2Name;
+    return {
+      launcherPath: saved.__launcher_path || localStorage.getItem('vos_launcher_path') || defaults.launcherPath,
+      v1Name,
+      v1Path: saved[v1Name] ?? defaults.v1Path,
+      v2Name,
+      v2Path: saved[v2Name] ?? defaults.v2Path,
+      customPath: saved.Custom ?? defaults.customPath,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function VOSDesktopEditModal({ record, onClose, onSave }) {
+  const [form, setForm] = useState({
+    ...record,
+    password: '',
+    anti_hack_password: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(form);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modalBackdrop modal-overlay">
+      <form className="modal modal-box accountModal" onSubmit={submit}>
+        <div className="modalHeader accountHero">
+          <div><span className="eyebrow">VOS Desktop Master Link</span><h2>Edit {record.vos_name}</h2></div>
+          <button type="button" className="iconButton" onClick={onClose}><X size={18} /></button>
+        </div>
+        {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+        <div className="formGrid">
+          <label><span>Server IP</span><input value={form.server_ip || ''} onChange={(event) => setField('server_ip', event.target.value)} /></label>
+          <label><span>Status</span><select value={form.status || 'Active'} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+          <label><span>Username</span><input value={form.username || ''} onChange={(event) => setField('username', event.target.value)} /></label>
+          <label><span>Password</span><input type="password" value={form.password || ''} onChange={(event) => setField('password', event.target.value)} placeholder="Leave blank to keep current password" /></label>
+          <label className="wide"><span>Anti-Hack URL</span><input value={form.anti_hack_url || ''} onChange={(event) => setField('anti_hack_url', event.target.value)} /></label>
+          <label><span>Anti-Hack Password</span><input type="password" value={form.anti_hack_password || ''} onChange={(event) => setField('anti_hack_password', event.target.value)} placeholder="Leave blank to keep current password" /></label>
+          <label><span>VOS Port</span><input type="number" value={form.vos_port || ''} onChange={(event) => setField('vos_port', event.target.value)} /></label>
+          <label className="wide"><span>Web Panel URL</span><input value={form.web_panel_url || ''} onChange={(event) => setField('web_panel_url', event.target.value)} /></label>
+          <label><span>Desktop Enabled</span><input type="checkbox" checked={Boolean(form.vos_desktop_enabled)} onChange={(event) => setField('vos_desktop_enabled', event.target.checked)} /></label>
+          <label className="wide"><span>VOS Notes</span><textarea value={form.vos_notes || ''} onChange={(event) => setField('vos_notes', event.target.value)} /></label>
+        </div>
+        <div className="modalActions">
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button className="primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function VOSDesktopPage({ rows, user, reload }) {
+  const canUseLauncher = canDo(user, 'vos_desktop_launcher', 'can_export') || user?.role === 'admin';
+  const canEdit = canDo(user, 'vos_desktop_launcher', 'can_edit') || user?.role === 'admin';
+  const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('All');
+  const [launcherSettings, setLauncherSettings] = useState(() => loadLauncherSettings());
+  const [selectedVersions, setSelectedVersions] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('vos_launcher_selected_versions') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('vos_desktop_favorites') || '[]');
+    } catch {
+      return [];
+    }
+  });
+  const [lastUsed, setLastUsed] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('vos_desktop_last_used') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const [revealed, setRevealed] = useState({});
+  const [editing, setEditing] = useState(null);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const launcherNames = [launcherSettings.v1Name || 'VOS v1', launcherSettings.v2Name || 'VOS v2', 'Custom'];
+  const launcherPaths = {
+    __launcher_path: launcherSettings.launcherPath || 'D:\\NOC360\\Launcher\\vos_launcher.bat',
+    [launcherNames[0]]: launcherSettings.v1Path || '',
+    [launcherNames[1]]: launcherSettings.v2Path || '',
+    Custom: launcherSettings.customPath || '',
+  };
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
+  const filtered = useMemo(() => {
+    const needle = query.toLowerCase();
+    return [...rows]
+      .sort((a, b) => Number(favoriteSet.has(b.id)) - Number(favoriteSet.has(a.id)) || a.vos_name.localeCompare(b.vos_name))
+      .filter((row) => typeFilter === 'All' || row.vos_type === typeFilter)
+      .filter((row) => [row.vos_name, row.server_ip, row.status, row.username, row.vos_type, row.vos_notes].join(' ').toLowerCase().includes(needle));
+  }, [rows, query, typeFilter, favoriteSet]);
+  const groupedRows = useMemo(() => ([
+    ['RDP', 'Media Servers / RDP'],
+    ['RTNG', 'Routing Servers / RTNG'],
+    ['DID', 'DID Portals'],
+    ['Other', 'Other VOS'],
+  ]).map(([type, title]) => [type, title, filtered.filter((row) => row.vos_type === type)]).filter(([, , groupRows]) => groupRows.length), [filtered]);
+
+  const saveLauncherPaths = () => {
+    localStorage.setItem('vos_launcher_paths', JSON.stringify(launcherPaths));
+    localStorage.setItem('vos_launcher_path', launcherPaths.__launcher_path);
+    setMessage('Permanent launcher paths saved');
+    setError('');
+  };
+
+  const selectedVersionFor = (row) => (launcherNames.includes(selectedVersions[row.id]) ? selectedVersions[row.id] : launcherNames[0]);
+  const selectedPathFor = (row) => launcherPaths[selectedVersionFor(row)] || '';
+  const permanentLauncherPath = () => launcherPaths.__launcher_path || '';
+
+  const setSelectedVersion = (row, version) => {
+    const next = { ...selectedVersions, [row.id]: version };
+    setSelectedVersions(next);
+    localStorage.setItem('vos_launcher_selected_versions', JSON.stringify(next));
+  };
+
+  const toggleFavorite = (row) => {
+    const next = favoriteSet.has(row.id) ? favorites.filter((id) => id !== row.id) : [...favorites, row.id];
+    setFavorites(next);
+    localStorage.setItem('vos_desktop_favorites', JSON.stringify(next));
+  };
+
+  const markLastUsed = (row) => {
+    const next = { ...lastUsed, [row.id]: new Date().toISOString() };
+    setLastUsed(next);
+    localStorage.setItem('vos_desktop_last_used', JSON.stringify(next));
+    request(`/vos-desktop/${row.id}/last-used`, { method: 'POST', body: JSON.stringify({}) }).catch(() => {});
+  };
+
+  const fetchLogin = async (row) => request(`/vos-desktop/${row.id}/login`);
+
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  };
+
+  const fileUrlForWindowsPath = (path) => {
+    if (!path) return '';
+    return `file:///${path.replaceAll('\\', '/')}`;
+  };
+
+  const copyLogin = async (row) => {
+    if (!canUseLauncher) return;
+    try {
+      const login = await fetchLogin(row);
+      await copyText([
+        `VOS: ${row.vos_name || ''}`,
+        `Server: ${login.server || ''}`,
+        `Username: ${login.username || ''}`,
+        `Password: ${login.password || ''}`,
+        `Anti-Hack URL: ${login.anti_hack_url || row.anti_hack_url || ''}`,
+        `Anti-Hack Pass: ${login.anti_hack_password || ''}`,
+      ].join('\n'));
+      setMessage('Login details copied.');
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const toggleReveal = async (row) => {
+    if (revealed[row.id]) {
+      setRevealed((current) => ({ ...current, [row.id]: null }));
+      return;
+    }
+    try {
+      const login = await fetchLogin(row);
+      setRevealed((current) => ({ ...current, [row.id]: login }));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const launchDesktop = async (row) => {
+    if (!canUseLauncher) return;
+    const launcherPath = permanentLauncherPath();
+    const shortcutPath = selectedPathFor(row);
+    if (!launcherPath.trim()) {
+      setError('Launcher not configured. Please create vos_launcher.bat in D:\\NOC360\\Launcher');
+      return;
+    }
+    if (!shortcutPath.trim()) {
+      setError('Please set local VOS shortcut/app path first.');
+      return;
+    }
+    try {
+      const token = localStorage.getItem('noc360_token');
+      const response = await fetch(`${API_BASE_URL}/vos-desktop/${row.id}/launch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ launcher_path: launcherPath, shortcut_path: shortcutPath }),
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.detail || 'Launcher command failed');
+      }
+      const launchInfo = await response.json();
+      await copyText(launchInfo.command);
+      window.open(fileUrlForWindowsPath(launchInfo.launcher_path), '_blank', 'noopener,noreferrer');
+      markLastUsed(row);
+      setMessage(`Permanent launcher command copied for ${row.vos_name}. If the browser blocks local launch, run the copied command.`);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openWhitelist = (row) => {
+    const url = row.anti_hack_url || (row.server_ip ? `http://${row.server_ip}:8989/anti-atck` : '');
+    if (!url) {
+      setError('Anti-hack URL is missing');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    fetchLogin(row)
+      .then((login) => (login.anti_hack_password ? copyText(login.anti_hack_password) : null))
+      .then(() => {
+        setMessage('Anti-hack page opened. Password copied.');
+        setError('');
+      })
+      .catch(() => setMessage('Anti-hack page opened.'));
+  };
+
+  const openWebPanel = (row) => {
+    window.open(row.web_panel_url || `http://${row.server_ip}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const lastUsedText = (row) => {
+    if (!lastUsed[row.id]) return 'Never';
+    return new Date(lastUsed[row.id]).toLocaleString();
+  };
+
+  const saveEdit = async (form) => {
+    const payload = {
+      server_ip: form.server_ip || null,
+      status: form.status || 'Active',
+      username: form.username || null,
+      anti_hack_url: form.anti_hack_url || null,
+      web_panel_url: form.web_panel_url || null,
+      vos_port: form.vos_port ? Number(form.vos_port) : null,
+      vos_desktop_enabled: Boolean(form.vos_desktop_enabled),
+      vos_notes: form.vos_notes || null,
+    };
+    if (form.password) payload.password = form.password;
+    if (form.anti_hack_password) payload.anti_hack_password = form.anti_hack_password;
+    await request(`/vos-desktop/${form.id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+    setEditing(null);
+    setMessage('VOS launcher record updated');
+    await reload();
+  };
+
+  return (
+    <section className="vosDesktopPage">
+      <div className="panel vosDesktopHero">
+        <div>
+          <span className="eyebrow">VOS Desktop Launcher</span>
+          <h2><Play size={20} /> Local shortcut launch from VOS Portal Master</h2>
+          <p className="muted">RDP, RTNG, DID, and every other VOS portal use one trusted permanent launcher. No repeated downloads, no temp scripts.</p>
+        </div>
+        <div className="launcherStats">
+          <span>{rows.length} VOS records</span>
+          <span>{favorites.length} favorites</span>
+          <span>{Object.keys(lastUsed).length} launched</span>
+        </div>
+      </div>
+
+      <div className="panel launcherSettingsPanel">
+        <div>
+          <span className="eyebrow">Local VOS Launcher Paths</span>
+          <h2>Shortcut/App Paths</h2>
+        </div>
+        <label className="wideLauncherField"><span>Launcher Path</span><input value={launcherSettings.launcherPath} onChange={(event) => setLauncherSettings({ ...launcherSettings, launcherPath: event.target.value })} placeholder="D:\NOC360\Launcher\vos_launcher.bat" /></label>
+        <label><span>VOS Version 1 Name</span><input value={launcherSettings.v1Name} onChange={(event) => setLauncherSettings({ ...launcherSettings, v1Name: event.target.value })} placeholder="VOS v1" /></label>
+        <label className="wideLauncherField"><span>VOS Version 1 Path</span><input value={launcherSettings.v1Path} onChange={(event) => setLauncherSettings({ ...launcherSettings, v1Path: event.target.value })} placeholder="C:\Users\ASUS\Desktop\VOS Shortcuts\VOS3000-v1.lnk" /></label>
+        <label><span>VOS Version 2 Name</span><input value={launcherSettings.v2Name} onChange={(event) => setLauncherSettings({ ...launcherSettings, v2Name: event.target.value })} placeholder="VOS v2" /></label>
+        <label className="wideLauncherField"><span>VOS Version 2 Path</span><input value={launcherSettings.v2Path} onChange={(event) => setLauncherSettings({ ...launcherSettings, v2Path: event.target.value })} placeholder="C:\Users\ASUS\Desktop\VOS Shortcuts\VOS3000-v2.lnk" /></label>
+        <label className="wideLauncherField"><span>Custom Path</span><input value={launcherSettings.customPath} onChange={(event) => setLauncherSettings({ ...launcherSettings, customPath: event.target.value })} placeholder="C:\Program Files\VOS3000\VOS3000.exe" /></label>
+        <button className="primary" onClick={saveLauncherPaths}>Save Launcher Paths</button>
+      </div>
+
+      {message && <div className="toastSuccess">{message}</div>}
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+
+      <div className="toolbar">
+        <div className="search">
+          <Search size={18} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search VOS desktop records..." />
+        </div>
+        <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+          <option>All</option>
+          <option>RDP</option>
+          <option>RTNG</option>
+          <option>DID</option>
+          <option>Other</option>
+        </select>
+      </div>
+
+      {groupedRows.map(([type, title, groupRows]) => (
+        <div className="managementSection vosGroup" key={type}>
+          <h2>{title}</h2>
+          <div className="tableWrap vosDesktopTable">
+            <table>
+              <thead>
+                <tr><th>Favorite</th><th>VOS Name / Portal Type</th><th>Server IP</th><th>VOS Type</th><th>Status</th><th>Last Used</th><th>Launcher Version</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {groupRows.map((row) => (
+                  <React.Fragment key={row.id}>
+                    <tr>
+                      <td><button className={`iconButton favoriteButton ${favoriteSet.has(row.id) ? 'isFavorite' : ''}`} onClick={() => toggleFavorite(row)} title="Favorite"><Star size={16} /></button></td>
+                      <td><strong>{row.vos_name}</strong>{row.vos_notes && <small>{row.vos_notes}</small>}</td>
+                      <td>{row.server_ip || <span className="missing">Missing</span>}</td>
+                      <td><span className="typeBadge">{row.vos_type}</span></td>
+                      <td><StatusPill value={row.status} /></td>
+                      <td>{lastUsedText(row)}</td>
+                      <td>
+                        <select value={selectedVersionFor(row)} onChange={(event) => setSelectedVersion(row, event.target.value)}>
+                          {launcherNames.map((name) => <option key={name}>{name}</option>)}
+                        </select>
+                        <small className={selectedPathFor(row) ? 'muted' : 'missing'}>{selectedPathFor(row) || 'Path not set'}</small>
+                      </td>
+                      <td className="actions vosActions">
+                        {canUseLauncher && <button className="primary" onClick={() => launchDesktop(row)}><Play size={15} /> Launch Desktop Client</button>}
+                        <button onClick={() => openWhitelist(row)}>Whitelist IP</button>
+                        {canUseLauncher && <button onClick={() => copyLogin(row)}><Copy size={15} /> Copy Login</button>}
+                        <button onClick={() => openWebPanel(row)}><ExternalLink size={15} /> Open Web Panel</button>
+                        {canUseLauncher && <button onClick={() => toggleReveal(row)}>{revealed[row.id] ? <EyeOff size={15} /> : <Eye size={15} />} {revealed[row.id] ? 'Hide Password' : 'Show Password'}</button>}
+                        {canEdit && <button className="iconButton" onClick={() => setEditing(row)} title="Edit"><Edit3 size={16} /></button>}
+                      </td>
+                    </tr>
+                    {revealed[row.id] && (
+                      <tr className="credentialRow">
+                        <td colSpan="8">
+                          <span>Server: <b>{revealed[row.id].server || '-'}</b></span>
+                          <span>Username: <b>{revealed[row.id].username || '-'}</b></span>
+                          <span>Password: <b>{revealed[row.id].password || '-'}</b></span>
+                          <span>Anti-Hack Pass: <b>{revealed[row.id].anti_hack_password || '-'}</b></span>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+      {!groupedRows.length && <div className="panel muted">No VOS desktop records found.</div>}
+      {editing && <VOSDesktopEditModal record={editing} onClose={() => setEditing(null)} onSave={saveEdit} />}
+    </section>
   );
 }
 
@@ -1689,7 +2103,11 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
     try {
       const method = record.id ? 'PUT' : 'POST';
       const path = `${config.endpoint}${record.id ? `/${record.id}` : ''}`;
-      const body = Object.fromEntries(config.fields.map(([key, , type]) => [key, ['number', 'client'].includes(type) ? (record[key] ? Number(record[key]) : null) : record[key] || null]));
+      const body = Object.fromEntries(config.fields.map(([key, , type]) => {
+        if (['number', 'client'].includes(type)) return [key, record[key] ? Number(record[key]) : null];
+        if (type === 'boolean') return [key, Boolean(record[key])];
+        return [key, record[key] || null];
+      }));
       await request(path, { method, body: JSON.stringify(body) });
       setEditing(null);
       await reload();
@@ -1817,9 +2235,10 @@ function Editor({ config, record, rdps, rtngs = [], clients = [], saving, onClos
                 </select>
               )}
               {type === 'client' && <ClientSelect value={form[key] || ''} clients={clients} onChange={(value) => setField(key, value)} />}
+              {type === 'boolean' && <input type="checkbox" checked={Boolean(form[key])} onChange={(event) => setField(key, event.target.checked)} />}
               {type === 'textarea' && <textarea value={form[key] || ''} onChange={(event) => setField(key, event.target.value)} />}
               {type === 'readonly' && <input value={form[key] || ''} readOnly />}
-              {!['status', 'readonlyStatus', 'rdp', 'rtng', 'client', 'textarea', 'readonly'].includes(type) && (
+              {!['status', 'readonlyStatus', 'rdp', 'rtng', 'client', 'boolean', 'textarea', 'readonly'].includes(type) && (
                 <input type={type} value={form[key] ?? ''} onChange={(event) => setField(key, event.target.value)} />
               )}
             </label>
