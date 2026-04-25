@@ -140,13 +140,16 @@ class RoutingGateway(Base):
     id = Column(Integer, primary_key=True, index=True)
     gateway_name = Column(String, nullable=False, index=True)
     gateway_ip = Column(String, nullable=True)
+    routing_gateway_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     rtng_vos_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
     media1_name = Column(String, nullable=True)
     media1_ip = Column(String, nullable=True)
+    media_1_portal_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     media1_vos_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     media2_name = Column(String, nullable=True)
     media2_ip = Column(String, nullable=True)
+    media_2_portal_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     media2_vos_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
     carrier_ip = Column(String, nullable=True)
     ports = Column(String, nullable=True)
@@ -154,33 +157,42 @@ class RoutingGateway(Base):
     status = Column(String, default="Active", index=True)
     notes = Column(Text, nullable=True)
     client = relationship("Client")
+    routing_gateway_portal = relationship("VOSPortal", foreign_keys=[routing_gateway_id])
     rtng_vos = relationship("VOSPortal", foreign_keys=[rtng_vos_id])
+    media_1_portal = relationship("VOSPortal", foreign_keys=[media_1_portal_id])
     media1_vos = relationship("VOSPortal", foreign_keys=[media1_vos_id])
+    media_2_portal = relationship("VOSPortal", foreign_keys=[media_2_portal_id])
     media2_vos = relationship("VOSPortal", foreign_keys=[media2_vos_id])
 
     @property
     def live_gateway_name(self):
-        return self.rtng_vos.portal_type if self.rtng_vos else self.gateway_name
+        portal = self.routing_gateway_portal or self.rtng_vos
+        return portal.portal_type if portal else self.gateway_name
 
     @property
     def live_gateway_ip(self):
-        return self.rtng_vos.server_ip if self.rtng_vos else self.gateway_ip
+        portal = self.routing_gateway_portal or self.rtng_vos
+        return portal.server_ip if portal else self.gateway_ip
 
     @property
     def live_media1_name(self):
-        return self.media1_vos.portal_type if self.media1_vos else self.media1_name
+        portal = self.media_1_portal or self.media1_vos
+        return portal.portal_type if portal else self.media1_name
 
     @property
     def live_media1_ip(self):
-        return self.media1_vos.server_ip if self.media1_vos else self.media1_ip
+        portal = self.media_1_portal or self.media1_vos
+        return portal.server_ip if portal else self.media1_ip
 
     @property
     def live_media2_name(self):
-        return self.media2_vos.portal_type if self.media2_vos else self.media2_name
+        portal = self.media_2_portal or self.media2_vos
+        return portal.portal_type if portal else self.media2_name
 
     @property
     def live_media2_ip(self):
-        return self.media2_vos.server_ip if self.media2_vos else self.media2_ip
+        portal = self.media_2_portal or self.media2_vos
+        return portal.server_ip if portal else self.media2_ip
 
 
 class BillingCharge(Base):

@@ -124,16 +124,29 @@ const modules = {
     icon: Router,
     endpoint: '/routing-gateways',
     titleField: 'gateway_name',
+    tableFields: [
+      ['gateway_name', 'Routing Gateway'],
+      ['gateway_ip', 'Gateway IP'],
+      ['media_1_name', 'Media 1'],
+      ['media_1_ip', 'Media 1 IP'],
+      ['media_2_name', 'Media 2'],
+      ['media_2_ip', 'Media 2 IP'],
+      ['carrier_ip', 'Carrier IP'],
+      ['ports', 'Ports'],
+      ['vendor', 'Vendor'],
+      ['status', 'Status'],
+      ['validation_alerts', 'Alerts'],
+    ],
     fields: [
       ['gateway_name', 'Gateway Name', 'rtng'],
       ['gateway_ip', 'Gateway IP', 'readonly'],
-      ['media1_name', 'Media 1 Name', 'rdp'],
-      ['media1_ip', 'Media 1 IP', 'readonly'],
-      ['media2_name', 'Media 2 Name', 'rdp'],
-      ['media2_ip', 'Media 2 IP', 'readonly'],
+      ['media_1_name', 'Media 1 Name', 'media'],
+      ['media_1_ip', 'Media 1 IP', 'readonly'],
+      ['media_2_name', 'Media 2 Name', 'media'],
+      ['media_2_ip', 'Media 2 IP', 'readonly'],
       ['carrier_ip', 'Carrier IP', 'text'],
       ['ports', 'Ports', 'text'],
-      ['vendor_name', 'Vendor Name', 'text'],
+      ['vendor', 'Vendor Name', 'text'],
       ['status', 'Status', 'status'],
     ],
   },
@@ -182,6 +195,15 @@ function StatusPill({ value }) {
 function canDo(user, pageKey, action = 'can_view') {
   if (user?.role === 'admin') return true;
   return Boolean(user?.permissions?.[pageKey]?.[action]);
+}
+
+function isMediaPortal(portal) {
+  const type = String(portal?.portal_type || portal?.name || '').toUpperCase();
+  return type.startsWith('RDP') || type.startsWith('DID') || type.includes('DID');
+}
+
+function isRtngPortalName(value) {
+  return String(value || '').toUpperCase().startsWith('RTNG');
 }
 
 function cyberAlertMessage(alert) {
@@ -453,6 +475,7 @@ function App() {
               config={modules[activeKey]}
               rows={data[activeKey]}
               rdps={data.rdps}
+              mediaPortals={data.vos.filter(isMediaPortal)}
             clients={data.clients}
             rtngs={data.vos.filter((portal) => portal.portal_type?.toUpperCase().startsWith('RTNG'))}
             reload={loadAll}
@@ -990,6 +1013,7 @@ function VOSDesktopPage({ rows, user, reload }) {
 
 function ManagementPortal({ management, data, reload, user }) {
   const rtngs = data.vos.filter((portal) => portal.portal_type?.toUpperCase().startsWith('RTNG'));
+  const mediaPortals = data.vos.filter(isMediaPortal);
   const [saving, setSaving] = useState('');
   const canEdit = canDo(user, 'management_portal', 'can_edit');
 
@@ -1063,7 +1087,7 @@ function ManagementPortal({ management, data, reload, user }) {
           </thead>
           <tbody>
             {management.routing.map((row) => (
-              <RoutingMediaRow key={row.gateway_name} row={row} rdps={data.rdps} rtngs={rtngs} saving={saving} onSave={saveManagement} canEdit={canEdit} />
+              <RoutingMediaRow key={row.gateway_name} row={row} routingRows={management.routing} mediaPortals={mediaPortals} rtngs={rtngs} saving={saving} onSave={saveManagement} canEdit={canEdit} />
             ))}
           </tbody>
         </table>
@@ -1326,33 +1350,42 @@ function RdpClusterRow({ row, rdps, saving, onSave, canEdit }) {
   );
 }
 
-function RoutingMediaRow({ row, rdps, rtngs, saving, onSave, canEdit }) {
+function RoutingMediaRow({ row, routingRows = [], mediaPortals, rtngs, saving, onSave, canEdit }) {
   const [form, setForm] = useState(row);
   useEffect(() => setForm(row), [row]);
-  const key = `routing-${row.rtng_vos_id || row.gateway_name}`;
+  const key = `routing-${row.routing_gateway_id || row.rtng_vos_id || row.gateway_name}`;
+  const usedMedia = buildUsedMediaMap(routingRows, form.gateway_name);
 
   const update = (field, value) => {
     const next = { ...form, [field]: value };
     if (field === 'gateway_name') {
       const gateway = rtngs.find((item) => item.portal_type === value || String(item.id) === String(value));
       next.gateway_ip = gateway?.server_ip || '';
+      next.routing_gateway_id = gateway?.id || null;
       next.rtng_vos_id = gateway?.id || null;
       next.gateway_name = gateway?.portal_type || value;
     }
-    if (field === 'media1_name') {
-      const rdp = rdps.find((item) => item.name === value || String(item.id) === String(value));
-      next.media1_ip = rdp?.ip || '';
-      next.media1_vos_id = rdp?.id || null;
-      next.media1_name = rdp?.name || value;
+    if (field === 'media_1_name') {
+      const media = mediaPortals.find((item) => item.portal_type === value || String(item.id) === String(value));
+      next.media_1_ip = media?.server_ip || '';
+      next.media1_ip = media?.server_ip || '';
+      next.media_1_portal_id = media?.id || null;
+      next.media1_vos_id = media?.id || null;
+      next.media_1_name = media?.portal_type || value;
+      next.media1_name = media?.portal_type || value;
     }
-    if (field === 'media2_name') {
-      const rdp = rdps.find((item) => item.name === value || String(item.id) === String(value));
-      next.media2_ip = rdp?.ip || '';
-      next.media2_vos_id = rdp?.id || null;
-      next.media2_name = rdp?.name || value;
+    if (field === 'media_2_name') {
+      const media = mediaPortals.find((item) => item.portal_type === value || String(item.id) === String(value));
+      next.media_2_ip = media?.server_ip || '';
+      next.media2_ip = media?.server_ip || '';
+      next.media_2_portal_id = media?.id || null;
+      next.media2_vos_id = media?.id || null;
+      next.media_2_name = media?.portal_type || value;
+      next.media2_name = media?.portal_type || value;
     }
     setForm(next);
   };
+  const alerts = form.validation_alerts || [];
 
   return (
     <tr className={hasMissing(form) ? 'needsAttention' : ''}>
@@ -1364,29 +1397,36 @@ function RoutingMediaRow({ row, rdps, rtngs, saving, onSave, canEdit }) {
       </td>
       <td>{form.gateway_ip || <span className="missing">Missing</span>}</td>
       <td>{form.clients || <span className="missing">Unassigned</span>}</td>
-      <td>{canEdit ? <RdpSelect value={form.media1_name || ''} rdps={rdps} gatewayName={form.gateway_name} onChange={(value) => update('media1_name', value)} /> : form.media1_name || '-'}</td>
-      <td>{form.media1_ip || <span className="missing">Missing</span>}</td>
-      <td>{canEdit ? <RdpSelect value={form.media2_name || ''} rdps={rdps} gatewayName={form.gateway_name} onChange={(value) => update('media2_name', value)} /> : form.media2_name || '-'}</td>
-      <td>{form.media2_ip || <span className="missing">Missing</span>}</td>
+      <td>{canEdit ? <MediaSelect value={form.media_1_name || form.media1_name || ''} mediaPortals={mediaPortals} usedBy={usedMedia} onChange={(value) => update('media_1_name', value)} /> : form.media_1_name || form.media1_name || '-'}</td>
+      <td>{form.media_1_ip || form.media1_ip || <span className="missing">Missing</span>}</td>
+      <td>{canEdit ? <MediaSelect value={form.media_2_name || form.media2_name || ''} mediaPortals={mediaPortals} usedBy={usedMedia} onChange={(value) => update('media_2_name', value)} /> : form.media_2_name || form.media2_name || '-'}</td>
+      <td>{form.media_2_ip || form.media2_ip || <span className="missing">Missing</span>}</td>
       <td>{canEdit ? <input value={form.carrier_ip || ''} onChange={(event) => update('carrier_ip', event.target.value)} /> : form.carrier_ip || '-'}</td>
       <td>{canEdit ? <input value={form.ports || ''} onChange={(event) => update('ports', event.target.value)} /> : form.ports || '-'}</td>
-      <td>{canEdit ? <input value={form.vendor_name || ''} onChange={(event) => update('vendor_name', event.target.value)} /> : form.vendor_name || '-'}</td>
+      <td>{canEdit ? <input value={form.vendor || form.vendor_name || ''} onChange={(event) => update('vendor', event.target.value)} /> : form.vendor || form.vendor_name || '-'}</td>
       <td>
         {canEdit ? <select value={form.status || 'Active'} onChange={(event) => update('status', event.target.value)}>
           {statuses.map((status) => <option key={status}>{status}</option>)}
         </select> : <StatusPill value={form.status} />}
+        {alerts.map((alert) => <div className="duplicateText" key={alert}>{alert}</div>)}
       </td>
       <td>
         {canEdit ? <button onClick={() => onSave(key, '/management/routing-media-assignments', {
           gateway_name: form.gateway_name,
+          routing_gateway_id: form.routing_gateway_id || form.rtng_vos_id || null,
           rtng_vos_id: form.rtng_vos_id || null,
-          media1_name: form.media1_name || null,
-          media1_vos_id: form.media1_vos_id || null,
-          media2_name: form.media2_name || null,
-          media2_vos_id: form.media2_vos_id || null,
+          media_1_name: form.media_1_name || form.media1_name || null,
+          media_1_portal_id: form.media_1_portal_id || form.media1_vos_id || null,
+          media1_name: form.media_1_name || form.media1_name || null,
+          media1_vos_id: form.media_1_portal_id || form.media1_vos_id || null,
+          media_2_name: form.media_2_name || form.media2_name || null,
+          media_2_portal_id: form.media_2_portal_id || form.media2_vos_id || null,
+          media2_name: form.media_2_name || form.media2_name || null,
+          media2_vos_id: form.media_2_portal_id || form.media2_vos_id || null,
           carrier_ip: form.carrier_ip || null,
           ports: form.ports || null,
-          vendor_name: form.vendor_name || null,
+          vendor: form.vendor || form.vendor_name || null,
+          vendor_name: form.vendor || form.vendor_name || null,
           status: form.status || 'Active',
         })}>{saving === key ? 'Saving...' : 'Save'}</button> : '-'}
       </td>
@@ -1394,13 +1434,25 @@ function RoutingMediaRow({ row, rdps, rtngs, saving, onSave, canEdit }) {
   );
 }
 
-function RdpSelect({ value, rdps, gatewayName, onChange }) {
+function buildUsedMediaMap(routingRows = [], currentGateway = '') {
+  return routingRows.reduce((used, row) => {
+    if ((row.status || 'Active') !== 'Active') return used;
+    if ((row.gateway_name || '') === currentGateway) return used;
+    [row.media_1_name || row.media1_name, row.media_2_name || row.media2_name].filter(Boolean).forEach((name) => {
+      used[name] = row.gateway_name || 'another gateway';
+    });
+    return used;
+  }, {});
+}
+
+function MediaSelect({ value, mediaPortals, usedBy = {}, onChange }) {
   return (
     <select value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">Unassigned</option>
-      {rdps.map((rdp) => {
-        const usedElsewhere = rdp.used_in_routing && rdp.used_in_routing !== gatewayName && rdp.name !== value;
-        return <option key={rdp.id} value={rdp.name} disabled={usedElsewhere}>{rdp.name} - {rdp.ip}{usedElsewhere ? ' (Already Assigned)' : ''}</option>;
+      {mediaPortals.map((portal) => {
+        const assignedTo = usedBy[portal.portal_type];
+        const disabled = Boolean(assignedTo) && portal.portal_type !== value;
+        return <option key={portal.id} value={portal.portal_type} disabled={disabled}>{portal.portal_type} - {portal.server_ip}{disabled ? ` (Already Assigned to ${assignedTo})` : ''}</option>;
       })}
     </select>
   );
@@ -2043,7 +2095,7 @@ function Dashboard({ dashboard, data, setActive }) {
       </div>
 
       <BriefTable title="RDP Brief View" rows={dashboard?.rdp_brief || []} columns={[['rdp_name','RDP Name'],['ip','IP'],['status','Status'],['assigned_cluster','Assigned Cluster'],['client','Client'],['used_in_routing','Used In Routing'],['usage_status','Usage Status']]} />
-      <BriefTable title="Routing Brief View" rows={dashboard?.routing_brief || []} columns={[['gateway_name','RTNG'],['gateway_ip','Gateway IP'],['media1_name','Media 1'],['media2_name','Media 2'],['carrier_ip','Carrier IP'],['ports','Ports'],['vendor_name','Vendor']]} />
+      <BriefTable title="Routing Brief View" rows={dashboard?.routing_brief || []} columns={[['gateway_name','RTNG'],['gateway_ip','Gateway IP'],['media_1_name','Media 1'],['media_2_name','Media 2'],['carrier_ip','Carrier IP'],['ports','Ports'],['vendor','Vendor']]} />
       <BriefTable title="Cluster Brief View" rows={dashboard?.cluster_brief || []} columns={[['cluster_no','Cluster No'],['cluster_name','Cluster Name'],['inbound_ip','Inbound IP'],['client','Client'],['assigned_rdp','Assigned RDP'],['assigned_rdp_ip','RDP IP']]} />
       <BriefTable title="Client Brief View" rows={dashboard?.client_brief || []} columns={[['client','Client'],['assigned_clusters','Assigned Clusters'],['used_rdp','Used RDP'],['outstanding','Outstanding']]} moneyKey="outstanding" moneyInrKey="outstanding_inr" />
       <div className="panel">
@@ -2068,7 +2120,7 @@ function BriefTable({ title, rows, columns, moneyKey, moneyInrKey }) {
   );
 }
 
-function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, user }) {
+function CrudPage({ moduleKey, config, rows, rdps, mediaPortals = [], rtngs, clients = [], reload, user }) {
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -2077,6 +2129,32 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
   const canEdit = canDo(user, pageKey, 'can_edit');
   const canDelete = canDo(user, pageKey, 'can_delete');
   const canExport = canDo(user, pageKey, 'can_export');
+  const tableFields = config.tableFields || config.fields.slice(0, 7);
+  const exportFields = config.tableFields || config.fields;
+
+  const valueFor = (row, key) => {
+    const fallbacks = {
+      media_1_name: 'media1_name',
+      media_1_ip: 'media1_ip',
+      media_2_name: 'media2_name',
+      media_2_ip: 'media2_ip',
+      vendor: 'vendor_name',
+    };
+    return row[key] ?? (fallbacks[key] ? row[fallbacks[key]] : undefined);
+  };
+
+  const renderCell = (row, [key, , type]) => {
+    const value = valueFor(row, key);
+    if (key === 'validation_alerts') {
+      const alerts = Array.isArray(value) ? value : value ? [value] : [];
+      return alerts.length ? alerts.map((alert) => <div className="duplicateText" key={alert}>{alert}</div>) : '-';
+    }
+    if (key === 'status' || type === 'readonlyStatus') return <StatusPill value={value} />;
+    if (type === 'client') return row.client_name || <span className="missing">Unassigned</span>;
+    if (Array.isArray(value)) return value.length ? value.join(', ') : '-';
+    if (value === null || value === undefined || value === '') return config.readOnlyInventory ? '-' : <span className="missing">Missing</span>;
+    return value;
+  };
 
   const filtered = useMemo(() => {
     const needle = query.toLowerCase();
@@ -2084,10 +2162,10 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
   }, [rows, query]);
 
   const exportCsv = () => {
-    const headers = ['id', ...config.fields.map(([key]) => key)];
+    const headers = ['id', ...exportFields.map(([key]) => key)];
     const csv = [
       headers.join(','),
-      ...filtered.map((row) => headers.map((key) => `"${String(row[key] ?? '').replaceAll('"', '""')}"`).join(',')),
+      ...filtered.map((row) => headers.map((key) => `"${String(valueFor(row, key) ?? '').replaceAll('"', '""')}"`).join(',')),
     ].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -2103,11 +2181,33 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
     try {
       const method = record.id ? 'PUT' : 'POST';
       const path = `${config.endpoint}${record.id ? `/${record.id}` : ''}`;
+      const numberOrNull = (value) => (value ? Number(value) : null);
       const body = Object.fromEntries(config.fields.map(([key, , type]) => {
         if (['number', 'client'].includes(type)) return [key, record[key] ? Number(record[key]) : null];
         if (type === 'boolean') return [key, Boolean(record[key])];
         return [key, record[key] || null];
       }));
+      if (moduleKey === 'gateways') {
+        const gatewayId = record.routing_gateway_id || record.rtng_vos_id || null;
+        const media1Id = record.media_1_portal_id || record.media1_vos_id || null;
+        const media2Id = record.media_2_portal_id || record.media2_vos_id || null;
+        body.routing_gateway_id = numberOrNull(gatewayId);
+        body.rtng_vos_id = numberOrNull(gatewayId);
+        body.media_1_portal_id = numberOrNull(media1Id);
+        body.media1_vos_id = numberOrNull(media1Id);
+        body.media_1_name = record.media_1_name || record.media1_name || null;
+        body.media1_name = record.media_1_name || record.media1_name || null;
+        body.media_1_ip = record.media_1_ip || record.media1_ip || null;
+        body.media1_ip = record.media_1_ip || record.media1_ip || null;
+        body.media_2_portal_id = numberOrNull(media2Id);
+        body.media2_vos_id = numberOrNull(media2Id);
+        body.media_2_name = record.media_2_name || record.media2_name || null;
+        body.media2_name = record.media_2_name || record.media2_name || null;
+        body.media_2_ip = record.media_2_ip || record.media2_ip || null;
+        body.media2_ip = record.media_2_ip || record.media2_ip || null;
+        body.vendor = record.vendor || record.vendor_name || null;
+        body.vendor_name = record.vendor || record.vendor_name || null;
+      }
       await request(path, { method, body: JSON.stringify(body) });
       setEditing(null);
       await reload();
@@ -2139,16 +2239,14 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
         <table>
           <thead>
             <tr>
-              {config.fields.slice(0, 7).map(([, label]) => <th key={label}>{label}</th>)}
+              {tableFields.map(([, label]) => <th key={label}>{label}</th>)}
               {!config.readOnlyInventory && (canEdit || canDelete) && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {filtered.map((row) => (
               <tr key={row.id} className={hasMissing(row) ? 'needsAttention' : ''}>
-                {config.fields.slice(0, 7).map(([key, , type]) => (
-                  <td key={key}>{key === 'status' || type === 'readonlyStatus' ? <StatusPill value={row[key]} /> : type === 'client' ? (row.client_name || <span className="missing">Unassigned</span>) : row[key] || (config.readOnlyInventory ? '-' : <span className="missing">Missing</span>)}</td>
-                ))}
+                {tableFields.map((field) => <td key={field[0]}>{renderCell(row, field)}</td>)}
                 {!config.readOnlyInventory && (canEdit || canDelete) && <td className="actions">
                   {canEdit && <button className="iconButton" onClick={() => setEditing(row)} title="Edit"><Edit3 size={16} /></button>}
                   {canDelete && <button className="iconButton danger" onClick={() => remove(row)} title="Delete"><Trash2 size={16} /></button>}
@@ -2163,7 +2261,9 @@ function CrudPage({ moduleKey, config, rows, rdps, rtngs, clients = [], reload, 
         <Editor
           config={config}
           record={editing}
+          routingRows={rows}
           rdps={rdps}
+          mediaPortals={mediaPortals}
           rtngs={rtngs}
           clients={clients}
           saving={saving}
@@ -2179,8 +2279,9 @@ function hasMissing(row) {
   return Object.values(row).some((value) => value === '' || String(value).toUpperCase() === '#N/A');
 }
 
-function Editor({ config, record, rdps, rtngs = [], clients = [], saving, onClose, onSave }) {
+function Editor({ config, record, routingRows = [], rdps, mediaPortals = [], rtngs = [], clients = [], saving, onClose, onSave }) {
   const [form, setForm] = useState(record);
+  const usedMedia = buildUsedMediaMap(routingRows, form.gateway_name);
 
   const setField = (key, value) => {
     const next = { ...form, [key]: value };
@@ -2191,14 +2292,27 @@ function Editor({ config, record, rdps, rtngs = [], clients = [], saving, onClos
     if (key === 'gateway_name') {
       const gateway = rtngs.find((item) => item.portal_type === value);
       next.gateway_ip = gateway?.server_ip || '';
+      next.routing_gateway_id = gateway?.id || null;
+      next.rtng_vos_id = gateway?.id || null;
+      next.gateway_name = gateway?.portal_type || value;
     }
-    if (key === 'media1_name') {
-      const rdp = rdps.find((item) => item.name === value);
-      next.media1_ip = rdp?.ip || '';
+    if (key === 'media_1_name' || key === 'media1_name') {
+      const media = mediaPortals.find((item) => item.portal_type === value || String(item.id) === String(value));
+      next.media_1_ip = media?.server_ip || '';
+      next.media1_ip = media?.server_ip || '';
+      next.media_1_portal_id = media?.id || null;
+      next.media1_vos_id = media?.id || null;
+      next.media_1_name = media?.portal_type || value;
+      next.media1_name = media?.portal_type || value;
     }
-    if (key === 'media2_name') {
-      const rdp = rdps.find((item) => item.name === value);
-      next.media2_ip = rdp?.ip || '';
+    if (key === 'media_2_name' || key === 'media2_name') {
+      const media = mediaPortals.find((item) => item.portal_type === value || String(item.id) === String(value));
+      next.media_2_ip = media?.server_ip || '';
+      next.media2_ip = media?.server_ip || '';
+      next.media_2_portal_id = media?.id || null;
+      next.media2_vos_id = media?.id || null;
+      next.media_2_name = media?.portal_type || value;
+      next.media2_name = media?.portal_type || value;
     }
     setForm(next);
   };
@@ -2234,11 +2348,21 @@ function Editor({ config, record, rdps, rtngs = [], clients = [], saving, onClos
                   ))}
                 </select>
               )}
+              {type === 'media' && (
+                <select value={form[key] || ''} onChange={(event) => setField(key, event.target.value)}>
+                  <option value="">Unassigned</option>
+                  {mediaPortals.map((portal) => {
+                    const assignedTo = usedMedia[portal.portal_type];
+                    const disabled = Boolean(assignedTo) && portal.portal_type !== form[key];
+                    return <option key={portal.id} value={portal.portal_type} disabled={disabled}>{portal.portal_type} - {portal.server_ip}{disabled ? ` (Already Assigned to ${assignedTo})` : ''}</option>;
+                  })}
+                </select>
+              )}
               {type === 'client' && <ClientSelect value={form[key] || ''} clients={clients} onChange={(value) => setField(key, value)} />}
               {type === 'boolean' && <input type="checkbox" checked={Boolean(form[key])} onChange={(event) => setField(key, event.target.checked)} />}
               {type === 'textarea' && <textarea value={form[key] || ''} onChange={(event) => setField(key, event.target.value)} />}
               {type === 'readonly' && <input value={form[key] || ''} readOnly />}
-              {!['status', 'readonlyStatus', 'rdp', 'rtng', 'client', 'boolean', 'textarea', 'readonly'].includes(type) && (
+              {!['status', 'readonlyStatus', 'rdp', 'rtng', 'media', 'client', 'boolean', 'textarea', 'readonly'].includes(type) && (
                 <input type={type} value={form[key] ?? ''} onChange={(event) => setField(key, event.target.value)} />
               )}
             </label>

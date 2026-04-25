@@ -53,10 +53,7 @@ fi
 
 echo "==> Updating NOC360"
 cd "${APP_DIR}"
-BRANCH="${NOC360_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
-if [[ "${BRANCH}" == "HEAD" ]]; then
-  BRANCH="main"
-fi
+BRANCH="${NOC360_BRANCH:-main}"
 git fetch origin "${BRANCH}"
 git reset --hard "origin/${BRANCH}"
 
@@ -83,13 +80,13 @@ nginx -t
 systemctl restart nginx
 
 echo "==> Verifying health"
-for i in {1..30}; do
-  if curl -fsS http://127.0.0.1/api/health >/dev/null; then
+for i in {1..10}; do
+  if curl -fsS http://127.0.0.1:8000/api/health >/dev/null || curl -fsS http://127.0.0.1:8000/health >/dev/null; then
     echo "NOC360 update complete."
     exit 0
   fi
   sleep 2
 done
 
-echo "ERROR: /api/health failed after update. Run: journalctl -u noc360 -f" >&2
+echo "ERROR: backend health failed after 10 attempts. Tried http://127.0.0.1:8000/api/health and /health. Run: journalctl -u noc360 -f" >&2
 exit 1

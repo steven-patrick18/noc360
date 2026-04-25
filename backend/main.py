@@ -144,13 +144,19 @@ class RDPClusterAssignmentIn(BaseModel):
 
 class RoutingMediaAssignmentIn(BaseModel):
     gateway_name: str
+    routing_gateway_id: int | None = None
     rtng_vos_id: int | None = None
+    media_1_name: str | None = None
+    media_1_portal_id: int | None = None
     media1_name: str | None = None
     media1_vos_id: int | None = None
+    media_2_name: str | None = None
+    media_2_portal_id: int | None = None
     media2_name: str | None = None
     media2_vos_id: int | None = None
     carrier_ip: str | None = None
     ports: str | None = None
+    vendor: str | None = None
     vendor_name: str | None = None
     status: str = "Active"
 
@@ -480,6 +486,7 @@ def get_billing_setting(db: Session):
 def backfill_reference_ids(db: Session):
     rdp_by_name = {portal.portal_type: portal for portal in get_rdp_portals(db)}
     rtng_by_name = {portal.portal_type: portal for portal in get_rtng_portals(db)}
+    media_by_name = {portal.portal_type: portal for portal in get_media_portals(db)}
     changed = False
     for cluster in db.query(DialerCluster).all():
         if cluster.rdp_vos_id is None and normalize(cluster.assigned_rdp) in rdp_by_name:
@@ -490,24 +497,48 @@ def backfill_reference_ids(db: Session):
             cluster.assigned_rdp_ip = cluster.rdp_vos.server_ip
             changed = True
     for gateway in db.query(RoutingGateway).all():
+        if not gateway.routing_gateway_id and gateway.rtng_vos_id:
+            gateway.routing_gateway_id = gateway.rtng_vos_id
+            changed = True
+        if not gateway.rtng_vos_id and gateway.routing_gateway_id:
+            gateway.rtng_vos_id = gateway.routing_gateway_id
+            changed = True
         if gateway.rtng_vos_id is None and normalize(gateway.gateway_name) in rtng_by_name:
-            gateway.rtng_vos_id = rtng_by_name[normalize(gateway.gateway_name)].id
+            gateway.rtng_vos_id = gateway.routing_gateway_id = rtng_by_name[normalize(gateway.gateway_name)].id
             changed = True
-        if gateway.media1_vos_id is None and normalize(gateway.media1_name) in rdp_by_name:
-            gateway.media1_vos_id = rdp_by_name[normalize(gateway.media1_name)].id
+        if not gateway.media_1_portal_id and gateway.media1_vos_id:
+            gateway.media_1_portal_id = gateway.media1_vos_id
             changed = True
-        if gateway.media2_vos_id is None and normalize(gateway.media2_name) in rdp_by_name:
-            gateway.media2_vos_id = rdp_by_name[normalize(gateway.media2_name)].id
+        if not gateway.media1_vos_id and gateway.media_1_portal_id:
+            gateway.media1_vos_id = gateway.media_1_portal_id
             changed = True
-        rtng = db.get(VOSPortal, gateway.rtng_vos_id) if gateway.rtng_vos_id else None
-        media1 = db.get(VOSPortal, gateway.media1_vos_id) if gateway.media1_vos_id else None
-        media2 = db.get(VOSPortal, gateway.media2_vos_id) if gateway.media2_vos_id else None
+        if gateway.media1_vos_id is None and normalize(gateway.media1_name) in media_by_name:
+            gateway.media1_vos_id = gateway.media_1_portal_id = media_by_name[normalize(gateway.media1_name)].id
+            changed = True
+        if not gateway.media_2_portal_id and gateway.media2_vos_id:
+            gateway.media_2_portal_id = gateway.media2_vos_id
+            changed = True
+        if not gateway.media2_vos_id and gateway.media_2_portal_id:
+            gateway.media2_vos_id = gateway.media_2_portal_id
+            changed = True
+        if gateway.media2_vos_id is None and normalize(gateway.media2_name) in media_by_name:
+            gateway.media2_vos_id = gateway.media_2_portal_id = media_by_name[normalize(gateway.media2_name)].id
+            changed = True
+        rtng = get_gateway_portal(db, gateway)
+        media1 = get_media_portal(db, gateway, 1)
+        media2 = get_media_portal(db, gateway, 2)
         if rtng:
-            gateway.gateway_name, gateway.gateway_ip = rtng.portal_type, rtng.server_ip
+            if gateway.gateway_name != rtng.portal_type or gateway.gateway_ip != rtng.server_ip:
+                gateway.gateway_name, gateway.gateway_ip = rtng.portal_type, rtng.server_ip
+                changed = True
         if media1:
-            gateway.media1_name, gateway.media1_ip = media1.portal_type, media1.server_ip
+            if gateway.media1_name != media1.portal_type or gateway.media1_ip != media1.server_ip:
+                gateway.media1_name, gateway.media1_ip = media1.portal_type, media1.server_ip
+                changed = True
         if media2:
-            gateway.media2_name, gateway.media2_ip = media2.portal_type, media2.server_ip
+            if gateway.media2_name != media2.portal_type or gateway.media2_ip != media2.server_ip:
+                gateway.media2_name, gateway.media2_ip = media2.portal_type, media2.server_ip
+                changed = True
     if changed:
         db.commit()
 
@@ -1120,6 +1151,9 @@ def operational_dashboard(db: Session):
         alerts.append({"type": "duplicate", "message": f"Duplicate RDP in routing: {item['rdp']} used by {', '.join(item['gateways'])}"})
     for item in audit.get("rdp_missing_links", []):
         alerts.append({"type": "missing", "message": f"Missing RDP link in {item['type']} {item['id']} ({item['field']})"})
+    for gateway in gateways:
+        for warning in routing_validation_alerts(gateway):
+            alerts.append({"type": "duplicate", "message": warning})
     used_rdp = {cluster.live_rdp_name for cluster in clusters if cluster.status == "Active" and normalize(cluster.live_rdp_name)}
     return {
         "summary": {
@@ -1132,7 +1166,7 @@ def operational_dashboard(db: Session):
             "alerts": len(alerts),
         },
         "rdp_brief": rdp_rows,
-        "routing_brief": [{"gateway_name": row.live_gateway_name, "gateway_ip": row.live_gateway_ip, "media1_name": row.live_media1_name, "media2_name": row.live_media2_name, "carrier_ip": row.carrier_ip, "ports": row.ports, "vendor_name": row.vendor_name, "status": row.status} for row in gateways],
+        "routing_brief": [routing_gateway_out(row) for row in gateways],
         "cluster_brief": [{"cluster_no": row.cluster_no, "cluster_name": row.cluster_name, "inbound_ip": row.inbound_ip, "client": row.client_name, "assigned_rdp": row.live_rdp_name, "assigned_rdp_ip": row.live_rdp_ip, "status": row.status} for row in clusters],
         "client_brief": client_rows,
         "alerts": alerts,
@@ -1235,12 +1269,34 @@ def portal_type_query(db: Session, prefix: str):
     return db.query(VOSPortal).filter(VOSPortal.portal_type.ilike(f"{prefix}%"))
 
 
+def is_rtng_portal(portal: VOSPortal | None):
+    return bool(portal and normalize(portal.portal_type) and portal.portal_type.upper().startswith("RTNG"))
+
+
+def is_media_portal(portal: VOSPortal | None):
+    if not portal or not normalize(portal.portal_type):
+        return False
+    portal_type = portal.portal_type.upper()
+    return portal_type.startswith("RDP") or portal_type.startswith("DID") or "DID" in portal_type
+
+
 def get_rdp_portals(db: Session):
     return portal_type_query(db, "RDP").order_by(VOSPortal.portal_type.asc()).all()
 
 
 def get_rtng_portals(db: Session):
     return portal_type_query(db, "RTNG").order_by(VOSPortal.portal_type.asc()).all()
+
+
+def get_media_portals(db: Session):
+    return db.query(VOSPortal).filter(or_(VOSPortal.portal_type.ilike("RDP%"), VOSPortal.portal_type.ilike("DID%"), VOSPortal.portal_type.ilike("%DID%"))).order_by(VOSPortal.portal_type.asc()).all()
+
+
+def get_portal_exact(db: Session, portal_type: str | None):
+    portal_type = normalize(portal_type)
+    if not portal_type:
+        return None
+    return db.query(VOSPortal).filter(VOSPortal.portal_type == portal_type).first()
 
 
 def get_portal_by_type(db: Session, portal_type: str, prefix: str):
@@ -1263,11 +1319,35 @@ def cluster_rdp_portal(db: Session, cluster: DialerCluster):
     return get_portal_by_id(db, cluster.rdp_vos_id, "RDP") or get_portal_by_type(db, cluster.assigned_rdp, "RDP")
 
 
+def gateway_id(gateway: RoutingGateway):
+    return gateway.routing_gateway_id or gateway.rtng_vos_id
+
+
+def media_id(gateway: RoutingGateway, slot: int):
+    return (gateway.media_1_portal_id or gateway.media1_vos_id) if slot == 1 else (gateway.media_2_portal_id or gateway.media2_vos_id)
+
+
+def get_gateway_portal(db: Session, gateway: RoutingGateway):
+    portal_id = gateway_id(gateway)
+    portal = db.get(VOSPortal, portal_id) if portal_id else None
+    if is_rtng_portal(portal):
+        return portal
+    legacy = get_portal_exact(db, gateway.gateway_name)
+    return legacy if is_rtng_portal(legacy) else None
+
+
+def get_media_portal(db: Session, gateway: RoutingGateway, slot: int):
+    portal_id = media_id(gateway, slot)
+    portal = db.get(VOSPortal, portal_id) if portal_id else None
+    if is_media_portal(portal):
+        return portal
+    legacy_name = gateway.media1_name if slot == 1 else gateway.media2_name
+    legacy = get_portal_exact(db, legacy_name)
+    return legacy if is_media_portal(legacy) else None
+
+
 def gateway_portals(db: Session, gateway: RoutingGateway):
-    rtng = get_portal_by_id(db, gateway.rtng_vos_id, "RTNG") or get_portal_by_type(db, gateway.gateway_name, "RTNG")
-    media1 = get_portal_by_id(db, gateway.media1_vos_id, "RDP") or get_portal_by_type(db, gateway.media1_name, "RDP")
-    media2 = get_portal_by_id(db, gateway.media2_vos_id, "RDP") or get_portal_by_type(db, gateway.media2_name, "RDP")
-    return rtng, media1, media2
+    return get_gateway_portal(db, gateway), get_media_portal(db, gateway, 1), get_media_portal(db, gateway, 2)
 
 
 def sync_cluster_live_rdp(db: Session, cluster: DialerCluster):
@@ -1283,17 +1363,26 @@ def sync_cluster_live_rdp(db: Session, cluster: DialerCluster):
 
 
 def sync_gateway_live_fields(gateway: RoutingGateway):
-    if gateway.rtng_vos:
-        gateway.gateway_name = gateway.rtng_vos.portal_type
-        gateway.gateway_ip = gateway.rtng_vos.server_ip
-    if gateway.media1_vos:
-        gateway.media1_name = gateway.media1_vos.portal_type
-        gateway.media1_ip = gateway.media1_vos.server_ip
+    gateway_portal = gateway.routing_gateway_portal or gateway.rtng_vos
+    media1_portal = gateway.media_1_portal or gateway.media1_vos
+    media2_portal = gateway.media_2_portal or gateway.media2_vos
+    if is_rtng_portal(gateway_portal):
+        gateway.routing_gateway_id = gateway_portal.id
+        gateway.rtng_vos_id = gateway_portal.id
+        gateway.gateway_name = gateway_portal.portal_type
+        gateway.gateway_ip = gateway_portal.server_ip
+    if is_media_portal(media1_portal):
+        gateway.media_1_portal_id = media1_portal.id
+        gateway.media1_vos_id = media1_portal.id
+        gateway.media1_name = media1_portal.portal_type
+        gateway.media1_ip = media1_portal.server_ip
     elif not normalize(gateway.media1_name):
         gateway.media1_ip = None
-    if gateway.media2_vos:
-        gateway.media2_name = gateway.media2_vos.portal_type
-        gateway.media2_ip = gateway.media2_vos.server_ip
+    if is_media_portal(media2_portal):
+        gateway.media_2_portal_id = media2_portal.id
+        gateway.media2_vos_id = media2_portal.id
+        gateway.media2_name = media2_portal.portal_type
+        gateway.media2_ip = media2_portal.server_ip
     elif not normalize(gateway.media2_name):
         gateway.media2_ip = None
     return gateway
@@ -1365,23 +1454,33 @@ def sync_vos_references(db: Session, old_type: str, portal: VOSPortal):
     new_type = normalize(portal.portal_type)
     if not new_type:
         return
+    new_upper = new_type.upper()
+    old_upper = old_type.upper() if old_type else ""
+    is_new_media = new_upper.startswith("RDP") or new_upper.startswith("DID") or "DID" in new_upper
+    was_media = old_upper.startswith("RDP") or old_upper.startswith("DID") or "DID" in old_upper
 
-    if new_type.upper().startswith("RDP") or (old_type and old_type.upper().startswith("RDP")):
+    if new_upper.startswith("RDP") or old_upper.startswith("RDP"):
         if old_type and old_type != new_type:
             db.query(DialerCluster).filter(DialerCluster.assigned_rdp == old_type).update({"assigned_rdp": new_type})
+        db.query(DialerCluster).filter(DialerCluster.rdp_vos_id == portal.id).update({"assigned_rdp": new_type, "assigned_rdp_ip": portal.server_ip})
+        db.query(DialerCluster).filter(DialerCluster.assigned_rdp == new_type).update({"assigned_rdp_ip": portal.server_ip})
+
+    if is_new_media or was_media:
+        if old_type and old_type != new_type:
             db.query(RoutingGateway).filter(RoutingGateway.media1_name == old_type).update({"media1_name": new_type})
             db.query(RoutingGateway).filter(RoutingGateway.media2_name == old_type).update({"media2_name": new_type})
-        db.query(DialerCluster).filter(DialerCluster.rdp_vos_id == portal.id).update({"assigned_rdp": new_type, "assigned_rdp_ip": portal.server_ip})
         db.query(RoutingGateway).filter(RoutingGateway.media1_vos_id == portal.id).update({"media1_name": new_type, "media1_ip": portal.server_ip})
+        db.query(RoutingGateway).filter(RoutingGateway.media_1_portal_id == portal.id).update({"media1_name": new_type, "media1_ip": portal.server_ip})
         db.query(RoutingGateway).filter(RoutingGateway.media2_vos_id == portal.id).update({"media2_name": new_type, "media2_ip": portal.server_ip})
-        db.query(DialerCluster).filter(DialerCluster.assigned_rdp == new_type).update({"assigned_rdp_ip": portal.server_ip})
+        db.query(RoutingGateway).filter(RoutingGateway.media_2_portal_id == portal.id).update({"media2_name": new_type, "media2_ip": portal.server_ip})
         db.query(RoutingGateway).filter(RoutingGateway.media1_name == new_type).update({"media1_ip": portal.server_ip})
         db.query(RoutingGateway).filter(RoutingGateway.media2_name == new_type).update({"media2_ip": portal.server_ip})
 
-    if new_type.upper().startswith("RTNG") or (old_type and old_type.upper().startswith("RTNG")):
+    if new_upper.startswith("RTNG") or old_upper.startswith("RTNG"):
         if old_type and old_type != new_type:
             db.query(RoutingGateway).filter(RoutingGateway.gateway_name == old_type).update({"gateway_name": new_type})
         db.query(RoutingGateway).filter(RoutingGateway.rtng_vos_id == portal.id).update({"gateway_name": new_type, "gateway_ip": portal.server_ip})
+        db.query(RoutingGateway).filter(RoutingGateway.routing_gateway_id == portal.id).update({"gateway_name": new_type, "gateway_ip": portal.server_ip})
         db.query(RoutingGateway).filter(RoutingGateway.gateway_name == new_type).update({"gateway_ip": portal.server_ip})
 
 
@@ -1417,32 +1516,59 @@ def apply_cluster_assignment_rules(db: Session, payload, cluster_id=None):
 
 
 def apply_gateway_rules(db: Session, payload, record_id=None):
-    gateway = get_portal_by_id(db, getattr(payload, "rtng_vos_id", None), "RTNG") or get_portal_by_type(db, payload.gateway_name, "RTNG")
+    gateway_name = normalize(getattr(payload, "gateway_name", None))
+    if gateway_name and gateway_name.upper().startswith("RDP"):
+        raise HTTPException(status_code=400, detail="Invalid mapping: Media node selected as gateway")
+    gateway = get_portal_by_id(db, getattr(payload, "routing_gateway_id", None), "RTNG") or get_portal_by_id(db, getattr(payload, "rtng_vos_id", None), "RTNG") or get_portal_by_type(db, gateway_name, "RTNG")
     if not gateway:
         raise HTTPException(status_code=400, detail="Routing gateway must exist in VOS Portal Master with RTNG portal_type")
+    payload.routing_gateway_id = gateway.id
     payload.rtng_vos_id = gateway.id
     payload.gateway_name = gateway.portal_type
     payload.gateway_ip = gateway.server_ip
 
-    for name_field, ip_field, id_field in [("media1_name", "media1_ip", "media1_vos_id"), ("media2_name", "media2_ip", "media2_vos_id")]:
-        media_name = normalize(getattr(payload, name_field))
-        rdp = get_portal_by_id(db, getattr(payload, id_field, None), "RDP") or get_portal_by_type(db, media_name, "RDP")
-        setattr(payload, name_field, media_name)
-        if not rdp and not media_name:
-            setattr(payload, id_field, None)
+    for slot, legacy_name_field, alias_name_field, ip_field, legacy_id_field, alias_id_field in [
+        (1, "media1_name", "media_1_name", "media1_ip", "media1_vos_id", "media_1_portal_id"),
+        (2, "media2_name", "media_2_name", "media2_ip", "media2_vos_id", "media_2_portal_id"),
+    ]:
+        media_name = normalize(getattr(payload, alias_name_field, None)) or normalize(getattr(payload, legacy_name_field, None))
+        portal_id = getattr(payload, alias_id_field, None) or getattr(payload, legacy_id_field, None)
+        media = db.get(VOSPortal, portal_id) if portal_id else None
+        if media and is_rtng_portal(media):
+            raise HTTPException(status_code=400, detail=f"Invalid mapping: Routing gateway selected as Media {slot}")
+        if not media and media_name:
+            if media_name.upper().startswith("RTNG"):
+                raise HTTPException(status_code=400, detail=f"Invalid mapping: Routing gateway selected as Media {slot}")
+            media = get_portal_exact(db, media_name)
+        if not media and not media_name:
+            setattr(payload, legacy_id_field, None)
+            setattr(payload, alias_id_field, None)
+            setattr(payload, legacy_name_field, None)
+            setattr(payload, alias_name_field, None)
             setattr(payload, ip_field, None)
+            setattr(payload, f"media_{slot}_ip", None)
             continue
-        if not rdp:
-            raise HTTPException(status_code=400, detail=f"{name_field} must be an RDP portal from VOS Portal Master")
-        setattr(payload, id_field, rdp.id)
-        setattr(payload, name_field, rdp.portal_type)
-        setattr(payload, ip_field, rdp.server_ip)
+        if not is_media_portal(media):
+            raise HTTPException(status_code=400, detail=f"Media {slot} must be RDP or DID from VOS Portal Master")
+        setattr(payload, legacy_id_field, media.id)
+        setattr(payload, alias_id_field, media.id)
+        setattr(payload, legacy_name_field, media.portal_type)
+        setattr(payload, alias_name_field, media.portal_type)
+        setattr(payload, ip_field, media.server_ip)
+        setattr(payload, f"media_{slot}_ip", media.server_ip)
+    payload.vendor_name = normalize(getattr(payload, "vendor", None)) or normalize(payload.vendor_name)
+    payload.vendor = payload.vendor_name
     if payload.status == "Active":
-        selected_ids = {value for value in [payload.media1_vos_id, payload.media2_vos_id] if value}
-        for rdp_id in selected_ids:
+        selected_ids = {value for value in [payload.media_1_portal_id, payload.media1_vos_id, payload.media_2_portal_id, payload.media2_vos_id] if value}
+        for media_portal_id in selected_ids:
             existing = db.query(RoutingGateway).filter(
                 RoutingGateway.status == "Active",
-                or_(RoutingGateway.media1_vos_id == rdp_id, RoutingGateway.media2_vos_id == rdp_id),
+                or_(
+                    RoutingGateway.media1_vos_id == media_portal_id,
+                    RoutingGateway.media2_vos_id == media_portal_id,
+                    RoutingGateway.media_1_portal_id == media_portal_id,
+                    RoutingGateway.media_2_portal_id == media_portal_id,
+                ),
             )
             if record_id is not None:
                 existing = existing.filter(RoutingGateway.id != record_id)
@@ -1458,6 +1584,59 @@ def active_rdp_duplicate_names(clusters):
         if cluster.status == "Active" and key:
             clients_by_rdp.setdefault(key, {"clients": set(), "name": cluster.live_rdp_name}).get("clients").add(cluster.client_id)
     return {item["name"] for item in clients_by_rdp.values() if len(item["clients"]) > 1}
+
+
+def routing_validation_alerts(row: RoutingGateway):
+    alerts = []
+    gateway_name = normalize(row.live_gateway_name)
+    media1_name = normalize(row.live_media1_name)
+    media2_name = normalize(row.live_media2_name)
+    if gateway_name and gateway_name.upper().startswith("RDP"):
+        alerts.append("Invalid mapping: Media node selected as gateway")
+    if media1_name and media1_name.upper().startswith("RTNG"):
+        alerts.append("Invalid mapping: Routing gateway selected as Media 1")
+    if media2_name and media2_name.upper().startswith("RTNG"):
+        alerts.append("Invalid mapping: Routing gateway selected as Media 2")
+    return alerts
+
+
+def routing_gateway_out(row: RoutingGateway):
+    sync_gateway_live_fields(row)
+    gateway_id_value = row.routing_gateway_id or row.rtng_vos_id
+    media1_id_value = row.media_1_portal_id or row.media1_vos_id
+    media2_id_value = row.media_2_portal_id or row.media2_vos_id
+    return {
+        "id": row.id,
+        "gateway_name": row.live_gateway_name,
+        "gateway_ip": row.live_gateway_ip,
+        "routing_gateway_id": gateway_id_value,
+        "rtng_vos_id": gateway_id_value,
+        "client_id": row.client_id,
+        "media_1_portal_id": media1_id_value,
+        "media1_vos_id": media1_id_value,
+        "media_1_name": row.live_media1_name,
+        "media1_name": row.live_media1_name,
+        "media_1_ip": row.live_media1_ip,
+        "media1_ip": row.live_media1_ip,
+        "media_2_portal_id": media2_id_value,
+        "media2_vos_id": media2_id_value,
+        "media_2_name": row.live_media2_name,
+        "media2_name": row.live_media2_name,
+        "media_2_ip": row.live_media2_ip,
+        "media2_ip": row.live_media2_ip,
+        "carrier_ip": row.carrier_ip,
+        "ports": row.ports,
+        "vendor": row.vendor_name,
+        "vendor_name": row.vendor_name,
+        "status": row.status,
+        "notes": row.notes,
+        "validation_alerts": routing_validation_alerts(row),
+    }
+
+
+def routing_gateway_db_payload(payload):
+    db_fields = {column.name for column in RoutingGateway.__table__.columns}
+    return {key: value for key, value in payload.model_dump(exclude={"validation_alerts"}).items() if key in db_fields}
 
 
 def cluster_assignment_out(cluster: DialerCluster):
@@ -1512,18 +1691,27 @@ def routing_media_assignment_out(gateway_name, gateway_ip, mapping=None):
         "id": mapping.id if mapping else None,
         "gateway_name": gateway_name,
         "gateway_ip": gateway_ip,
-        "rtng_vos_id": mapping.rtng_vos_id if mapping else None,
-        "media1_vos_id": mapping.media1_vos_id if mapping else None,
+        "routing_gateway_id": (mapping.routing_gateway_id or mapping.rtng_vos_id) if mapping else None,
+        "rtng_vos_id": (mapping.routing_gateway_id or mapping.rtng_vos_id) if mapping else None,
+        "media_1_portal_id": (mapping.media_1_portal_id or mapping.media1_vos_id) if mapping else None,
+        "media1_vos_id": (mapping.media_1_portal_id or mapping.media1_vos_id) if mapping else None,
+        "media_1_name": mapping.live_media1_name if mapping else None,
         "media1_name": mapping.live_media1_name if mapping else None,
+        "media_1_ip": mapping.live_media1_ip if mapping else None,
         "media1_ip": mapping.live_media1_ip if mapping else None,
-        "media2_vos_id": mapping.media2_vos_id if mapping else None,
+        "media_2_portal_id": (mapping.media_2_portal_id or mapping.media2_vos_id) if mapping else None,
+        "media2_vos_id": (mapping.media_2_portal_id or mapping.media2_vos_id) if mapping else None,
+        "media_2_name": mapping.live_media2_name if mapping else None,
         "media2_name": mapping.live_media2_name if mapping else None,
+        "media_2_ip": mapping.live_media2_ip if mapping else None,
         "media2_ip": mapping.live_media2_ip if mapping else None,
         "carrier_ip": mapping.carrier_ip if mapping else None,
         "ports": mapping.ports if mapping else None,
+        "vendor": mapping.vendor_name if mapping else None,
         "vendor_name": mapping.vendor_name if mapping else None,
         "status": mapping.status if mapping else "Pending",
         "clients": ", ".join(client_names),
+        "validation_alerts": routing_validation_alerts(mapping) if mapping else [],
     }
 
 
@@ -1560,6 +1748,7 @@ def system_audit(db: Session):
     gateways = db.query(RoutingGateway).order_by(RoutingGateway.gateway_name.asc()).all()
     clients = {client.id: client for client in db.query(Client).all()}
     rdp_portals = {portal.id: portal for portal in get_rdp_portals(db)}
+    media_portals = {portal.id: portal for portal in get_media_portals(db)}
     rtng_portals = {portal.id: portal for portal in get_rtng_portals(db)}
     duplicate_names = active_rdp_duplicate_names(clusters)
     audit = {
@@ -1585,10 +1774,16 @@ def system_audit(db: Session):
         if gateway.status != "Active":
             continue
         sync_gateway_live_fields(gateway)
-        for rdp_id, rdp_name in {(gateway.media1_vos_id, gateway.live_media1_name), (gateway.media2_vos_id, gateway.live_media2_name)}:
-            key = rdp_id or normalize(rdp_name)
+        seen_in_gateway = set()
+        for portal_id, portal_name in [(media_id(gateway, 1), gateway.live_media1_name), (media_id(gateway, 2), gateway.live_media2_name)]:
+            key = portal_id or normalize(portal_name)
+            if not key or key in seen_in_gateway:
+                continue
+            seen_in_gateway.add(key)
+            if (normalize(portal_name) or "").upper().startswith("RTNG"):
+                continue
             if key:
-                routing_usage.setdefault(key, {"rdp": rdp_name, "gateways": set()})["gateways"].add(gateway.live_gateway_name)
+                routing_usage.setdefault(key, {"rdp": portal_name, "gateways": set()})["gateways"].add(gateway.live_gateway_name)
     for item in routing_usage.values():
         if len(item["gateways"]) > 1:
             audit["duplicate_rdp_in_routing"].append({"rdp": item["rdp"], "gateways": sorted(item["gateways"])})
@@ -1610,13 +1805,23 @@ def system_audit(db: Session):
 
     for gateway in gateways:
         rtng, media1, media2 = gateway_portals(db, gateway)
-        if gateway.rtng_vos_id and gateway.rtng_vos_id not in rtng_portals:
-            audit["orphan_assignment_records"].append({"type": "RoutingGateway", "id": gateway.id, "field": "rtng_vos_id", "value": gateway.rtng_vos_id})
-        for field, portal in [("media1", media1), ("media2", media2)]:
-            vos_id = getattr(gateway, f"{field}_vos_id")
+        for field in ["routing_gateway_id", "rtng_vos_id"]:
+            vos_id = getattr(gateway, field)
+            if vos_id and vos_id not in rtng_portals:
+                audit["orphan_assignment_records"].append({"type": "RoutingGateway", "id": gateway.id, "field": field, "value": vos_id})
+        for field, alias_field, portal in [("media1", "media_1_portal_id", media1), ("media2", "media_2_portal_id", media2)]:
+            legacy_id = getattr(gateway, f"{field}_vos_id")
+            alias_id = getattr(gateway, alias_field)
             name = getattr(gateway, f"{field}_name")
-            if vos_id and vos_id not in rdp_portals:
-                issue = {"type": "RoutingGateway", "id": gateway.id, "field": f"{field}_vos_id", "value": vos_id}
+            for id_field, vos_id in [(f"{field}_vos_id", legacy_id), (alias_field, alias_id)]:
+                if vos_id and vos_id not in media_portals:
+                    issue = {"type": "RoutingGateway", "id": gateway.id, "field": id_field, "value": vos_id}
+                    audit["missing_rdp_references"].append(issue)
+                    audit["rdp_missing_links"].append(issue)
+            if (normalize(name) or "").upper().startswith("RTNG"):
+                audit["orphan_assignment_records"].append({"type": "RoutingGateway", "id": gateway.id, "field": f"{field}_name", "value": name, "message": f"Invalid mapping: Routing gateway selected as {field}"})
+            if legacy_id and legacy_id not in rdp_portals and legacy_id not in media_portals:
+                issue = {"type": "RoutingGateway", "id": gateway.id, "field": f"{field}_vos_id", "value": legacy_id}
                 audit["missing_rdp_references"].append(issue)
                 audit["rdp_missing_links"].append(issue)
             if normalize(name) and not portal:
@@ -1836,16 +2041,14 @@ def delete_rdp(record_id: int, user: User = Depends(require_page("rdp_media", "c
 @app.get("/routing-gateways", response_model=list[RoutingGatewayOut])
 def get_routing_gateways(db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways"))):
     rows = db.query(RoutingGateway).order_by(RoutingGateway.gateway_name.asc()).all()
-    for row in rows:
-        sync_gateway_live_fields(row)
-    return rows
+    return [routing_gateway_out(row) for row in rows]
 
 
 @app.post("/api/routing-gateways", response_model=RoutingGatewayOut)
 @app.post("/routing-gateways", response_model=RoutingGatewayOut)
 def create_routing_gateway(payload: RoutingGatewayCreate, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_create"))):
     payload = apply_gateway_rules(db, payload)
-    return save_record(db, RoutingGateway(**payload.model_dump()))
+    return routing_gateway_out(save_record(db, RoutingGateway(**routing_gateway_db_payload(payload))))
 
 
 @app.put("/api/routing-gateways/{record_id}", response_model=RoutingGatewayOut)
@@ -1853,9 +2056,9 @@ def create_routing_gateway(payload: RoutingGatewayCreate, db: Session = Depends(
 def update_routing_gateway(record_id: int, payload: RoutingGatewayUpdate, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_edit"))):
     record = get_record(db, RoutingGateway, record_id)
     payload = apply_gateway_rules(db, payload, record.id)
-    for key, value in payload.model_dump().items():
+    for key, value in routing_gateway_db_payload(payload).items():
         setattr(record, key, value)
-    return save_record(db, record)
+    return routing_gateway_out(save_record(db, record))
 
 
 @app.delete("/api/routing-gateways/{record_id}")
@@ -2390,7 +2593,7 @@ def save_rdp_cluster_assignment(payload: RDPClusterAssignmentIn, db: Session = D
 @app.get("/management/routing-media-assignments")
 def get_routing_media_assignments(db: Session = Depends(get_db), user: User = Depends(require_page("management_portal"))):
     mappings = {mapping.gateway_name: mapping for mapping in db.query(RoutingGateway).all()}
-    mappings_by_id = {mapping.rtng_vos_id: mapping for mapping in mappings.values() if mapping.rtng_vos_id}
+    mappings_by_id = {(mapping.routing_gateway_id or mapping.rtng_vos_id): mapping for mapping in mappings.values() if (mapping.routing_gateway_id or mapping.rtng_vos_id)}
     clusters = db.query(DialerCluster).all()
     for mapping in mappings.values():
         mapping._management_clusters = clusters
@@ -2405,33 +2608,41 @@ def get_routing_media_assignments(db: Session = Depends(get_db), user: User = De
 @app.post("/api/management/routing-media-assignments")
 @app.post("/management/routing-media-assignments")
 def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
-    gateway = get_portal_by_type(db, payload.gateway_name, "RTNG")
+    gateway = get_portal_by_id(db, payload.routing_gateway_id, "RTNG") or get_portal_by_id(db, payload.rtng_vos_id, "RTNG") or get_portal_by_type(db, payload.gateway_name, "RTNG")
     if not gateway:
         raise HTTPException(status_code=400, detail="Routing gateway must exist in VOS Portal Master")
 
     data = RoutingGatewayUpdate(
-        gateway_name=payload.gateway_name,
+        gateway_name=gateway.portal_type,
         gateway_ip=gateway.server_ip,
-        rtng_vos_id=payload.rtng_vos_id or gateway.id,
-        media1_name=payload.media1_name,
+        routing_gateway_id=payload.routing_gateway_id or payload.rtng_vos_id or gateway.id,
+        rtng_vos_id=payload.routing_gateway_id or payload.rtng_vos_id or gateway.id,
+        media_1_name=payload.media_1_name or payload.media1_name,
+        media_1_ip=None,
+        media_1_portal_id=payload.media_1_portal_id or payload.media1_vos_id,
+        media1_name=payload.media_1_name or payload.media1_name,
         media1_ip=None,
-        media1_vos_id=payload.media1_vos_id,
-        media2_name=payload.media2_name,
+        media1_vos_id=payload.media_1_portal_id or payload.media1_vos_id,
+        media_2_name=payload.media_2_name or payload.media2_name,
+        media_2_ip=None,
+        media_2_portal_id=payload.media_2_portal_id or payload.media2_vos_id,
+        media2_name=payload.media_2_name or payload.media2_name,
         media2_ip=None,
-        media2_vos_id=payload.media2_vos_id,
+        media2_vos_id=payload.media_2_portal_id or payload.media2_vos_id,
         carrier_ip=payload.carrier_ip,
         ports=payload.ports,
-        vendor_name=payload.vendor_name,
+        vendor=payload.vendor or payload.vendor_name,
+        vendor_name=payload.vendor or payload.vendor_name,
         status=payload.status,
     )
-    record = db.query(RoutingGateway).filter(RoutingGateway.rtng_vos_id == data.rtng_vos_id).first()
+    record = db.query(RoutingGateway).filter(or_(RoutingGateway.routing_gateway_id == data.routing_gateway_id, RoutingGateway.rtng_vos_id == data.rtng_vos_id)).first()
     if not record:
         record = db.query(RoutingGateway).filter(RoutingGateway.gateway_name == data.gateway_name).first()
     data = apply_gateway_rules(db, data, record.id if record else None)
     if not record:
-        record = RoutingGateway(**data.model_dump())
+        record = RoutingGateway(**routing_gateway_db_payload(data))
     else:
-        for key, value in data.model_dump().items():
+        for key, value in routing_gateway_db_payload(data).items():
             setattr(record, key, value)
     saved = save_record(db, record)
     saved._management_clusters = db.query(DialerCluster).all()

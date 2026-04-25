@@ -96,19 +96,28 @@ class RDPOut(RDPBase, OrmModel):
 class RoutingGatewayBase(BaseModel):
     gateway_name: str
     gateway_ip: Optional[str] = None
+    routing_gateway_id: Optional[int] = None
     rtng_vos_id: Optional[int] = None
     client_id: Optional[int] = None
+    media_1_name: Optional[str] = None
+    media_1_ip: Optional[str] = None
+    media_1_portal_id: Optional[int] = None
     media1_name: Optional[str] = None
     media1_ip: Optional[str] = None
     media1_vos_id: Optional[int] = None
+    media_2_name: Optional[str] = None
+    media_2_ip: Optional[str] = None
+    media_2_portal_id: Optional[int] = None
     media2_name: Optional[str] = None
     media2_ip: Optional[str] = None
     media2_vos_id: Optional[int] = None
     carrier_ip: Optional[str] = None
     ports: Optional[str] = None
+    vendor: Optional[str] = None
     vendor_name: Optional[str] = None
     status: str = "Active"
     notes: Optional[str] = None
+    validation_alerts: list[str] = []
 
 
 class RoutingGatewayCreate(RoutingGatewayBase):
