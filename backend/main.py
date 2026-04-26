@@ -1,13 +1,18 @@
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
 import shutil
+import sqlite3
 import subprocess
+import threading
+import time
+import urllib.request
 import zipfile
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -27,7 +32,7 @@ from sqlalchemy import inspect, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from database import Base, SessionLocal, engine, get_db
+from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
 from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
     ActivityLogOut,
@@ -344,6 +349,22 @@ class WebphonePbxConnectIn(BaseModel):
     password: str
 
 
+class DangerZoneOptionsIn(BaseModel):
+    billing: bool = False
+    clients: bool = False
+    vos: bool = False
+    chat_tickets: bool = False
+    webphone: bool = False
+    activity_logs: bool = False
+    full_factory_reset: bool = False
+
+
+class DangerZoneClearIn(BaseModel):
+    confirm_text: str
+    admin_password: str
+    options: DangerZoneOptionsIn
+
+
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -488,6 +509,13 @@ def require_roles(*roles):
     return checker
 
 
+def require_super_admin(user: User = Depends(current_user)):
+    super_admin_username = os.getenv("NOC360_SUPER_ADMIN_USERNAME", "admin")
+    if user.role != "admin" or user.username != super_admin_username:
+        raise HTTPException(status_code=403, detail="Super Admin access required")
+    return user
+
+
 def require_page(page_key: str, action: str = "can_view"):
     def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
         if user.role == "admin":
@@ -554,15 +582,92 @@ def normalize(value):
 
 
 SENSITIVE_LOG_KEYS = {"password", "password_hash", "login_password", "confirm_password", "new_password", "current_password", "anti_hack_password", "sip_password", "trunk_password", "trunk_pass"}
+GEO_IP_CACHE: dict[str, dict[str, str | None]] = {}
+GEO_IP_PENDING: set[str] = set()
+LOCAL_GEO = {"country": "Local", "city": "Internal", "isp": "Local / Internal"}
 
 
-def activity_ip(request: Request | None):
+def get_client_ip(request: Request | None):
     if not request:
         return None
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",", 1)[0].strip()
+        for part in forwarded.split(","):
+            candidate = part.strip()
+            if candidate and candidate.lower() != "unknown":
+                return candidate
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip and real_ip.strip().lower() != "unknown":
+        return real_ip.strip()
     return request.client.host if request.client else None
+
+
+def is_local_ip(ip_value: str | None):
+    if not ip_value:
+        return False
+    lowered = ip_value.strip().lower()
+    if lowered in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        parsed = ipaddress.ip_address(lowered)
+        return parsed.is_private or parsed.is_loopback or parsed.is_link_local or parsed.is_reserved
+    except ValueError:
+        return False
+
+
+def empty_geo():
+    return {"country": None, "city": None, "isp": None}
+
+
+def fetch_ip_location(ip_value: str):
+    geo = {"country": None, "city": None, "isp": None}
+    try:
+        with urllib.request.urlopen(f"http://ip-api.com/json/{ip_value}?fields=status,country,city,isp,message", timeout=1.5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("status") == "success":
+            geo = {
+                "country": normalize(payload.get("country")),
+                "city": normalize(payload.get("city")),
+                "isp": normalize(payload.get("isp")),
+            }
+    except Exception:
+        logger.debug("IP geo lookup failed for %s", ip_value, exc_info=True)
+    return geo
+
+
+def resolve_ip_location_async(ip_value: str):
+    try:
+        time.sleep(0.8)
+        geo = fetch_ip_location(ip_value)
+        GEO_IP_CACHE[ip_value] = geo
+        if any(geo.values()):
+            with SessionLocal() as geo_db:
+                geo_db.query(ActivityLog).filter(ActivityLog.ip_address == ip_value).update(
+                    {"country": geo.get("country"), "city": geo.get("city"), "isp": geo.get("isp")},
+                    synchronize_session=False,
+                )
+                geo_db.commit()
+    finally:
+        GEO_IP_PENDING.discard(ip_value)
+
+
+def schedule_ip_location_lookup(ip_value: str):
+    if not ip_value or ip_value in GEO_IP_PENDING:
+        return
+    GEO_IP_PENDING.add(ip_value)
+    thread = threading.Thread(target=resolve_ip_location_async, args=(ip_value,), daemon=True)
+    thread.start()
+
+
+def lookup_ip_location(ip_value: str | None):
+    if not ip_value:
+        return empty_geo()
+    if is_local_ip(ip_value):
+        return LOCAL_GEO.copy()
+    if ip_value in GEO_IP_CACHE:
+        return GEO_IP_CACHE[ip_value]
+    schedule_ip_location_lookup(ip_value)
+    return empty_geo()
 
 
 def sanitize_activity_value(value):
@@ -610,6 +715,8 @@ def log_activity(
     role: str | None = None,
 ):
     try:
+        ip_address = get_client_ip(request)
+        geo = lookup_ip_location(ip_address)
         db.add(ActivityLog(
             user_id=user.id if user else None,
             username=user.username if user else username,
@@ -621,7 +728,10 @@ def log_activity(
             description=description,
             old_value=activity_json(old_value),
             new_value=activity_json(new_value),
-            ip_address=activity_ip(request),
+            ip_address=ip_address,
+            country=geo.get("country"),
+            city=geo.get("city"),
+            isp=geo.get("isp"),
             user_agent=request.headers.get("user-agent") if request else None,
         ))
         if commit:
@@ -964,6 +1074,127 @@ def track_activity(payload: ActivityLogTrackIn, request: Request, db: Session = 
         raise HTTPException(status_code=400, detail="Unsupported activity action")
     log_activity(db, user, payload.action, payload.module, payload.record_type, payload.record_id, payload.description, payload.old_value, payload.new_value, request=request, commit=True)
     return {"logged": True}
+
+
+def create_factory_reset_backup():
+    backup_dir = Path(__file__).resolve().parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    backup_path = backup_dir / f"factory_reset_before_{timestamp}.db"
+    if backup_path.exists():
+        backup_path = backup_dir / f"factory_reset_before_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+    try:
+        with sqlite3.connect(str(DATABASE_PATH)) as source, sqlite3.connect(str(backup_path)) as target:
+            source.backup(target)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Backup failed. Clear operation cancelled: {exc}") from exc
+    return backup_path
+
+
+def delete_all(db: Session, model):
+    count = db.query(model).count()
+    if count:
+        db.query(model).delete(synchronize_session=False)
+    return count
+
+
+def clear_factory_data(db: Session, options: DangerZoneOptionsIn):
+    selected = options.model_dump()
+    if options.full_factory_reset:
+        selected.update({
+            "billing": True,
+            "clients": True,
+            "vos": True,
+            "chat_tickets": True,
+            "webphone": True,
+        })
+    selected.pop("full_factory_reset", None)
+    if not any(selected.values()):
+        raise HTTPException(status_code=400, detail="Select at least one data area to clear")
+
+    counts: dict[str, int] = {}
+
+    def add_count(label: str, value: int):
+        counts[label] = counts.get(label, 0) + int(value or 0)
+
+    def clear_billing():
+        add_count("client_ledger", delete_all(db, ClientLedger))
+        add_count("billing_charges", delete_all(db, BillingCharge))
+        add_count("data_costs", delete_all(db, DataCost))
+
+    def clear_chat_tickets():
+        add_count("chat_messages", delete_all(db, ChatMessage))
+        add_count("chat_group_messages", delete_all(db, ChatGroupMessage))
+        add_count("chat_group_members", delete_all(db, ChatGroupMember))
+        add_count("chat_groups", delete_all(db, ChatGroup))
+        add_count("chat_rooms", delete_all(db, ChatRoom))
+        add_count("ticket_messages", delete_all(db, TicketMessage))
+        add_count("tickets", delete_all(db, Ticket))
+
+    if selected.get("billing"):
+        clear_billing()
+    if selected.get("chat_tickets"):
+        clear_chat_tickets()
+    if selected.get("webphone"):
+        add_count("webphone_call_logs", delete_all(db, WebphoneCallLog))
+        add_count("webphone_profiles", delete_all(db, WebphoneProfile))
+    if selected.get("vos"):
+        add_count("routing_gateways", delete_all(db, RoutingGateway))
+        add_count("dialer_clusters", delete_all(db, DialerCluster))
+        add_count("rdp", delete_all(db, RDP))
+        add_count("vos_portals", delete_all(db, VOSPortal))
+    if selected.get("clients"):
+        # Client deletion must also remove client-owned data to avoid orphaned records.
+        if not selected.get("billing"):
+            clear_billing()
+        if not selected.get("chat_tickets"):
+            clear_chat_tickets()
+        customer_ids = [row.id for row in db.query(User.id).filter(User.role == "customer").all()]
+        if customer_ids:
+            db.query(ActivityLog).filter(ActivityLog.user_id.in_(customer_ids)).update({"user_id": None}, synchronize_session=False)
+            add_count("client_access", db.query(ClientAccess).filter(ClientAccess.user_id.in_(customer_ids)).delete(synchronize_session=False))
+            add_count("customer_page_permissions", db.query(PagePermission).filter(PagePermission.user_id.in_(customer_ids)).delete(synchronize_session=False))
+            add_count("customer_users", db.query(User).filter(User.id.in_(customer_ids)).delete(synchronize_session=False))
+        add_count("client_access", delete_all(db, ClientAccess))
+        db.query(User).filter(User.client_id.isnot(None)).update({"client_id": None}, synchronize_session=False)
+        db.query(DialerCluster).update({"client_id": None}, synchronize_session=False)
+        db.query(RoutingGateway).update({"client_id": None}, synchronize_session=False)
+        add_count("clients", delete_all(db, Client))
+    if selected.get("activity_logs"):
+        add_count("activity_logs", delete_all(db, ActivityLog))
+
+    return selected, counts
+
+
+@app.post("/api/admin/danger-zone/clear-data")
+@app.post("/admin/danger-zone/clear-data")
+def clear_danger_zone_data(payload: DangerZoneClearIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_super_admin)):
+    if payload.confirm_text != "CLEAR NOC360 DATA":
+        raise HTTPException(status_code=400, detail="Confirmation text does not match")
+    if not verify_password(payload.admin_password or "", user.password_hash):
+        raise HTTPException(status_code=403, detail="Admin password is incorrect")
+    backup_path = create_factory_reset_backup()
+    try:
+        selected, counts = clear_factory_data(db, payload.options)
+        log_activity(
+            db,
+            user,
+            "factory_reset_clear",
+            "danger_zone",
+            "Database",
+            None,
+            "Danger Zone data clear completed",
+            new_value={"options": selected, "backup_file": str(backup_path), "deleted_counts": counts},
+            request=request,
+        )
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Clear operation failed after backup. No commit was made: {exc}") from exc
+    return {"cleared": True, "backup_file": str(backup_path), "deleted_counts": counts}
 
 
 def internal_user_ids(db: Session):

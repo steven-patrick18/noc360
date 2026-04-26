@@ -28,6 +28,7 @@ import {
   Search,
   Send,
   Server,
+  Settings,
   Star,
   Ticket,
   Trash2,
@@ -84,6 +85,7 @@ const modulePageKeys = {
   myChat: 'my_chat',
   myTickets: 'my_tickets',
   webphone: 'webphone',
+  dangerZone: 'danger_zone',
 };
 
 const modules = {
@@ -96,6 +98,7 @@ const modules = {
   chatCenter: { label: 'Chat Center', icon: MessageSquare },
   tickets: { label: 'Tickets', icon: Ticket },
   webphone: { label: 'Webphone', icon: Phone },
+  dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
   vos: {
@@ -451,9 +454,10 @@ function App() {
     const pageKey = modulePageKeys[moduleKey];
     return !pageKey || auth.user.permissions?.[pageKey]?.can_view;
   };
+  const isSuperAdmin = auth.user.role === 'admin' && auth.user.username === 'admin';
   const activeModules = auth.user.role === 'customer'
     ? Object.fromEntries(Object.entries(customerModules).filter(([key]) => hasPermission(key)))
-    : Object.fromEntries(Object.entries(modules).filter(([key]) => hasPermission(key)));
+    : Object.fromEntries(Object.entries(modules).filter(([key]) => (key !== 'dangerZone' || isSuperAdmin) && hasPermission(key)));
   const moduleBadges = {
     chatCenter: communicationSummary.chat_unread,
     myChat: communicationSummary.direct_unread,
@@ -555,6 +559,8 @@ function App() {
             <TicketsPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
           ) : activeKey === 'webphone' ? (
             <WebphonePage user={auth.user} />
+          ) : activeKey === 'dangerZone' ? (
+            <DangerZonePage user={auth.user} reload={loadAll} />
           ) : activeKey === 'vosDesktop' ? (
             <VOSDesktopPage rows={data.vosDesktop} user={auth.user} reload={loadAll} />
           ) : activeKey === 'billing' ? (
@@ -669,6 +675,164 @@ function ThemeSettingsModal({ selected, onSelect, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function DangerZonePage({ user, reload }) {
+  const emptyOptions = {
+    billing: false,
+    clients: false,
+    vos: false,
+    chat_tickets: false,
+    webphone: false,
+    activity_logs: false,
+    full_factory_reset: false,
+  };
+  const [options, setOptions] = useState(emptyOptions);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isSuperAdmin = user?.role === 'admin' && user?.username === 'admin';
+  const selectedCount = Object.entries(options).filter(([key, value]) => key !== 'full_factory_reset' && value).length;
+  const fullOptions = options.full_factory_reset
+    ? { ...options, billing: true, clients: true, vos: true, chat_tickets: true, webphone: true }
+    : options;
+
+  const toggleOption = (key) => {
+    setResult(null);
+    setOptions((current) => {
+      const next = { ...current, [key]: !current[key] };
+      if (key === 'full_factory_reset' && !current.full_factory_reset) {
+        return { ...next, billing: true, clients: true, vos: true, chat_tickets: true, webphone: true };
+      }
+      return next;
+    });
+  };
+
+  const submitClear = async (event) => {
+    event.preventDefault();
+    setError('');
+    setResult(null);
+    if (confirmText !== 'CLEAR NOC360 DATA') {
+      setError('Confirmation text does not match.');
+      return;
+    }
+    if (!adminPassword) {
+      setError('Admin password is required.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await request('/admin/danger-zone/clear-data', {
+        method: 'POST',
+        body: JSON.stringify({ confirm_text: confirmText, admin_password: adminPassword, options: fullOptions }),
+      });
+      setResult(response);
+      setOptions(emptyOptions);
+      setConfirmText('');
+      setAdminPassword('');
+      setModalOpen(false);
+      await reload?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!isSuperAdmin) {
+    return <div className="panel"><h2>Danger Zone</h2><p className="muted">Super Admin access required.</p></div>;
+  }
+
+  const optionRows = [
+    ['billing', 'Clear Billing Data', 'Deletes ledger entries, billing charges, and data cost rows.'],
+    ['clients', 'Clear Client Data', 'Deletes clients, customer users, client access, and linked client-owned records.'],
+    ['vos', 'Clear VOS/Routing/RDP Data', 'Deletes VOS portals, media nodes, routing gateways, and dialer clusters.'],
+    ['chat_tickets', 'Clear Chat/Tickets', 'Deletes direct chat, group chat, tickets, and ticket messages.'],
+    ['webphone', 'Clear Webphone Data', 'Deletes Webphone profiles and call logs.'],
+    ['activity_logs', 'Clear Activity Logs', 'Deletes audit logs. A new reset audit entry is created after clearing.'],
+    ['full_factory_reset', 'Full Factory Reset', 'Selects all operational data areas except Activity Logs unless checked.'],
+  ];
+
+  return (
+    <section className="dangerZonePage">
+      <div className="panel dangerHero">
+        <span className="eyebrow">Settings / Danger Zone</span>
+        <h2><AlertTriangle size={24} /> Database Clear / Factory Reset</h2>
+        <p>This rare-use tool clears selected operational data only after exact confirmation, super admin password verification, and a successful automatic database backup.</p>
+        <strong>It never runs during install or update, never drops tables, and keeps the admin login and system permissions intact.</strong>
+      </div>
+
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+      {result && (
+        <div className="toastSuccess dangerResult">
+          <strong>Selected data cleared after backup.</strong>
+          <span>Backup: {result.backup_file}</span>
+          <small>Deleted rows: {Object.entries(result.deleted_counts || {}).map(([key, value]) => `${key}: ${value}`).join(', ') || '0'}</small>
+        </div>
+      )}
+
+      <div className="panel dangerPanel">
+        <div className="sectionHeader">
+          <div>
+            <span className="eyebrow">Manual destructive action</span>
+            <h2>Clear Selected Data</h2>
+          </div>
+          <span className="typeBadge">{selectedCount || (options.full_factory_reset ? 5 : 0)} selected</span>
+        </div>
+        <div className="dangerOptionsGrid">
+          {optionRows.map(([key, label, description]) => (
+            <label key={key} className={`dangerOption ${key === 'full_factory_reset' ? 'factoryOption' : ''}`}>
+              <input type="checkbox" checked={Boolean(options[key])} onChange={() => toggleOption(key)} />
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+            </label>
+          ))}
+        </div>
+        <div className="dangerNotice">
+          <AlertTriangle size={18} />
+          <span>Backup is created first at <code>backend/backups/factory_reset_before_YYYYMMDD_HHMM.db</code>. If backup fails, nothing is deleted.</span>
+        </div>
+        <button className="danger dangerClearButton" disabled={!Object.values(fullOptions).some(Boolean)} onClick={() => { setError(''); setModalOpen(true); }}>
+          Clear Selected Data
+        </button>
+      </div>
+
+      {modalOpen && (
+        <div className="modalBackdrop modal-overlay">
+          <form className="modal modal-box dangerConfirmModal" onSubmit={submitClear}>
+            <div className="modalHeader">
+              <div>
+                <span className="eyebrow">Final confirmation</span>
+                <h2><AlertTriangle size={22} /> Clear NOC360 Data</h2>
+              </div>
+              <button type="button" className="iconButton" onClick={() => setModalOpen(false)}><X size={18} /></button>
+            </div>
+            <div className="dangerFinalWarning">
+              This will delete selected operational data after creating a backup. Type the exact phrase and enter the admin password.
+            </div>
+            <label>
+              <span>Type exactly: CLEAR NOC360 DATA</span>
+              <input value={confirmText} onChange={(event) => setConfirmText(event.target.value)} placeholder="CLEAR NOC360 DATA" autoFocus />
+            </label>
+            <label>
+              <span>Admin Password</span>
+              <input type="password" value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} autoComplete="current-password" />
+            </label>
+            {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+            <div className="modalActions">
+              <button type="button" onClick={() => setModalOpen(false)}>Cancel</button>
+              <button className="danger" disabled={busy}>{busy ? 'Backing up and clearing...' : 'I Understand, Clear Data'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1436,6 +1600,12 @@ function formatLogValue(value) {
   }
 }
 
+function activityLocation(row) {
+  const parts = [row.country, row.city].filter(Boolean);
+  const location = parts.length ? parts.join(', ') : 'Unknown';
+  return row.isp ? `${location} - ${row.isp}` : location;
+}
+
 function ActivityLogsPage({ users, user }) {
   const [filters, setFilters] = useState({ date_from: '', date_to: '', username: '', role: '', module: '', action: '', search: '' });
   const [logs, setLogs] = useState([]);
@@ -1497,7 +1667,7 @@ function ActivityLogsPage({ users, user }) {
       {loading && <div className="loading">Loading activity trail...</div>}
       <div className="tableWrap">
         <table>
-          <thead><tr><th>Date/Time</th><th>User</th><th>Role</th><th>Module</th><th>Action</th><th>Description</th><th>IP</th><th>Details</th></tr></thead>
+          <thead><tr><th>Date/Time</th><th>User</th><th>Role</th><th>Module</th><th>Action</th><th>Description</th><th>IP</th><th>Location</th><th>ISP</th><th>Details</th></tr></thead>
           <tbody>{logs.map((row) => (
             <tr key={row.id}>
               <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '-'}</td>
@@ -1507,6 +1677,8 @@ function ActivityLogsPage({ users, user }) {
               <td>{row.action}</td>
               <td>{row.description || '-'}</td>
               <td>{row.ip_address || '-'}</td>
+              <td>{[row.country, row.city].filter(Boolean).join(', ') || 'Unknown'}</td>
+              <td>{row.isp || 'Unknown'}</td>
               <td><button onClick={() => setSelected(row)}>Details</button></td>
             </tr>
           ))}</tbody>
@@ -1523,6 +1695,8 @@ function ActivityLogsPage({ users, user }) {
               <p><strong>Action:</strong> {selected.action}</p>
               <p><strong>Record:</strong> {selected.record_type || '-'} #{selected.record_id || '-'}</p>
               <p><strong>IP:</strong> {selected.ip_address || '-'}</p>
+              <p><strong>Location:</strong> {activityLocation(selected)}</p>
+              <p><strong>ISP:</strong> {selected.isp || 'Unknown'}</p>
               <p className="wide"><strong>User Agent:</strong> {selected.user_agent || '-'}</p>
               <div className="wide"><strong>Old Value</strong><pre>{formatLogValue(selected.old_value)}</pre></div>
               <div className="wide"><strong>New Value</strong><pre>{formatLogValue(selected.new_value)}</pre></div>

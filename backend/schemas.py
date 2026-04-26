@@ -223,6 +223,9 @@ class ActivityLogOut(OrmModel):
     old_value: Optional[str] = None
     new_value: Optional[str] = None
     ip_address: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    isp: Optional[str] = None
     user_agent: Optional[str] = None
     created_at: Optional[datetime] = None
 

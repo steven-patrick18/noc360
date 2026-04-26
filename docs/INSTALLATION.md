@@ -132,6 +132,19 @@ Both should return:
 {"status":"ok"}
 ```
 
+## Real User IP in Activity Logs
+
+NOC360 reads `X-Forwarded-For` first, then `X-Real-IP`, then the direct client address. Keep these headers in the Nginx `/api/` proxy block so Activity Logs show the real public IP instead of `127.0.0.1`:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Approximate country, city, and ISP are resolved from public IP only. Local/private IPs are shown as `Local, Internal - Local / Internal`.
+
 ## Common Errors
 
 ### Nginx shows the default page
