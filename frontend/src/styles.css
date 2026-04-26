@@ -224,7 +224,7 @@ nav button.active {
 
 .terminalLayout {
   display: grid;
-  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 360px) minmax(520px, 1fr) minmax(300px, 360px);
   gap: 18px;
   align-items: stretch;
 }
@@ -415,6 +415,151 @@ nav button.active {
 
 .sshTerminalPane .xterm {
   height: 100%;
+}
+
+.terminalCommands {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 220px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.commandTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.commandTabs button.active {
+  border-color: rgba(0, 229, 255, 0.58);
+  background: rgba(0, 229, 255, 0.1);
+}
+
+.commandForm {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(0, 229, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(2, 7, 19, 0.38);
+}
+
+.commandForm textarea {
+  min-height: 70px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+.commandFormGrid {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 8px;
+}
+
+.commandList {
+  display: grid;
+  gap: 10px;
+  min-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.commandCard {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(0, 229, 255, 0.12);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(14, 19, 32, 0.74), rgba(2, 7, 19, 0.68));
+}
+
+.commandCardHeader,
+.commandMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.commandCard code,
+.commandDetailGrid code {
+  display: block;
+  padding: 8px 9px;
+  border: 1px solid rgba(0, 229, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #d7fff4;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.commandCard p,
+.commandDetailGrid p {
+  margin: 0;
+  color: var(--text-soft, #a8b3c7);
+  font-size: 13px;
+}
+
+.commandMeta {
+  color: var(--text-muted, #6c7a92);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 800;
+}
+
+.riskBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 156, 0.35);
+  color: var(--accent-success, #00ff9c);
+  background: rgba(0, 255, 156, 0.08);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.riskBadge.medium {
+  border-color: rgba(255, 200, 87, 0.38);
+  color: var(--accent-warning, #ffc857);
+  background: rgba(255, 200, 87, 0.1);
+}
+
+.riskBadge.dangerous {
+  border-color: rgba(255, 77, 77, 0.46);
+  color: var(--accent-danger, #ff4d4d);
+  background: rgba(255, 77, 77, 0.1);
+}
+
+.commandActions {
+  flex-wrap: wrap;
+}
+
+.commandDetailModal {
+  max-width: 760px !important;
+}
+
+.commandDetailGrid {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+
+.commandDetailGrid label {
+  display: grid;
+  gap: 6px;
+}
+
+.commandDetailGrid label span:first-child {
+  color: var(--text-soft, #a8b3c7);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 800;
 }
 
 @media (max-width: 1100px) {
@@ -4540,6 +4685,12 @@ tbody tr:hover {
   scrollbar-width: thin;
 }
 
+.panel.terminalCommands {
+  max-height: calc(100vh - 220px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
 .terminalConnectionList {
   min-height: 180px;
   overflow-x: hidden !important;
@@ -4550,21 +4701,41 @@ tbody tr:hover {
   scrollbar-width: thin;
 }
 
+.commandList {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scrollbar-color: rgba(0, 229, 255, 0.55) rgba(2, 7, 19, 0.45);
+  scrollbar-width: thin;
+}
+
 .panel.terminalConnections::-webkit-scrollbar,
-.terminalConnectionList::-webkit-scrollbar {
+.terminalConnectionList::-webkit-scrollbar,
+.commandList::-webkit-scrollbar {
   width: 9px;
 }
 
 .panel.terminalConnections::-webkit-scrollbar-track,
-.terminalConnectionList::-webkit-scrollbar-track {
+.terminalConnectionList::-webkit-scrollbar-track,
+.commandList::-webkit-scrollbar-track {
   background: rgba(2, 7, 19, 0.45);
   border-radius: 999px;
 }
 
 .panel.terminalConnections::-webkit-scrollbar-thumb,
-.terminalConnectionList::-webkit-scrollbar-thumb {
+.terminalConnectionList::-webkit-scrollbar-thumb,
+.commandList::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, rgba(0, 229, 255, 0.72), rgba(124, 92, 255, 0.54));
   border-radius: 999px;
+}
+
+@media (max-width: 1500px) {
+  .terminalLayout {
+    grid-template-columns: minmax(300px, 360px) minmax(520px, 1fr) !important;
+  }
+
+  .terminalCommands {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -4633,5 +4804,15 @@ tbody tr:hover {
 
   .topbar {
     padding: 14px !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .terminalLayout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .terminalCommands {
+    grid-column: auto !important;
   }
 }

@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
+from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
     ActivityLogOut,
     BillingChargeCreate,
@@ -78,6 +78,11 @@ from schemas import (
     SSHConnectionOut,
     SSHConnectionPasswordOut,
     SSHConnectionUpdate,
+    TerminalCommandCreate,
+    TerminalCommandHistoryCreate,
+    TerminalCommandHistoryOut,
+    TerminalCommandOut,
+    TerminalCommandUpdate,
     LoginIn,
     PagePermissionIn,
     PagePermissionOut,
@@ -134,6 +139,37 @@ TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
 TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
 DEFAULT_USD_TO_INR = 83.0
+TERMINAL_RISK_LEVELS = {"Safe", "Medium", "Dangerous"}
+TERMINAL_SECRET_WORDS = {"password", "passwd", "token", "secret", "key"}
+TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "iptables -f", "iptables flush", "ufw reset", "systemctl stop")
+DEFAULT_TERMINAL_COMMANDS = [
+    {"title": "Uptime", "command": "uptime", "purpose": "Shows how long the server has been running and load averages.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Top Processes", "command": "top", "purpose": "Interactive process and resource monitor.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "HTop", "command": "htop", "purpose": "Interactive process monitor if htop is installed.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Disk Usage", "command": "df -h", "purpose": "Checks filesystem disk usage in readable units.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Memory Usage", "command": "free -m", "purpose": "Shows memory and swap usage in MB.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "IP Addresses", "command": "ip a", "purpose": "Lists network interfaces and assigned IP addresses.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Ping Google DNS", "command": "ping 8.8.8.8", "purpose": "Basic external connectivity test.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Trace Google DNS", "command": "traceroute 8.8.8.8", "purpose": "Shows network route hops to Google DNS.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "System Journal Errors", "command": "journalctl -xe", "purpose": "Shows recent systemd journal errors and context.", "category": "Linux", "risk_level": "Safe"},
+    {"title": "Validate Nginx Config", "command": "nginx -t", "purpose": "Checks Nginx config syntax before reload or restart.", "category": "Nginx", "risk_level": "Safe"},
+    {"title": "Restart Nginx", "command": "systemctl restart nginx", "purpose": "Restarts Nginx after config changes.", "category": "Nginx", "risk_level": "Medium"},
+    {"title": "Nginx Error Log", "command": "tail -f /var/log/nginx/error.log", "purpose": "Follows live Nginx error output.", "category": "Nginx", "risk_level": "Safe"},
+    {"title": "NOC360 Service Status", "command": "systemctl status noc360", "purpose": "Checks whether the NOC360 backend service is running.", "category": "NOC360", "risk_level": "Safe"},
+    {"title": "NOC360 Recent Logs", "command": "journalctl -u noc360 -n 100 --no-pager", "purpose": "Shows the latest 100 backend service log lines.", "category": "NOC360", "risk_level": "Safe"},
+    {"title": "Pull NOC360 Code", "command": "cd /opt/noc360 && git pull", "purpose": "Pulls latest code in the production app directory.", "category": "NOC360", "risk_level": "Medium"},
+    {"title": "Run NOC360 Update", "command": "bash /opt/noc360/update.sh", "purpose": "Runs the production update script.", "category": "NOC360", "risk_level": "Medium"},
+    {"title": "Asterisk Console", "command": "asterisk -rvvv", "purpose": "Opens the Asterisk CLI with verbose output.", "category": "Asterisk", "risk_level": "Safe"},
+    {"title": "Asterisk Channels", "command": "asterisk -rx \"core show channels\"", "purpose": "Lists active Asterisk channels.", "category": "Asterisk", "risk_level": "Safe"},
+    {"title": "PJSIP Endpoints", "command": "asterisk -rx \"pjsip show endpoints\"", "purpose": "Lists configured PJSIP endpoints and status.", "category": "Asterisk", "risk_level": "Safe"},
+    {"title": "PJSIP Registrations", "command": "asterisk -rx \"pjsip show registrations\"", "purpose": "Shows outbound PJSIP registration state.", "category": "Asterisk", "risk_level": "Safe"},
+    {"title": "Enable RTP Debug", "command": "asterisk -rx \"rtp set debug on\"", "purpose": "Turns on RTP packet debug for troubleshooting audio.", "category": "Asterisk", "risk_level": "Medium"},
+    {"title": "Restart Asterisk", "command": "systemctl restart asterisk", "purpose": "Restarts Asterisk. Active calls may drop.", "category": "Asterisk", "risk_level": "Medium"},
+    {"title": "Top Memory Processes", "command": "ps aux --sort=-%mem | head", "purpose": "Shows processes using the most memory.", "category": "Disk/Process", "risk_level": "Safe"},
+    {"title": "Top CPU Processes", "command": "ps aux --sort=-%cpu | head", "purpose": "Shows processes using the most CPU.", "category": "Disk/Process", "risk_level": "Safe"},
+    {"title": "Netstat Listening Ports", "command": "netstat -tulpn", "purpose": "Lists listening TCP/UDP ports if netstat is installed.", "category": "Disk/Process", "risk_level": "Safe"},
+    {"title": "SS Listening Ports", "command": "ss -tulpn", "purpose": "Lists listening TCP/UDP ports using ss.", "category": "Disk/Process", "risk_level": "Safe"},
+]
 PAGE_KEYS = [
     "dashboard",
     "my_dashboard",
@@ -872,6 +908,26 @@ def seed_user_access_defaults(db: Session):
     db.commit()
 
 
+def seed_terminal_default_commands(db: Session):
+    for item in DEFAULT_TERMINAL_COMMANDS:
+        exists = db.query(TerminalCommand).filter(
+            TerminalCommand.title == item["title"],
+            TerminalCommand.command == item["command"],
+        ).first()
+        if exists:
+            continue
+        db.add(TerminalCommand(
+            title=item["title"],
+            command=item["command"],
+            purpose=item["purpose"],
+            category=item["category"],
+            risk_level=item["risk_level"],
+            created_by="system",
+            is_default=True,
+        ))
+    db.commit()
+
+
 def get_billing_setting(db: Session):
     setting = db.get(BillingSetting, 1)
     if not setting:
@@ -985,6 +1041,7 @@ def startup():
         normalize_ledger_currency(db)
         normalize_data_cost_currency(db)
         seed_user_access_defaults(db)
+        seed_terminal_default_commands(db)
         ensure_chat_rooms_for_clients(db)
 
 
@@ -2111,6 +2168,52 @@ def terminal_connection_out(record: SSHConnection):
     }
 
 
+def terminal_command_risk(command: str, requested: str | None = None):
+    lowered = (command or "").lower()
+    if any(pattern in lowered for pattern in TERMINAL_DANGEROUS_PATTERNS):
+        return "Dangerous"
+    risk = normalize(requested) or "Safe"
+    return risk if risk in TERMINAL_RISK_LEVELS else "Safe"
+
+
+def terminal_command_has_secret(command: str | None):
+    lowered = (command or "").lower()
+    return any(word in lowered for word in TERMINAL_SECRET_WORDS)
+
+
+def validate_terminal_command_payload(payload: TerminalCommandCreate | TerminalCommandUpdate):
+    if not normalize(payload.title):
+        raise HTTPException(status_code=400, detail="Command title is required")
+    if not normalize(payload.command):
+        raise HTTPException(status_code=400, detail="Command text is required")
+
+
+def terminal_command_out(record: TerminalCommand):
+    return {
+        "id": record.id,
+        "title": record.title,
+        "command": record.command,
+        "purpose": record.purpose,
+        "category": record.category,
+        "risk_level": record.risk_level,
+        "created_by": record.created_by,
+        "is_default": bool(record.is_default),
+        "created_at": record.created_at,
+    }
+
+
+def terminal_history_out(record: TerminalCommandHistory):
+    return {
+        "id": record.id,
+        "connection_id": record.connection_id,
+        "connection_name": record.connection_name,
+        "user_id": record.user_id,
+        "username": record.username,
+        "command": record.command,
+        "created_at": record.created_at,
+    }
+
+
 def require_paramiko():
     if paramiko is None:
         raise HTTPException(status_code=500, detail="Paramiko is not installed. Run pip install -r requirements.txt")
@@ -2257,6 +2360,110 @@ def test_terminal_connection(record_id: int, request: Request, db: Session = Dep
         raise HTTPException(status_code=400, detail=f"SSH test failed: {exc}") from exc
     log_activity(db, user, "test_ssh_connection", "terminal", "SSHConnection", record.id, f"SSH test succeeded for {record.connection_name}", request=request, commit=True)
     return {"ok": True, "message": "SSH connection successful"}
+
+
+@app.get("/api/terminal/commands", response_model=list[TerminalCommandOut])
+@app.get("/terminal/commands", response_model=list[TerminalCommandOut])
+def get_terminal_commands(
+    search: str | None = None,
+    category: str | None = None,
+    risk_level: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_terminal()),
+):
+    query = db.query(TerminalCommand)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(TerminalCommand.title.ilike(like), TerminalCommand.command.ilike(like), TerminalCommand.purpose.ilike(like), TerminalCommand.category.ilike(like)))
+    if category:
+        query = query.filter(TerminalCommand.category == category)
+    if risk_level:
+        query = query.filter(TerminalCommand.risk_level == risk_level)
+    rows = query.order_by(TerminalCommand.category.asc(), TerminalCommand.title.asc(), TerminalCommand.id.asc()).all()
+    return [terminal_command_out(row) for row in rows]
+
+
+@app.post("/api/terminal/commands", response_model=TerminalCommandOut)
+@app.post("/terminal/commands", response_model=TerminalCommandOut)
+def create_terminal_command(payload: TerminalCommandCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_create"))):
+    validate_terminal_command_payload(payload)
+    command_text = normalize(payload.command)
+    record = TerminalCommand(
+        title=normalize(payload.title),
+        command=command_text,
+        purpose=payload.purpose,
+        category=normalize(payload.category) or "General",
+        risk_level=terminal_command_risk(command_text, payload.risk_level),
+        created_by=user.username,
+        is_default=False,
+    )
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "create_terminal_command", "terminal", "TerminalCommand", record.id, f"Created terminal command {record.title}", new_value=record, request=request)
+    db.commit()
+    db.refresh(record)
+    return terminal_command_out(record)
+
+
+@app.put("/api/terminal/commands/{record_id}", response_model=TerminalCommandOut)
+@app.put("/terminal/commands/{record_id}", response_model=TerminalCommandOut)
+def update_terminal_command(record_id: int, payload: TerminalCommandUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_edit"))):
+    validate_terminal_command_payload(payload)
+    record = get_record(db, TerminalCommand, record_id)
+    old_value = sanitize_activity_value(record)
+    command_text = normalize(payload.command)
+    record.title = normalize(payload.title)
+    record.command = command_text
+    record.purpose = payload.purpose
+    record.category = normalize(payload.category) or "General"
+    record.risk_level = terminal_command_risk(command_text, payload.risk_level)
+    db.commit()
+    db.refresh(record)
+    log_activity(db, user, "update_terminal_command", "terminal", "TerminalCommand", record.id, f"Updated terminal command {record.title}", old_value=old_value, new_value=record, request=request, commit=True)
+    return terminal_command_out(record)
+
+
+@app.delete("/api/terminal/commands/{record_id}")
+@app.delete("/terminal/commands/{record_id}")
+def delete_terminal_command(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_delete"))):
+    record = get_record(db, TerminalCommand, record_id)
+    old_value = sanitize_activity_value(record)
+    db.delete(record)
+    log_activity(db, user, "delete_terminal_command", "terminal", "TerminalCommand", record_id, f"Deleted terminal command {record.title}", old_value=old_value, request=request)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/terminal/command-history", response_model=list[TerminalCommandHistoryOut])
+@app.get("/terminal/command-history", response_model=list[TerminalCommandHistoryOut])
+def get_terminal_command_history(
+    connection_id: int | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_terminal()),
+):
+    query = db.query(TerminalCommandHistory)
+    if connection_id:
+        query = query.filter(TerminalCommandHistory.connection_id == connection_id)
+    rows = query.order_by(TerminalCommandHistory.created_at.desc(), TerminalCommandHistory.id.desc()).limit(limit).all()
+    return [terminal_history_out(row) for row in rows]
+
+
+@app.post("/api/terminal/command-history")
+@app.post("/terminal/command-history")
+def create_terminal_command_history(payload: TerminalCommandHistoryCreate, db: Session = Depends(get_db), user: User = Depends(require_terminal())):
+    command_text = normalize(payload.command)
+    if not command_text:
+        raise HTTPException(status_code=400, detail="Command is required")
+    if terminal_command_has_secret(command_text):
+        return {"saved": False, "skipped": True, "reason": "Command contains sensitive keyword"}
+    if payload.connection_id and not db.get(SSHConnection, payload.connection_id):
+        raise HTTPException(status_code=400, detail="SSH connection does not exist")
+    record = TerminalCommandHistory(connection_id=payload.connection_id, user_id=user.id, command=command_text)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {"saved": True, "item": terminal_history_out(record)}
 
 
 @app.websocket("/api/terminal/ws/{connection_id}")

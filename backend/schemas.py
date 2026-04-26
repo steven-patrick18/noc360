@@ -416,6 +416,44 @@ class TerminalSessionOut(OrmModel):
     status: str
 
 
+class TerminalCommandBase(BaseModel):
+    title: str
+    command: str
+    purpose: Optional[str] = None
+    category: str = "General"
+    risk_level: str = "Safe"
+
+
+class TerminalCommandCreate(TerminalCommandBase):
+    pass
+
+
+class TerminalCommandUpdate(TerminalCommandBase):
+    pass
+
+
+class TerminalCommandOut(TerminalCommandBase, OrmModel):
+    id: int
+    created_by: Optional[str] = None
+    is_default: bool = False
+    created_at: Optional[datetime] = None
+
+
+class TerminalCommandHistoryCreate(BaseModel):
+    connection_id: Optional[int] = None
+    command: str
+
+
+class TerminalCommandHistoryOut(OrmModel):
+    id: int
+    connection_id: Optional[int] = None
+    connection_name: Optional[str] = None
+    user_id: int
+    username: Optional[str] = None
+    command: str
+    created_at: Optional[datetime] = None
+
+
 class BillingSettingOut(OrmModel):
     id: int
     usd_to_inr_rate: float = 83.0

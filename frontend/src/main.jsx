@@ -2596,13 +2596,19 @@ function TerminalCenterPage({ user }) {
   const [revealed, setRevealed] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [commands, setCommands] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [terminalActions, setTerminalActions] = useState({});
+  const [commandForm, setCommandForm] = useState({ title: '', command: '', purpose: '', category: 'Custom', risk_level: 'Safe' });
 
   const loadConnections = async () => {
     setConnections(await request('/terminal/connections'));
   };
+  const loadCommands = async () => setCommands(await request('/terminal/commands'));
+  const loadHistory = async () => setHistory(await request('/terminal/command-history'));
 
   useEffect(() => {
-    loadConnections().catch((err) => setError(err.message));
+    Promise.all([loadConnections(), loadCommands(), loadHistory()]).catch((err) => setError(err.message));
   }, []);
 
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -2695,6 +2701,36 @@ function TerminalCenterPage({ user }) {
   const renameTab = (tab) => {
     const name = window.prompt('Rename terminal tab', tab.name);
     if (name) updateTab(tab.id, { name });
+  };
+
+  const copyTerminalCommand = async (command) => {
+    await copyPlainText(command);
+    setMessage('Command copied');
+  };
+
+  const sendCommandToActiveTerminal = async (command, run = false) => {
+    if (!activeTabId) {
+      setError('Open a terminal tab first');
+      return;
+    }
+    const risk = commandRisk(command);
+    if (run && risk === 'Dangerous' && !window.confirm('This command is dangerous. Run it anyway?')) return;
+    setTerminalActions((current) => ({
+      ...current,
+      [activeTabId]: { id: Date.now(), command, run },
+    }));
+    if (run && activeTab?.connection?.id) {
+      await saveTerminalHistory(activeTab.connection.id, command);
+      await loadHistory();
+    }
+  };
+
+  const saveCommand = async (event) => {
+    event.preventDefault();
+    await request('/terminal/commands', { method: 'POST', body: JSON.stringify(commandForm) });
+    setCommandForm({ title: '', command: '', purpose: '', category: 'Custom', risk_level: 'Safe' });
+    setMessage('Command saved');
+    await loadCommands();
   };
 
   const filteredConnections = connections.filter((connection) => {
@@ -2795,21 +2831,68 @@ function TerminalCenterPage({ user }) {
                 key={tab.id}
                 tab={tab}
                 active={tab.id === activeTabId}
+                commandAction={terminalActions[tab.id]}
                 onStatus={(status) => updateTab(tab.id, { status })}
+                onHistorySaved={loadHistory}
               />
             ))}
           </div>
         </div>
+
+        <CommandLibraryPanel
+          commands={commands}
+          history={history}
+          canCreate={canCreate}
+          canDelete={canDelete}
+          isAdmin={isAdmin}
+          commandForm={commandForm}
+          setCommandForm={setCommandForm}
+          onSaveCommand={saveCommand}
+          onRefresh={() => Promise.all([loadCommands(), loadHistory()])}
+          onCopy={copyTerminalCommand}
+          onInsert={(command) => sendCommandToActiveTerminal(command, false)}
+          onRun={(command) => sendCommandToActiveTerminal(command, true)}
+          onDeleteCommand={async (command) => {
+            await request(`/terminal/commands/${command.id}`, { method: 'DELETE' });
+            await loadCommands();
+          }}
+        />
       </div>
     </section>
   );
 }
 
-function SSHTerminalPane({ tab, active, onStatus }) {
+function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved }) {
   const containerRef = useRef(null);
   const terminalRef = useRef(null);
   const fitRef = useRef(null);
   const socketRef = useRef(null);
+  const inputBufferRef = useRef('');
+  const lastActionIdRef = useRef(null);
+
+  const rememberCommand = async (command) => {
+    const cleaned = String(command || '').trim();
+    if (!cleaned) return;
+    await saveTerminalHistory(tab.connection.id, cleaned);
+    onHistorySaved?.();
+  };
+
+  const trackInput = (data) => {
+    if (!data || data.includes('\u001b')) return;
+    for (const char of data) {
+      if (char === '\r' || char === '\n') {
+        const command = inputBufferRef.current.trim();
+        inputBufferRef.current = '';
+        if (command) rememberCommand(command).catch(() => {});
+      } else if (char === '\u007f' || char === '\b') {
+        inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+      } else if (char === '\u0003') {
+        inputBufferRef.current = '';
+      } else if (char >= ' ') {
+        inputBufferRef.current += char;
+      }
+    }
+  };
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
@@ -2868,6 +2951,7 @@ function SSHTerminalPane({ tab, active, onStatus }) {
       terminal.writeln('\r\n[session closed]');
     };
     const disposable = terminal.onData((data) => {
+      trackInput(data);
       if (socket.readyState === WebSocket.OPEN) socket.send(data);
     });
     window.addEventListener('resize', fitAndResize);
@@ -2900,7 +2984,160 @@ function SSHTerminalPane({ tab, active, onStatus }) {
     if (tab.clearKey && terminalRef.current) terminalRef.current.clear();
   }, [tab.clearKey]);
 
+  useEffect(() => {
+    if (!commandAction || commandAction.id === lastActionIdRef.current) return;
+    lastActionIdRef.current = commandAction.id;
+    const data = `${commandAction.command}${commandAction.run ? '\r' : ''}`;
+    if (!commandAction.run) inputBufferRef.current += commandAction.command;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(data);
+      terminalRef.current?.focus();
+    } else {
+      terminalRef.current?.writeln('\r\n[terminal not connected]');
+    }
+  }, [commandAction]);
+
   return <div className={`sshTerminalPane ${active ? 'active' : ''}`} ref={containerRef} />;
+}
+
+const terminalDangerWords = ['rm -rf', 'reboot', 'shutdown', 'mkfs', 'dd ', 'iptables flush', 'ufw reset', 'systemctl stop'];
+const terminalSecretWords = ['password', 'passwd', 'token', 'secret', 'key'];
+
+function commandRisk(command, riskLevel = '') {
+  const lowered = String(command || '').toLowerCase();
+  if (terminalDangerWords.some((word) => lowered.includes(word))) return 'Dangerous';
+  return riskLevel || 'Safe';
+}
+
+function commandHasSecret(command) {
+  const lowered = String(command || '').toLowerCase();
+  return terminalSecretWords.some((word) => lowered.includes(word));
+}
+
+async function saveTerminalHistory(connectionId, command) {
+  const cleaned = String(command || '').trim();
+  if (!cleaned || commandHasSecret(cleaned)) return null;
+  return request('/terminal/command-history', {
+    method: 'POST',
+    body: JSON.stringify({ connection_id: connectionId, command: cleaned }),
+  }).catch(() => null);
+}
+
+async function copyPlainText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+}
+
+function CommandLibraryPanel({ commands, history, canCreate, canDelete, isAdmin, commandForm, setCommandForm, onSaveCommand, onRefresh, onCopy, onInsert, onRun, onDeleteCommand }) {
+  const [activeTab, setActiveTab] = useState('saved');
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [details, setDetails] = useState(null);
+  const categories = useMemo(() => [...new Set(commands.map((command) => command.category).filter(Boolean))].sort(), [commands]);
+  const filteredCommands = commands.filter((command) => {
+    const haystack = `${command.title} ${command.command} ${command.purpose || ''} ${command.category || ''}`.toLowerCase();
+    return (!search || haystack.includes(search.toLowerCase())) && (!category || command.category === category);
+  });
+  const filteredHistory = history.filter((item) => `${item.command} ${item.connection_name || ''} ${item.username || ''}`.toLowerCase().includes(search.toLowerCase()));
+  const updateForm = (field, value) => setCommandForm((current) => ({ ...current, [field]: value }));
+
+  const CommandActions = ({ command, riskLevel }) => (
+    <div className="actions commandActions">
+      <button onClick={() => onCopy(command)}><Copy size={14} /> Copy</button>
+      <button onClick={() => onInsert(command)}><Send size={14} /> Insert</button>
+      {isAdmin && <button className={commandRisk(command, riskLevel) === 'Dangerous' ? 'danger' : ''} onClick={() => onRun(command)}>Run</button>}
+    </div>
+  );
+
+  return (
+    <aside className="panel terminalCommands">
+      <div className="sectionHeader">
+        <div><span className="eyebrow">Command Library</span><h2>Commands</h2></div>
+        <button onClick={onRefresh}><RefreshCcw size={16} /></button>
+      </div>
+
+      <div className="commandTabs">
+        <button className={activeTab === 'saved' ? 'active' : ''} onClick={() => setActiveTab('saved')}>Saved Commands</button>
+        <button className={activeTab === 'history' ? 'active' : ''} onClick={() => setActiveTab('history')}>History</button>
+      </div>
+
+      <div className="search terminalSearch"><Search size={16} /><input placeholder="Search commands" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+      {activeTab === 'saved' && <select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categories.map((item) => <option key={item}>{item}</option>)}</select>}
+
+      {activeTab === 'saved' && canCreate && (
+        <form className="commandForm" onSubmit={onSaveCommand}>
+          <input placeholder="Command title" value={commandForm.title} onChange={(event) => updateForm('title', event.target.value)} />
+          <textarea placeholder="Command" value={commandForm.command} onChange={(event) => updateForm('command', event.target.value)} />
+          <input placeholder="Purpose" value={commandForm.purpose} onChange={(event) => updateForm('purpose', event.target.value)} />
+          <div className="commandFormGrid">
+            <input placeholder="Category" value={commandForm.category} onChange={(event) => updateForm('category', event.target.value)} />
+            <select value={commandForm.risk_level} onChange={(event) => updateForm('risk_level', event.target.value)}><option>Safe</option><option>Medium</option><option>Dangerous</option></select>
+          </div>
+          <button className="primary"><Plus size={15} /> Save Command</button>
+        </form>
+      )}
+
+      <div className="commandList">
+        {activeTab === 'saved' && filteredCommands.map((item) => (
+          <div className="commandCard" key={item.id}>
+            <div className="commandCardHeader">
+              <strong>{item.title}</strong>
+              <span className={`riskBadge ${commandRisk(item.command, item.risk_level).toLowerCase()}`}>{commandRisk(item.command, item.risk_level)}</span>
+            </div>
+            <code>{item.command}</code>
+            <p>{item.purpose || 'No purpose added.'}</p>
+            <div className="commandMeta"><span>{item.category || 'General'}</span>{item.is_default && <span>Default</span>}</div>
+            <CommandActions command={item.command} riskLevel={item.risk_level} />
+            <div className="actions commandActions">
+              <button onClick={() => setDetails(item)}><Eye size={14} /> Details</button>
+              {canDelete && !item.is_default && <button className="danger" onClick={() => onDeleteCommand(item)}><Trash2 size={14} /> Delete</button>}
+            </div>
+          </div>
+        ))}
+
+        {activeTab === 'history' && filteredHistory.map((item) => (
+          <div className="commandCard historyCard" key={item.id}>
+            <div className="commandCardHeader">
+              <strong>{item.connection_name || 'Terminal'}</strong>
+              <small>{item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</small>
+            </div>
+            <code>{item.command}</code>
+            <div className="commandMeta"><span>{item.username || '-'}</span></div>
+            <CommandActions command={item.command} riskLevel={commandRisk(item.command)} />
+          </div>
+        ))}
+
+        {activeTab === 'saved' && filteredCommands.length === 0 && <p className="muted">No commands found.</p>}
+        {activeTab === 'history' && filteredHistory.length === 0 && <p className="muted">No command history yet.</p>}
+      </div>
+
+      {details && (
+        <div className="modalBackdrop modal-overlay">
+          <div className="modal modal-box commandDetailModal">
+            <div className="modalHeader"><h2>{details.title}</h2><button className="iconButton" onClick={() => setDetails(null)}><X size={18} /></button></div>
+            <div className="commandDetailGrid">
+              <label><span>Command</span><code>{details.command}</code></label>
+              <label><span>Purpose</span><p>{details.purpose || 'No purpose added.'}</p></label>
+              <label><span>When to use</span><p>Use during {details.category || 'general'} checks, incident handling, or routine NOC troubleshooting.</p></label>
+              <label><span>Risk level</span><span className={`riskBadge ${commandRisk(details.command, details.risk_level).toLowerCase()}`}>{commandRisk(details.command, details.risk_level)}</span></label>
+            </div>
+            <CommandActions command={details.command} riskLevel={details.risk_level} />
+          </div>
+        </div>
+      )}
+    </aside>
+  );
 }
 
 function MultiSelect({ values, options, labelKey = 'name', onChange }) {

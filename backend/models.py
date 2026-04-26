@@ -251,6 +251,40 @@ class TerminalSession(Base):
     user = relationship("User")
 
 
+class TerminalCommand(Base):
+    __tablename__ = "terminal_commands"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, index=True)
+    command = Column(Text, nullable=False)
+    purpose = Column(Text, nullable=True)
+    category = Column(String, default="General", index=True)
+    risk_level = Column(String, default="Safe", index=True)
+    created_by = Column(String, nullable=True, index=True)
+    is_default = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class TerminalCommandHistory(Base):
+    __tablename__ = "terminal_command_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("ssh_connections.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    command = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    connection = relationship("SSHConnection")
+    user = relationship("User")
+
+    @property
+    def connection_name(self):
+        return self.connection.connection_name if self.connection else None
+
+    @property
+    def username(self):
+        return self.user.username if self.user else None
+
+
 class BillingSetting(Base):
     __tablename__ = "billing_settings"
 
