@@ -3908,6 +3908,41 @@ tbody tr:hover {
   margin-bottom: 6px;
 }
 
+.chatListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chatListHeader h2 {
+  margin: 0;
+}
+
+.chatListHeader button {
+  min-height: 32px !important;
+  padding: 6px 10px !important;
+  font-size: 12px;
+}
+
+.chatEmptyState {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px dashed rgba(0, 229, 255, 0.22);
+  border-radius: var(--radius);
+  background: rgba(0, 229, 255, 0.045);
+}
+
+.chatEmptyState strong {
+  color: var(--text-main);
+}
+
+.chatEmptyState small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
 .chatList button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

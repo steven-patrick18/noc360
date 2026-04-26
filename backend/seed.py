@@ -4,7 +4,7 @@ import secrets
 import uuid
 from datetime import date, datetime, timedelta
 
-from database import Base, SessionLocal, engine
+from database import Base, DB_PROTECTED_MARKER, SessionLocal, engine
 from models import BillingSetting, CDR, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RoutingGateway, User, VOSPortal
 
 
@@ -358,10 +358,12 @@ def create_cdr(db, clients):
         db.add(CDR(client_id=client.id, cluster_id=None, call_date=datetime.utcnow() - timedelta(hours=index * 2), caller_id=f"91{9000000000 + index}", destination=f"1{7000000000 + index}", duration=duration, disposition=disposition, cost=round(0.01 + (index % 20) * 0.01, 4), route=routes[index % 2], gateway=gateways[index % 4], cdr_source="seed"))
 
 
-def seed_database(clear=True, db=None):
+def seed_database(clear=False, db=None):
     owns_session = db is None
     if clear:
-        Base.metadata.drop_all(bind=engine)
+        if DB_PROTECTED_MARKER.exists():
+            raise RuntimeError("Database reset is blocked by .db_protected. NOC360 will not drop or recreate protected production data.")
+        raise RuntimeError("Database reset is disabled. Seed only runs on an empty database.")
     Base.metadata.create_all(bind=engine)
     db = db or SessionLocal()
     try:
@@ -394,7 +396,7 @@ def seed_database(clear=True, db=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed NOC360 demo data")
-    parser.add_argument("--reset", action="store_true", help="Drop and rebuild the database before seeding")
+    parser.add_argument("--reset", action="store_true", help="Deprecated and blocked on protected databases")
     args = parser.parse_args()
     result = seed_database(clear=args.reset)
     print(f"NOC360 seed complete: {result}")

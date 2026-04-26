@@ -32,9 +32,9 @@ bash install.sh --no-demo
 The installer will:
 
 - Install Node.js 20 LTS
-- Install Python, PostgreSQL, Nginx, Git, and Curl
+- Install Python, Nginx, Git, and Curl
 - Clone NOC360 to `/opt/noc360`
-- Create a PostgreSQL database
+- Use the protected SQLite database at `/opt/noc360/backend/noc360.db`
 - Install backend dependencies
 - Build the frontend with `VITE_API_URL=/api`
 - Configure Nginx
@@ -76,7 +76,8 @@ Production update safety:
 - `update.sh` does not run `seed.py`.
 - `update.sh` does not reset, drop, or delete database tables.
 - SQLite backups are written to `/opt/noc360/backend/backups/`.
-- PostgreSQL installs are backed up with `pg_dump` before code changes.
+- The production database path is fixed: `/opt/noc360/backend/noc360.db`.
+- The protection marker is `/opt/noc360/backend/.db_protected`.
 - On backend startup, NOC360 creates missing tables and adds missing columns only. Existing rows and values are not overwritten.
 
 ## Service Commands
@@ -178,10 +179,11 @@ journalctl -u noc360 -n 100 --no-pager
 cat /opt/noc360/backend/.env
 ```
 
-Check PostgreSQL:
+Check the fixed database file:
 
 ```bash
-systemctl status postgresql
+ls -lh /opt/noc360/backend/noc360.db
+ls -lh /opt/noc360/backend/.db_protected
 ```
 
 ## Domain and SSL

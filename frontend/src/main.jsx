@@ -18,6 +18,7 @@ import {
   MicOff,
   Phone,
   PhoneOff,
+  Palette,
   Play,
   Plus,
   ReceiptText,
@@ -34,11 +35,31 @@ import {
   X,
 } from 'lucide-react';
 import './styles.css';
+import './themes.css';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment'];
+const themeOptions = [
+  { id: 'executive', name: 'Executive NOC', description: 'Dark luxury command center', colors: ['#06080f', '#00e5ff', '#d6b46a'] },
+  { id: 'cyber', name: 'Cyber Neon', description: 'High-energy cyber operations', colors: ['#020617', '#00f0ff', '#ff2bd6'] },
+  { id: 'minimal', name: 'Dark Minimal', description: 'Quiet enterprise workspace', colors: ['#09090b', '#d4d4d8', '#71717a'] },
+  { id: 'deep-blue', name: 'Deep Blue Command', description: 'Oceanic telecom control', colors: ['#04111f', '#38bdf8', '#2563eb'] },
+  { id: 'purple', name: 'Purple Matrix', description: 'Violet intelligence grid', colors: ['#10081f', '#a855f7', '#22d3ee'] },
+  { id: 'emerald', name: 'Emerald Ops', description: 'Green uptime operations', colors: ['#03140d', '#00ff9c', '#a3e635'] },
+  { id: 'amber', name: 'Amber Terminal', description: 'Classic operator console', colors: ['#120d05', '#ffb800', '#f97316'] },
+  { id: 'red-alert', name: 'Red Alert', description: 'Incident response mode', colors: ['#140609', '#ff4d4d', '#f97316'] },
+  { id: 'light', name: 'Light Professional', description: 'Clean daytime SaaS', colors: ['#f7fafc', '#0369a1', '#0f766e'] },
+  { id: 'glass-ultra', name: 'Glass Ultra', description: 'Transparent premium glass', colors: ['#030712', '#7dd3fc', '#c084fc'] },
+];
+
+function resolveTheme(themeId) {
+  if (themeId !== 'auto') return themeId || 'executive';
+  const hour = new Date().getHours();
+  return hour >= 7 && hour < 18 ? 'light' : 'executive';
+}
+
 const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone'];
 const modulePageKeys = {
   dashboard: 'dashboard',
@@ -286,6 +307,8 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive');
   const [toast, setToast] = useState('');
 
   const refreshBillingData = async (ledgerFilters = {}) => {
@@ -356,6 +379,17 @@ function App() {
   }, [auth]);
 
   useEffect(() => {
+    const applyTheme = () => {
+      document.body.setAttribute('data-theme', resolveTheme(theme));
+      document.body.setAttribute('data-theme-choice', theme);
+    };
+    applyTheme();
+    if (theme !== 'auto') return undefined;
+    const timer = window.setInterval(applyTheme, 60000);
+    return () => window.clearInterval(timer);
+  }, [theme]);
+
+  useEffect(() => {
     if (!auth?.token) return undefined;
     let mounted = true;
     request('/auth/me')
@@ -380,6 +414,12 @@ function App() {
     setAuth((current) => (current ? { ...current, user } : current));
     setProfileOpen(false);
     showToast('Profile updated');
+  };
+
+  const updateTheme = (themeId) => {
+    localStorage.setItem('noc360_theme', themeId);
+    setTheme(themeId);
+    showToast(themeId === 'auto' ? 'Auto theme enabled' : `${themeOptions.find((item) => item.id === themeId)?.name || 'Theme'} applied`);
   };
 
   const login = async (username, password) => {
@@ -477,6 +517,7 @@ function App() {
             {shellStats.map(([label, value]) => <div className="hudCell" key={label}><span>{label}</span><strong>{value}</strong></div>)}
           </div>
           <div className="topActions">
+            <button className="themeTrigger" onClick={() => setThemeOpen(true)} title="Theme Settings"><Palette size={17} /> Theme</button>
             <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
             <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh Data</button>
             <button className="iconButton" onClick={logout} title="Logout"><LogOut size={18} /></button>
@@ -541,6 +582,7 @@ function App() {
           )}
         </section>
       </main>
+      {themeOpen && <ThemeSettingsModal selected={theme} onSelect={updateTheme} onClose={() => setThemeOpen(false)} />}
       {profileOpen && <AccountSettingsModal user={auth.user} onClose={() => setProfileOpen(false)} onUpdated={updateStoredUser} onLogout={logout} />}
     </div>
   );
@@ -573,6 +615,59 @@ function LoginScreen({ onLogin }) {
         <button className="primary">{loading ? 'Signing in...' : 'Login'}</button>
         <p className="muted">Customer samples: im1 / 123, im2 / 123, rolex / 123</p>
       </form>
+    </div>
+  );
+}
+
+function ThemeSettingsModal({ selected, onSelect, onClose }) {
+  const activeTheme = resolveTheme(selected);
+  const selectTheme = (themeId) => {
+    onSelect(themeId);
+  };
+
+  return (
+    <div className="modalBackdrop modal-overlay">
+      <div className="modal modal-box themeModal">
+        <div className="modalHeader themeHero">
+          <div>
+            <span className="eyebrow">Interface control</span>
+            <h2>Theme Settings</h2>
+            <p className="muted">Choose a global NOC360 visual mode. Changes apply instantly across every module.</p>
+          </div>
+          <button type="button" className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>
+        </div>
+        <div className="themeGrid">
+          {themeOptions.map((themeItem) => (
+            <button
+              type="button"
+              key={themeItem.id}
+              className={`themeCard ${activeTheme === themeItem.id && selected !== 'auto' ? 'selectedTheme' : ''}`}
+              onClick={() => selectTheme(themeItem.id)}
+            >
+              <span className="themePreview" style={{ '--c0': themeItem.colors[0], '--c1': themeItem.colors[1], '--c2': themeItem.colors[2] }}>
+                <i />
+                <i />
+                <i />
+              </span>
+              <strong>{themeItem.name}</strong>
+              <small>{themeItem.description}</small>
+            </button>
+          ))}
+          <button type="button" className={`themeCard autoThemeCard ${selected === 'auto' ? 'selectedTheme' : ''}`} onClick={() => selectTheme('auto')}>
+            <span className="themePreview" style={{ '--c0': '#f7fafc', '--c1': '#00e5ff', '--c2': '#06080f' }}>
+              <i />
+              <i />
+              <i />
+            </span>
+            <strong>Auto Theme</strong>
+            <small>Light by day, Executive NOC at night.</small>
+          </button>
+        </div>
+        <div className="modalActions themeActions">
+          <span className="muted">Active: {selected === 'auto' ? `Auto (${themeOptions.find((item) => item.id === activeTheme)?.name})` : themeOptions.find((item) => item.id === activeTheme)?.name}</span>
+          <button type="button" className="primary" onClick={onClose}>Done</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1456,6 +1551,7 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
   const canCreateGroup = !isCustomer && canDo(user, 'group_chat', 'can_create');
 
   const loadRooms = async () => {
+    setError('');
     const next = await request('/chat/rooms');
     setRooms(next);
     setSelectedRoom((current) => next.find((room) => room.id === current?.id) || next[0] || null);
@@ -1530,7 +1626,16 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
       <div className={`chatGrid ${isCustomer ? 'singleChatGrid' : ''}`}>
         {!isCustomer && (
           <aside className="chatList panel">
-            <h2>{roomTitle}</h2>
+            <div className="chatListHeader">
+              <h2>{roomTitle}</h2>
+              <button onClick={() => loadRooms().catch((err) => setError(err.message))}>Refresh</button>
+            </div>
+            {rooms.length === 0 && (
+              <div className="chatEmptyState">
+                <strong>No clients found</strong>
+                <small>Chat rooms are created from the Clients master. Add a client, then refresh.</small>
+              </div>
+            )}
             {rooms.map((room) => (
               <button key={room.id} className={selectedRoom?.id === room.id ? 'activeChat' : ''} onClick={() => setSelectedRoom(room)}>
                 <span>{room.client_name || `Client #${room.client_id}`}</span>
@@ -1542,11 +1647,12 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
         )}
         <div className="chatWindow panel">
           <div className="chatHeader">
-            <div><span className="eyebrow">{roomTitle}</span><h2>{selectedRoom?.client_name || user.client_name || 'NOC Support'}</h2></div>
+            <div><span className="eyebrow">{roomTitle}</span><h2>{selectedRoom?.client_name || user.client_name || 'Select Client'}</h2></div>
             <span className="typeBadge">{messages.length} messages</span>
           </div>
           <div className="messageStream">
-            {messages.length === 0 && <p className="muted">No messages yet. Start the conversation.</p>}
+            {!selectedRoom && <p className="muted">{isCustomer ? 'No chat room is linked to your customer account.' : 'Select a client from the left to open chat.'}</p>}
+            {selectedRoom && messages.length === 0 && <p className="muted">No messages yet. Start the conversation.</p>}
             {messages.map((message) => (
               <div key={message.id} className={`messageBubble ${message.sender_id === user.id ? 'mine' : 'theirs'}`}>
                 <strong>{message.sender_name || message.sender_role}</strong>
@@ -1556,8 +1662,8 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
             ))}
           </div>
           <div className="chatComposer">
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type message..." onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }} />
-            <button className="primary" onClick={sendMessage}><Send size={16} /> Send</button>
+            <textarea disabled={!selectedRoom} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedRoom ? 'Type message...' : 'Select a client first'} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }} />
+            <button className="primary" disabled={!selectedRoom} onClick={sendMessage}><Send size={16} /> Send</button>
           </div>
         </div>
       </div>

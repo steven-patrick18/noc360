@@ -844,16 +844,12 @@ def normalize_ledger_currency(db: Session):
 def startup():
     create_database()
     with SessionLocal() as db:
-        auto_seed = os.getenv("AUTO_SEED", "false").lower() not in {"0", "false", "no", "off"}
-        if auto_seed and not db.query(Client).first():
-            from seed import seed_database
-
-            seed_database(clear=False, db=db)
         backfill_reference_ids(db)
         get_billing_setting(db)
         normalize_ledger_currency(db)
         normalize_data_cost_currency(db)
         seed_user_access_defaults(db)
+        ensure_chat_rooms_for_clients(db)
 
 
 @app.get("/")
@@ -984,6 +980,27 @@ def ensure_chat_room(db: Session, client_id: int):
     db.add(room)
     db.flush()
     return room
+
+
+def ensure_chat_rooms_for_clients(db: Session, clients: list[Client] | None = None):
+    client_rows = clients if clients is not None else db.query(Client).order_by(Client.name.asc()).all()
+    if not client_rows:
+        return []
+    existing = {room.client_id: room for room in db.query(ChatRoom).filter(ChatRoom.client_id.in_([client.id for client in client_rows])).all()}
+    rooms = []
+    changed = False
+    for client in client_rows:
+        room = existing.get(client.id)
+        if not room:
+            room = ChatRoom(client_id=client.id)
+            db.add(room)
+            db.flush()
+            existing[client.id] = room
+            changed = True
+        rooms.append(room)
+    if changed:
+        db.commit()
+    return rooms
 
 
 def can_access_chat_room(db: Session, user: User, room: ChatRoom):
@@ -1180,8 +1197,7 @@ def get_chat_rooms(db: Session = Depends(get_db), user: User = Depends(require_a
     if user.role == "customer":
         client_query = client_query.filter(Client.id.in_(user_client_ids(db, user) or [-1]))
     clients = client_query.order_by(Client.name.asc()).all()
-    rooms = [ensure_chat_room(db, client.id) for client in clients]
-    db.commit()
+    rooms = ensure_chat_rooms_for_clients(db, clients)
     return [chat_room_out(db, room, user) for room in rooms]
 
 
@@ -3460,6 +3476,7 @@ def create_client(payload: ClientCreate, request: Request, db: Session = Depends
     for page in ROLE_DEFAULT_PAGES["customer"]:
         db.add(PagePermission(user_id=customer.id, page_key=page, **default_rights_for_role("customer", page)))
     db.add(ClientAccess(user_id=customer.id, client_id=client.id))
+    ensure_chat_room(db, client.id)
     db.commit()
     db.refresh(client)
     log_activity(db, user, "create", "clients", "Client", client.id, f"Created client {client.name}", new_value={"client": client, "login_user": username}, request=request, commit=True)

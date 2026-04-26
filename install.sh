@@ -4,11 +4,9 @@ set -Eeuo pipefail
 trap 'echo "ERROR: NOC360 install failed at line $LINENO. Check the output above and retry." >&2' ERR
 
 APP_DIR="/opt/noc360"
+DB_PATH="${APP_DIR}/backend/noc360.db"
 REPO_URL="${NOC360_REPO_URL:-https://github.com/steven-patrick18/noc360.git}"
 BRANCH="${NOC360_BRANCH:-main}"
-DB_NAME="${NOC360_DB_NAME:-noc360}"
-DB_USER="${NOC360_DB_USER:-noc360_user}"
-DB_PASS="${NOC360_DB_PASS:-}"
 RUN_DEMO="false"
 
 usage() {
@@ -34,10 +32,7 @@ echo "==> Demo data: ${RUN_DEMO}"
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl gnupg git nginx postgresql postgresql-contrib python3 python3-pip python3-venv openssl
-if [[ -z "${DB_PASS}" ]]; then
-  DB_PASS="$(openssl rand -hex 24)"
-fi
+apt-get install -y ca-certificates curl gnupg git nginx python3 python3-pip python3-venv openssl
 
 echo "==> Installing Node.js 20 LTS"
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -48,19 +43,16 @@ if [[ "${NODE_MAJOR}" -lt 20 ]]; then
   exit 1
 fi
 
-echo "==> Preparing PostgreSQL"
 systemctl stop noc360 2>/dev/null || true
-systemctl enable --now postgresql
-runuser -u postgres -- psql -v ON_ERROR_STOP=1 <<SQL
-DROP DATABASE IF EXISTS ${DB_NAME};
-DROP USER IF EXISTS ${DB_USER};
-CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASS}';
-CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
-SQL
 
 echo "==> Cloning NOC360 to ${APP_DIR}"
-rm -rf "${APP_DIR}"
+if [[ -f "${DB_PATH}" ]]; then
+  echo "ERROR: Existing database found at ${DB_PATH}. Use update.sh instead of install.sh to protect live data." >&2
+  exit 1
+fi
+if [[ -d "${APP_DIR}" ]]; then
+  rm -rf "${APP_DIR}"
+fi
 git clone --branch "${BRANCH}" "${REPO_URL}" "${APP_DIR}"
 
 echo "==> Configuring backend"
@@ -71,28 +63,23 @@ python3 -m venv venv
 
 SECRET_KEY="$(openssl rand -hex 32)"
 cat > "${APP_DIR}/backend/.env" <<EOF
-DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@127.0.0.1:5432/${DB_NAME}
+DATABASE_URL=sqlite:////opt/noc360/backend/noc360.db
 SECRET_KEY=${SECRET_KEY}
 ENV=production
-AUTO_SEED=false
 EOF
 chmod 600 "${APP_DIR}/backend/.env"
+touch "${APP_DIR}/backend/.db_protected"
 
 if [[ "${RUN_DEMO}" == "true" ]]; then
-  echo "==> Loading demo data"
-  set -a
-  # shellcheck disable=SC1091
-  source "${APP_DIR}/backend/.env"
-  set +a
-  "${APP_DIR}/backend/venv/bin/python" seed.py --reset
+  echo "==> Loading demo data into empty protected database"
+  "${APP_DIR}/backend/venv/bin/python" seed.py
 fi
 
 echo "==> Creating systemd service"
 cat > /etc/systemd/system/noc360.service <<EOF
 [Unit]
 Description=NOC360 Backend
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target
 
 [Service]
 Type=simple
@@ -171,6 +158,7 @@ echo
 echo "NOC360 Installed Successfully"
 echo "Open: http://${SERVER_IP}"
 echo "Admin Login: admin / admin123"
+echo "Database: ${DB_PATH}"
 echo "Backend: systemctl status noc360"
 echo "Logs: journalctl -u noc360 -f"
 echo "Update: bash ${APP_DIR}/update.sh"

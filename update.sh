@@ -4,6 +4,8 @@ set -Eeuo pipefail
 trap 'echo "ERROR: NOC360 update failed at line $LINENO. Check the output above and retry." >&2' ERR
 
 APP_DIR="/opt/noc360"
+DB_PATH="${APP_DIR}/backend/noc360.db"
+DB_MARKER="${APP_DIR}/backend/.db_protected"
 BACKUP_DIR="${APP_DIR}/backend/backups"
 TIMESTAMP="$(date +%F_%H%M)"
 
@@ -19,12 +21,6 @@ fi
 
 echo "==> Backing up database before update"
 mkdir -p "${BACKUP_DIR}"
-if [[ -f "${APP_DIR}/backend/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "${APP_DIR}/backend/.env"
-  set +a
-fi
 
 backup_sqlite_file() {
   local source_file="$1"
@@ -34,22 +30,8 @@ backup_sqlite_file() {
   fi
 }
 
-backup_sqlite_file "${APP_DIR}/backend/noc360.db"
-
-if [[ "${DATABASE_URL:-}" == sqlite:///* ]]; then
-  SQLITE_PATH="${DATABASE_URL#sqlite:///}"
-  if [[ "${SQLITE_PATH}" != /* ]]; then
-    SQLITE_PATH="${APP_DIR}/backend/${SQLITE_PATH}"
-  fi
-  backup_sqlite_file "${SQLITE_PATH}"
-elif [[ "${DATABASE_URL:-}" == postgresql://* || "${DATABASE_URL:-}" == postgres://* ]]; then
-  if ! command -v pg_dump >/dev/null 2>&1; then
-    echo "ERROR: pg_dump is required to back up PostgreSQL before update." >&2
-    exit 1
-  fi
-  pg_dump "${DATABASE_URL}" > "${BACKUP_DIR}/noc360_before_update_${TIMESTAMP}.sql"
-  echo "PostgreSQL backup: ${BACKUP_DIR}/noc360_before_update_${TIMESTAMP}.sql"
-fi
+backup_sqlite_file "${DB_PATH}"
+touch "${DB_MARKER}"
 
 echo "==> Updating NOC360"
 cd "${APP_DIR}"
@@ -59,10 +41,20 @@ git reset --hard "origin/${BRANCH}"
 
 echo "==> Updating backend requirements"
 cd "${APP_DIR}/backend"
+touch "${DB_MARKER}"
+if [[ -f "${APP_DIR}/backend/.env" ]]; then
+  if grep -q '^DATABASE_URL=' "${APP_DIR}/backend/.env"; then
+    sed -i '/^DATABASE_URL=/c\DATABASE_URL=sqlite:////opt/noc360/backend/noc360.db' "${APP_DIR}/backend/.env"
+  else
+    printf '\nDATABASE_URL=sqlite:////opt/noc360/backend/noc360.db\n' >> "${APP_DIR}/backend/.env"
+  fi
+else
+  echo "DATABASE_URL=sqlite:////opt/noc360/backend/noc360.db" > "${APP_DIR}/backend/.env"
+fi
 "${APP_DIR}/backend/venv/bin/python" -m pip install --upgrade pip
 "${APP_DIR}/backend/venv/bin/pip" install -r requirements.txt
 systemctl restart noc360
-echo "==> Backend restarted. Startup will create missing tables/columns only; no seed/reset is run."
+echo "==> Backend restarted. Using fixed database ${DB_PATH}. Startup creates missing tables/columns only; no seed/reset is run."
 
 echo "==> Rebuilding frontend"
 cd "${APP_DIR}/frontend"
