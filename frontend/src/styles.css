@@ -217,6 +217,216 @@ nav button.active {
   color: #bbf7d0;
 }
 
+.terminalCenter {
+  display: grid;
+  gap: 18px;
+}
+
+.terminalLayout {
+  display: grid;
+  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.terminalConnections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: calc(100vh - 250px);
+  overflow: auto;
+}
+
+.terminalSearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminalSearch input {
+  width: 100%;
+}
+
+.terminalForm {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(0, 229, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(2, 7, 19, 0.38);
+}
+
+.terminalForm label {
+  display: grid;
+  gap: 5px;
+}
+
+.terminalForm label span {
+  color: var(--text-soft, #a8b3c7);
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.terminalForm textarea {
+  min-height: 74px;
+}
+
+.terminalDuplicateNotice {
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 200, 87, 0.32);
+  border-radius: 8px;
+  background: rgba(255, 200, 87, 0.09);
+  color: var(--accent-warning, #ffc857);
+  font-size: 13px;
+}
+
+.terminalConnectionList {
+  display: grid;
+  gap: 12px;
+}
+
+.terminalConnectionCard {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(0, 229, 255, 0.12);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(14, 19, 32, 0.74), rgba(2, 7, 19, 0.68));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.terminalConnectionCard:hover {
+  border-color: rgba(0, 229, 255, 0.32);
+  box-shadow: 0 12px 34px rgba(0, 229, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.terminalConnectionCard strong {
+  display: block;
+  color: var(--text-main, #e6f1ff);
+}
+
+.terminalConnectionCard span,
+.terminalConnectionCard small,
+.terminalConnectionCard p {
+  color: var(--text-soft, #a8b3c7);
+  overflow-wrap: anywhere;
+}
+
+.terminalConnectionCard p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.terminalWorkspace {
+  min-height: 640px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+
+.terminalWorkspace.terminalFullscreen {
+  position: fixed;
+  inset: 18px;
+  z-index: 10000;
+  min-height: auto;
+}
+
+.terminalTabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.terminalTabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 260px;
+  justify-content: flex-start;
+  border-color: rgba(0, 229, 255, 0.14);
+}
+
+.terminalTabs button.active {
+  border-color: rgba(0, 229, 255, 0.46);
+  background: rgba(0, 229, 255, 0.1);
+  box-shadow: inset 0 -2px 0 rgba(0, 229, 255, 0.86), 0 0 18px rgba(0, 229, 255, 0.1);
+}
+
+.terminalTabs button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminalTabs button small {
+  color: var(--text-muted, #6c7a92);
+  margin-left: auto;
+}
+
+.terminalTabs button i {
+  display: inline-flex;
+  color: var(--text-muted, #6c7a92);
+}
+
+.terminalToolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(2, 7, 19, 0.44);
+}
+
+.terminalToolbar strong {
+  color: var(--accent-primary, #00e5ff);
+  margin-right: auto;
+  overflow-wrap: anywhere;
+}
+
+.terminalPaneStack {
+  position: relative;
+  min-height: 480px;
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  border-radius: 8px;
+  background: #020713;
+  overflow: hidden;
+  box-shadow: inset 0 0 28px rgba(0, 229, 255, 0.08);
+}
+
+.sshTerminalPane {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  padding: 10px;
+}
+
+.sshTerminalPane.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sshTerminalPane .xterm {
+  height: 100%;
+}
+
+@media (max-width: 1100px) {
+  .terminalLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .terminalConnections {
+    max-height: none;
+  }
+}
+
 .debitRow td {
   color: #fde68a;
 }
@@ -4317,6 +4527,44 @@ tbody tr:hover {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* Terminal scroll fix: later .panel rules hide overflow, so keep the SSH vault usable at all zoom levels. */
+.panel.terminalConnections {
+  max-height: calc(100vh - 220px) !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(0, 229, 255, 0.55) rgba(2, 7, 19, 0.45);
+  scrollbar-width: thin;
+}
+
+.terminalConnectionList {
+  min-height: 180px;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-color: rgba(0, 229, 255, 0.55) rgba(2, 7, 19, 0.45);
+  scrollbar-width: thin;
+}
+
+.panel.terminalConnections::-webkit-scrollbar,
+.terminalConnectionList::-webkit-scrollbar {
+  width: 9px;
+}
+
+.panel.terminalConnections::-webkit-scrollbar-track,
+.terminalConnectionList::-webkit-scrollbar-track {
+  background: rgba(2, 7, 19, 0.45);
+  border-radius: 999px;
+}
+
+.panel.terminalConnections::-webkit-scrollbar-thumb,
+.terminalConnectionList::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(0, 229, 255, 0.72), rgba(124, 92, 255, 0.54));
+  border-radius: 999px;
 }
 
 @media (max-width: 1180px) {

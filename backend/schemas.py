@@ -379,6 +379,43 @@ class WebphoneCallLogOut(WebphoneCallLogCreate, OrmModel):
     created_at: Optional[datetime] = None
 
 
+class SSHConnectionBase(BaseModel):
+    connection_name: str
+    host_ip: str
+    ssh_port: int = 22
+    username: str
+    status: str = "Active"
+    notes: Optional[str] = None
+
+
+class SSHConnectionCreate(SSHConnectionBase):
+    password: str
+
+
+class SSHConnectionUpdate(SSHConnectionBase):
+    password: Optional[str] = None
+
+
+class SSHConnectionOut(SSHConnectionBase, OrmModel):
+    id: int
+    has_password: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class SSHConnectionPasswordOut(BaseModel):
+    password: str
+
+
+class TerminalSessionOut(OrmModel):
+    id: int
+    connection_id: Optional[int] = None
+    user_id: int
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    status: str
+
+
 class BillingSettingOut(OrmModel):
     id: int
     usd_to_inr_rate: float = 83.0

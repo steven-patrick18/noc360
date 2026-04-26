@@ -223,6 +223,34 @@ class WebphoneCallLog(Base):
         return self.profile.profile_name if self.profile else None
 
 
+class SSHConnection(Base):
+    __tablename__ = "ssh_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_name = Column(String, nullable=False, index=True)
+    host_ip = Column(String, nullable=False, index=True)
+    ssh_port = Column(Integer, default=22, nullable=False)
+    username = Column(String, nullable=False, index=True)
+    password = Column(String, nullable=True)
+    status = Column(String, default="Active", index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+
+
+class TerminalSession(Base):
+    __tablename__ = "terminal_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("ssh_connections.id"), nullable=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    status = Column(String, default="Open", index=True)
+    connection = relationship("SSHConnection")
+    user = relationship("User")
+
+
 class BillingSetting(Base):
     __tablename__ = "billing_settings"
 

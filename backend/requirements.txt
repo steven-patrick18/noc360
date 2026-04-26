@@ -4,3 +4,4 @@ SQLAlchemy==2.0.36
 pydantic==2.10.4
 psycopg2-binary==2.9.10
 bcrypt==4.2.1
+paramiko==3.5.1

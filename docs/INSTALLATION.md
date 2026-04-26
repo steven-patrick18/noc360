@@ -141,9 +141,15 @@ proxy_set_header Host $host;
 proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
 ```
 
 Approximate country, city, and ISP are resolved from public IP only. Local/private IPs are shown as `Local, Internal - Local / Internal`.
+
+The `Upgrade` and long timeout headers are also required for SSH Terminal Center WebSocket sessions.
 
 ## Common Errors
 

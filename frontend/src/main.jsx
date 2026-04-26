@@ -30,11 +30,15 @@ import {
   Server,
   Settings,
   Star,
+  Terminal as TerminalIcon,
   Ticket,
   Trash2,
   Users,
   X,
 } from 'lucide-react';
+import { Terminal as XTerm } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import 'xterm/css/xterm.css';
 import './styles.css';
 import './themes.css';
 
@@ -61,7 +65,7 @@ function resolveTheme(themeId) {
   return hour >= 7 && hour < 18 ? 'light' : 'executive';
 }
 
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -85,6 +89,7 @@ const modulePageKeys = {
   myChat: 'my_chat',
   myTickets: 'my_tickets',
   webphone: 'webphone',
+  terminal: 'terminal',
   dangerZone: 'danger_zone',
 };
 
@@ -98,6 +103,7 @@ const modules = {
   chatCenter: { label: 'Chat Center', icon: MessageSquare },
   tickets: { label: 'Tickets', icon: Ticket },
   webphone: { label: 'Webphone', icon: Phone },
+  terminal: { label: 'Terminal', icon: TerminalIcon },
   dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
@@ -227,6 +233,15 @@ async function request(path, options = {}) {
     throw new Error(message);
   }
   return response.json();
+}
+
+function websocketEndpoint(path) {
+  const token = localStorage.getItem('noc360_token') || '';
+  const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
+  const url = new URL(`${base}${path}`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (token) url.searchParams.set('token', token);
+  return url.toString();
 }
 
 function StatusPill({ value }) {
@@ -559,6 +574,8 @@ function App() {
             <TicketsPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
           ) : activeKey === 'webphone' ? (
             <WebphonePage user={auth.user} />
+          ) : activeKey === 'terminal' ? (
+            <TerminalCenterPage user={auth.user} />
           ) : activeKey === 'dangerZone' ? (
             <DangerZonePage user={auth.user} reload={loadAll} />
           ) : activeKey === 'vosDesktop' ? (
@@ -2563,6 +2580,327 @@ function WebphonePage({ user }) {
       )}
     </section>
   );
+}
+
+function TerminalCenterPage({ user }) {
+  const canCreate = canDo(user, 'terminal', 'can_create');
+  const canEdit = canDo(user, 'terminal', 'can_edit');
+  const canDelete = canDo(user, 'terminal', 'can_delete');
+  const isAdmin = user?.role === 'admin';
+  const [connections, setConnections] = useState([]);
+  const [search, setSearch] = useState('');
+  const [form, setForm] = useState({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
+  const [editingId, setEditingId] = useState(null);
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [revealed, setRevealed] = useState({});
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const loadConnections = async () => {
+    setConnections(await request('/terminal/connections'));
+  };
+
+  useEffect(() => {
+    loadConnections().catch((err) => setError(err.message));
+  }, []);
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
+  };
+
+  const saveConnection = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    const isEditing = editingId !== null && editingId !== undefined;
+    const payload = { ...form, ssh_port: Number(form.ssh_port || 22) };
+    if (isEditing && !payload.password) delete payload.password;
+    const saved = await request(isEditing ? `/terminal/connections/${editingId}` : '/terminal/connections', {
+      method: isEditing ? 'PUT' : 'POST',
+      body: JSON.stringify(payload),
+    });
+    setMessage(isEditing ? `SSH connection updated: ${saved.connection_name}` : `SSH connection added: ${saved.connection_name}`);
+    resetForm();
+    setSearch('');
+    await loadConnections();
+  };
+
+  const editConnection = (connection) => {
+    setEditingId(connection.id);
+    setForm({
+      connection_name: connection.connection_name || '',
+      host_ip: connection.host_ip || '',
+      ssh_port: connection.ssh_port || 22,
+      username: connection.username || '',
+      password: '',
+      status: connection.status || 'Active',
+      notes: connection.notes || '',
+    });
+  };
+
+  const deleteConnection = async (connection) => {
+    if (!window.confirm(`Delete SSH connection ${connection.connection_name}?`)) return;
+    await request(`/terminal/connections/${connection.id}`, { method: 'DELETE' });
+    setTabs((rows) => rows.filter((tab) => tab.connection.id !== connection.id));
+    setMessage('SSH connection deleted');
+    await loadConnections();
+  };
+
+  const testConnection = async (connection) => {
+    setError('');
+    setMessage('');
+    try {
+      const result = await request(`/terminal/connections/${connection.id}/test`, { method: 'POST' });
+      setMessage(result.message || 'SSH connection successful');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const revealPassword = async (connection) => {
+    if (revealed[connection.id]) {
+      setRevealed((current) => ({ ...current, [connection.id]: null }));
+      return;
+    }
+    try {
+      const result = await request(`/terminal/connections/${connection.id}/password`);
+      setRevealed((current) => ({ ...current, [connection.id]: result.password || '' }));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openTerminal = (connection) => {
+    const tabId = `${connection.id}-${Date.now()}`;
+    const tab = { id: tabId, name: connection.connection_name, connection, status: 'Opening', reconnectKey: 0, clearKey: 0, fullscreen: false };
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tabId);
+  };
+
+  const updateTab = (tabId, patch) => {
+    setTabs((current) => current.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)));
+  };
+
+  const closeTab = (tabId) => {
+    setTabs((current) => current.filter((tab) => tab.id !== tabId));
+    if (activeTabId === tabId) {
+      const remaining = tabs.filter((tab) => tab.id !== tabId);
+      setActiveTabId(remaining[remaining.length - 1]?.id || null);
+    }
+  };
+
+  const renameTab = (tab) => {
+    const name = window.prompt('Rename terminal tab', tab.name);
+    if (name) updateTab(tab.id, { name });
+  };
+
+  const filteredConnections = connections.filter((connection) => {
+    const haystack = `${connection.connection_name} ${connection.host_ip} ${connection.username} ${connection.notes || ''}`.toLowerCase();
+    return haystack.includes(search.toLowerCase());
+  });
+  const duplicateNameCount = form.connection_name
+    ? connections.filter((connection) => connection.connection_name?.trim().toLowerCase() === form.connection_name.trim().toLowerCase() && connection.id !== editingId).length
+    : 0;
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
+
+  return (
+    <section className="terminalCenter">
+      <div className="cards managementCards">
+        <div className="metric"><span>Saved Connections</span><strong>{connections.length}</strong></div>
+        <div className="metric payment"><span>Active Records</span><strong>{connections.filter((item) => item.status === 'Active').length}</strong></div>
+        <div className="metric revenue"><span>Open Tabs</span><strong>{tabs.length}</strong></div>
+        <div className="metric"><span>Focused Host</span><strong>{activeTab?.connection?.host_ip || '-'}</strong></div>
+      </div>
+
+      <div className="terminalLayout">
+        <aside className="panel terminalConnections">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">SSH Vault</span><h2>Connections</h2></div>
+            <div className="actions">
+              {editingId && <button onClick={resetForm}><Plus size={16} /> New</button>}
+              <button onClick={loadConnections}><RefreshCcw size={16} /></button>
+            </div>
+          </div>
+          {message && <div className="toastSuccess">{message}</div>}
+          {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+          <div className="search terminalSearch"><Search size={16} /><input placeholder="Search servers" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+
+          {(canCreate || editingId) && (
+            <form className="terminalForm" onSubmit={saveConnection}>
+              <label><span>Connection Name</span><input value={form.connection_name} onChange={(event) => setField('connection_name', event.target.value)} placeholder="Asterisk PBX" /></label>
+              <label><span>Host/IP</span><input value={form.host_ip} onChange={(event) => setField('host_ip', event.target.value)} placeholder="203.0.113.10" /></label>
+              <label><span>Port</span><input type="number" min="1" max="65535" value={form.ssh_port} onChange={(event) => setField('ssh_port', event.target.value)} /></label>
+              <label><span>Username</span><input value={form.username} onChange={(event) => setField('username', event.target.value)} placeholder="root" /></label>
+              <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setField('password', event.target.value)} placeholder={editingId ? 'Leave blank to keep saved password' : 'SSH password'} /></label>
+              <label><span>Status</span><select value={form.status} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+              <label><span>Notes</span><textarea value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Server role, provider, handover notes" /></label>
+              {duplicateNameCount > 0 && <div className="terminalDuplicateNotice">Name already exists. It will still save as a separate SSH connection.</div>}
+              <div className="formActions">
+                <button className="primary"><Plus size={16} /> {editingId ? 'Update Selected Connection' : 'Add New Connection'}</button>
+                {editingId && <button type="button" onClick={resetForm}>Cancel</button>}
+              </div>
+            </form>
+          )}
+
+          <div className="terminalConnectionList">
+            {filteredConnections.map((connection) => (
+              <div className="terminalConnectionCard" key={connection.id}>
+                <div>
+                  <strong>{connection.connection_name}</strong>
+                  <span>{connection.username}@{connection.host_ip}:{connection.ssh_port || 22}</span>
+                  <small>{revealed[connection.id] ? `Password: ${revealed[connection.id]}` : connection.has_password ? 'Password: ********' : 'Password: not saved'}</small>
+                </div>
+                <StatusPill value={connection.status} />
+                {connection.notes && <p>{connection.notes}</p>}
+                <div className="actions">
+                  <button className="primary" onClick={() => openTerminal(connection)}><Play size={15} /> Open</button>
+                  <button onClick={() => testConnection(connection)}>Test</button>
+                  {isAdmin && <button onClick={() => revealPassword(connection)}>{revealed[connection.id] ? <EyeOff size={15} /> : <Eye size={15} />} Reveal</button>}
+                  {canEdit && <button onClick={() => editConnection(connection)}><Edit3 size={15} /> Edit</button>}
+                  {canDelete && <button className="danger" onClick={() => deleteConnection(connection)}><Trash2 size={15} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className={`panel terminalWorkspace ${activeTab?.fullscreen ? 'terminalFullscreen' : ''}`}>
+          <div className="terminalTabs">
+            {tabs.length === 0 ? <span className="muted">Open a saved SSH connection to start a terminal session.</span> : tabs.map((tab) => (
+              <button key={tab.id} className={tab.id === activeTabId ? 'active' : ''} onClick={() => setActiveTabId(tab.id)}>
+                <TerminalIcon size={15} />
+                <span>{tab.name}</span>
+                <small>{tab.status}</small>
+                <i onClick={(event) => { event.stopPropagation(); closeTab(tab.id); }}><X size={13} /></i>
+              </button>
+            ))}
+          </div>
+
+          {activeTab && (
+            <div className="terminalToolbar">
+              <strong>{activeTab.connection.username}@{activeTab.connection.host_ip}</strong>
+              <button onClick={() => renameTab(activeTab)}>Rename</button>
+              <button onClick={() => updateTab(activeTab.id, { reconnectKey: activeTab.reconnectKey + 1, status: 'Reconnecting' })}>Reconnect</button>
+              <button onClick={() => updateTab(activeTab.id, { clearKey: activeTab.clearKey + 1 })}>Clear</button>
+              <button onClick={() => updateTab(activeTab.id, { fullscreen: !activeTab.fullscreen })}>{activeTab.fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</button>
+            </div>
+          )}
+
+          <div className="terminalPaneStack">
+            {tabs.map((tab) => (
+              <SSHTerminalPane
+                key={tab.id}
+                tab={tab}
+                active={tab.id === activeTabId}
+                onStatus={(status) => updateTab(tab.id, { status })}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SSHTerminalPane({ tab, active, onStatus }) {
+  const containerRef = useRef(null);
+  const terminalRef = useRef(null);
+  const fitRef = useRef(null);
+  const socketRef = useRef(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+    const terminal = new XTerm({
+      cursorBlink: true,
+      convertEol: true,
+      fontFamily: 'JetBrains Mono, Consolas, "Cascadia Mono", monospace',
+      fontSize: 14,
+      theme: {
+        background: '#020713',
+        foreground: '#d7fff4',
+        cursor: '#00e5ff',
+        selectionBackground: '#164e63',
+        black: '#020617',
+        red: '#ff4d4d',
+        green: '#00ff9c',
+        yellow: '#ffc857',
+        blue: '#38bdf8',
+        magenta: '#a78bfa',
+        cyan: '#00e5ff',
+        white: '#f8fbff',
+      },
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(containerRef.current);
+    terminalRef.current = terminal;
+    fitRef.current = fitAddon;
+    terminal.writeln('NOC360 SSH Terminal Center');
+    terminal.writeln(`Opening ${tab.connection.connection_name}...`);
+
+    const socket = new WebSocket(websocketEndpoint(`/terminal/ws/${tab.connection.id}`));
+    socketRef.current = socket;
+
+    const fitAndResize = () => {
+      try {
+        fitAddon.fit();
+        if (socket.readyState === WebSocket.OPEN) socket.send(`__resize__:${terminal.cols}:${terminal.rows}`);
+      } catch (error) {
+        // xterm fit can fail while the pane is hidden; it will retry when focused.
+      }
+    };
+
+    socket.onopen = () => {
+      onStatus('Connected');
+      window.setTimeout(fitAndResize, 60);
+      if (active) terminal.focus();
+    };
+    socket.onmessage = (event) => terminal.write(event.data);
+    socket.onerror = () => {
+      onStatus('Error');
+      terminal.writeln('\r\n[connection error]');
+    };
+    socket.onclose = () => {
+      onStatus('Closed');
+      terminal.writeln('\r\n[session closed]');
+    };
+    const disposable = terminal.onData((data) => {
+      if (socket.readyState === WebSocket.OPEN) socket.send(data);
+    });
+    window.addEventListener('resize', fitAndResize);
+    window.setTimeout(fitAndResize, 120);
+
+    return () => {
+      window.removeEventListener('resize', fitAndResize);
+      disposable.dispose();
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+      terminal.dispose();
+    };
+  }, [tab.connection.id, tab.reconnectKey]);
+
+  useEffect(() => {
+    if (!active || !terminalRef.current || !fitRef.current) return;
+    window.setTimeout(() => {
+      try {
+        fitRef.current.fit();
+        terminalRef.current.focus();
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(`__resize__:${terminalRef.current.cols}:${terminalRef.current.rows}`);
+        }
+      } catch (error) {
+        // Ignore transient fit failures while layout is settling.
+      }
+    }, 80);
+  }, [active]);
+
+  useEffect(() => {
+    if (tab.clearKey && terminalRef.current) terminalRef.current.clear();
+  }, [tab.clearKey]);
+
+  return <div className={`sshTerminalPane ${active ? 'active' : ''}`} ref={containerRef} />;
 }
 
 function MultiSelect({ values, options, labelKey = 'name', onChange }) {

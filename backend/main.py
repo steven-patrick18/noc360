@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -24,7 +25,12 @@ try:
 except ImportError:  # Keep local/dev imports working until requirements are installed.
     bcrypt = None
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+try:
+    import paramiko
+except ImportError:  # Terminal APIs return a clear setup error until requirements are installed.
+    paramiko = None
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -33,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
+from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
     ActivityLogOut,
     BillingChargeCreate,
@@ -68,6 +74,10 @@ from schemas import (
     RoutingGatewayCreate,
     RoutingGatewayOut,
     RoutingGatewayUpdate,
+    SSHConnectionCreate,
+    SSHConnectionOut,
+    SSHConnectionPasswordOut,
+    SSHConnectionUpdate,
     LoginIn,
     PagePermissionIn,
     PagePermissionOut,
@@ -149,6 +159,7 @@ PAGE_KEYS = [
     "tickets",
     "my_tickets",
     "webphone",
+    "terminal",
 ]
 PAGE_KEY_ALIASES = {
     "command_center": "dashboard",
@@ -182,6 +193,7 @@ DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
     "tickets",
     "my_tickets",
     "webphone",
+    "terminal",
     *PAGE_KEYS,
 ]))
 ALLOWED_PERMISSION_KEYS = sorted(set(PAGE_KEYS) | set(DEFAULT_PERMISSION_KEYS) | set(PAGE_KEY_ALIASES))
@@ -203,6 +215,7 @@ MODULE_PAGE_MAP = {
     "myChat": "my_chat",
     "myTickets": "my_tickets",
     "webphone": "webphone",
+    "terminal": "terminal",
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
@@ -549,6 +562,19 @@ def require_webphone(action: str = "can_view"):
         permission = permission_dict(db, user).get("webphone")
         if not permission or not permission.get(action):
             raise HTTPException(status_code=403, detail="Webphone permission denied")
+        return user
+    return checker
+
+
+def require_terminal(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"admin", "noc_user"}:
+            raise HTTPException(status_code=403, detail="Terminal is restricted to admin and NOC users")
+        if user.role == "admin":
+            return user
+        permission = permission_dict(db, user).get("terminal")
+        if not permission or not permission.get(action):
+            raise HTTPException(status_code=403, detail="Terminal permission denied")
         return user
     return checker
 
@@ -2054,6 +2080,290 @@ def create_webphone_call_log(payload: WebphoneCallLogCreate, request: Request, d
     db.commit()
     db.refresh(record)
     return webphone_call_log_out(record)
+
+
+def validate_ssh_connection_payload(payload: SSHConnectionCreate | SSHConnectionUpdate, require_password: bool = False):
+    if not normalize(payload.connection_name):
+        raise HTTPException(status_code=400, detail="Connection name is required")
+    if not normalize(payload.host_ip):
+        raise HTTPException(status_code=400, detail="Host/IP is required")
+    if not normalize(payload.username):
+        raise HTTPException(status_code=400, detail="SSH username is required")
+    if require_password and not normalize(getattr(payload, "password", None)):
+        raise HTTPException(status_code=400, detail="SSH password is required")
+    port = int(payload.ssh_port or 22)
+    if port < 1 or port > 65535:
+        raise HTTPException(status_code=400, detail="SSH port must be between 1 and 65535")
+
+
+def terminal_connection_out(record: SSHConnection):
+    return {
+        "id": record.id,
+        "connection_name": record.connection_name,
+        "host_ip": record.host_ip,
+        "ssh_port": record.ssh_port or 22,
+        "username": record.username,
+        "status": record.status,
+        "notes": record.notes,
+        "has_password": bool(record.password),
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def require_paramiko():
+    if paramiko is None:
+        raise HTTPException(status_code=500, detail="Paramiko is not installed. Run pip install -r requirements.txt")
+
+
+def open_ssh_client(connection: dict):
+    if paramiko is None:
+        raise RuntimeError("Paramiko is not installed. Run pip install -r requirements.txt")
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        hostname=connection["host_ip"],
+        port=int(connection.get("ssh_port") or 22),
+        username=connection["username"],
+        password=connection.get("password") or "",
+        timeout=12,
+        banner_timeout=12,
+        auth_timeout=12,
+        look_for_keys=False,
+        allow_agent=False,
+    )
+    return client
+
+
+def read_ssh_channel(channel):
+    while True:
+        if channel.recv_ready():
+            return channel.recv(4096).decode("utf-8", errors="replace")
+        if channel.recv_stderr_ready():
+            return channel.recv_stderr(4096).decode("utf-8", errors="replace")
+        if channel.closed or channel.exit_status_ready():
+            return None
+        time.sleep(0.05)
+
+
+def user_from_ws_token(db: Session, token: str | None):
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    payload = decode_token(token)
+    user = db.get(User, int(payload["sub"]))
+    if not user or user.status != "Active":
+        raise HTTPException(status_code=401, detail="User inactive or missing")
+    return user
+
+
+def assert_terminal_user(db: Session, user: User, action: str = "can_view"):
+    if user.role not in {"admin", "noc_user"}:
+        raise HTTPException(status_code=403, detail="Terminal is restricted to admin and NOC users")
+    if user.role == "admin":
+        return
+    permission = permission_dict(db, user).get("terminal")
+    if not permission or not permission.get(action):
+        raise HTTPException(status_code=403, detail="Terminal permission denied")
+
+
+@app.get("/api/terminal/connections", response_model=list[SSHConnectionOut])
+@app.get("/terminal/connections", response_model=list[SSHConnectionOut])
+def get_terminal_connections(
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_terminal()),
+):
+    query = db.query(SSHConnection)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(SSHConnection.connection_name.ilike(like), SSHConnection.host_ip.ilike(like), SSHConnection.username.ilike(like), SSHConnection.notes.ilike(like)))
+    return [terminal_connection_out(row) for row in query.order_by(SSHConnection.connection_name.asc(), SSHConnection.id.asc()).all()]
+
+
+@app.post("/api/terminal/connections", response_model=SSHConnectionOut)
+@app.post("/terminal/connections", response_model=SSHConnectionOut)
+def create_terminal_connection(payload: SSHConnectionCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_create"))):
+    validate_ssh_connection_payload(payload, require_password=True)
+    record = SSHConnection(
+        connection_name=normalize(payload.connection_name),
+        host_ip=normalize(payload.host_ip),
+        ssh_port=int(payload.ssh_port or 22),
+        username=normalize(payload.username),
+        password=normalize(payload.password),
+        status=payload.status or "Active",
+        notes=payload.notes,
+    )
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "create_ssh_connection", "terminal", "SSHConnection", record.id, f"Created SSH connection {record.connection_name}", new_value=record, request=request)
+    db.commit()
+    db.refresh(record)
+    return terminal_connection_out(record)
+
+
+@app.put("/api/terminal/connections/{record_id}", response_model=SSHConnectionOut)
+@app.put("/terminal/connections/{record_id}", response_model=SSHConnectionOut)
+def update_terminal_connection(record_id: int, payload: SSHConnectionUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_edit"))):
+    validate_ssh_connection_payload(payload)
+    record = get_record(db, SSHConnection, record_id)
+    old_value = sanitize_activity_value(record)
+    record.connection_name = normalize(payload.connection_name)
+    record.host_ip = normalize(payload.host_ip)
+    record.ssh_port = int(payload.ssh_port or 22)
+    record.username = normalize(payload.username)
+    if normalize(payload.password):
+        record.password = normalize(payload.password)
+    record.status = payload.status or "Active"
+    record.notes = payload.notes
+    record.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(record)
+    log_activity(db, user, "update_ssh_connection", "terminal", "SSHConnection", record.id, f"Updated SSH connection {record.connection_name}", old_value=old_value, new_value=record, request=request, commit=True)
+    return terminal_connection_out(record)
+
+
+@app.delete("/api/terminal/connections/{record_id}")
+@app.delete("/terminal/connections/{record_id}")
+def delete_terminal_connection(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_delete"))):
+    record = get_record(db, SSHConnection, record_id)
+    old_value = sanitize_activity_value(record)
+    db.query(TerminalSession).filter(TerminalSession.connection_id == record.id).update({"connection_id": None}, synchronize_session=False)
+    db.delete(record)
+    log_activity(db, user, "delete_ssh_connection", "terminal", "SSHConnection", record_id, f"Deleted SSH connection {record.connection_name}", old_value=old_value, request=request)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/terminal/connections/{record_id}/password", response_model=SSHConnectionPasswordOut)
+@app.get("/terminal/connections/{record_id}/password", response_model=SSHConnectionPasswordOut)
+def reveal_terminal_connection_password(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_terminal("can_edit"))):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin can reveal SSH passwords")
+    record = get_record(db, SSHConnection, record_id)
+    return {"password": record.password or ""}
+
+
+@app.post("/api/terminal/connections/{record_id}/test")
+@app.post("/terminal/connections/{record_id}/test")
+def test_terminal_connection(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_terminal())):
+    require_paramiko()
+    record = get_record(db, SSHConnection, record_id)
+    connection = {"host_ip": record.host_ip, "ssh_port": record.ssh_port or 22, "username": record.username, "password": record.password}
+    try:
+        client = open_ssh_client(connection)
+        client.close()
+    except Exception as exc:
+        log_activity(db, user, "test_ssh_connection_failed", "terminal", "SSHConnection", record.id, f"SSH test failed for {record.connection_name}: {exc}", request=request, commit=True)
+        raise HTTPException(status_code=400, detail=f"SSH test failed: {exc}") from exc
+    log_activity(db, user, "test_ssh_connection", "terminal", "SSHConnection", record.id, f"SSH test succeeded for {record.connection_name}", request=request, commit=True)
+    return {"ok": True, "message": "SSH connection successful"}
+
+
+@app.websocket("/api/terminal/ws/{connection_id}")
+@app.websocket("/terminal/ws/{connection_id}")
+async def terminal_websocket(websocket: WebSocket, connection_id: int):
+    token = websocket.query_params.get("token")
+    session_id = None
+    user_id = None
+    ssh_client = None
+    channel = None
+    connection_name = None
+    try:
+        with SessionLocal() as db:
+            user = user_from_ws_token(db, token)
+            assert_terminal_user(db, user)
+            record = db.get(SSHConnection, connection_id)
+            if not record:
+                await websocket.close(code=1008)
+                return
+            if (record.status or "Active") != "Active":
+                await websocket.close(code=1008)
+                return
+            connection = {
+                "host_ip": record.host_ip,
+                "ssh_port": record.ssh_port or 22,
+                "username": record.username,
+                "password": record.password,
+            }
+            connection_name = record.connection_name
+            session = TerminalSession(connection_id=record.id, user_id=user.id, status="Opening")
+            db.add(session)
+            db.flush()
+            session_id = session.id
+            user_id = user.id
+            log_activity(db, user, "terminal_session_opened", "terminal", "TerminalSession", session.id, f"Terminal session opened for {record.connection_name}", new_value={"connection_id": record.id, "connection_name": record.connection_name}, request=websocket, commit=False)
+            db.commit()
+
+        await websocket.accept()
+        await websocket.send_text(f"\r\nConnecting to {connection_name}...\r\n")
+        ssh_client = await asyncio.to_thread(open_ssh_client, connection)
+        channel = await asyncio.to_thread(ssh_client.invoke_shell, "xterm", 120, 36)
+        channel.settimeout(0.0)
+        await websocket.send_text("\r\nConnected.\r\n")
+        with SessionLocal() as db:
+            session = db.get(TerminalSession, session_id)
+            if session:
+                session.status = "Connected"
+                db.commit()
+
+        async def ssh_to_ws():
+            while True:
+                data = await asyncio.to_thread(read_ssh_channel, channel)
+                if data is None:
+                    break
+                if data:
+                    await websocket.send_text(data)
+
+        async def ws_to_ssh():
+            while True:
+                data = await websocket.receive_text()
+                if data.startswith("__resize__:"):
+                    try:
+                        _, cols, rows = data.split(":", 2)
+                        await asyncio.to_thread(channel.resize_pty, int(cols), int(rows))
+                    except Exception:
+                        pass
+                    continue
+                await asyncio.to_thread(channel.send, data)
+
+        tasks = [asyncio.create_task(ssh_to_ws()), asyncio.create_task(ws_to_ssh())]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            task.result()
+    except WebSocketDisconnect:
+        pass
+    except HTTPException:
+        if websocket.client_state.name != "DISCONNECTED":
+            await websocket.close(code=1008)
+    except Exception as exc:
+        logger.exception("Terminal websocket failed")
+        try:
+            if websocket.client_state.name != "DISCONNECTED":
+                await websocket.send_text(f"\r\nTerminal error: {exc}\r\n")
+        except Exception:
+            pass
+    finally:
+        try:
+            if channel:
+                channel.close()
+        except Exception:
+            pass
+        try:
+            if ssh_client:
+                ssh_client.close()
+        except Exception:
+            pass
+        if session_id:
+            with SessionLocal() as db:
+                session = db.get(TerminalSession, session_id)
+                user = db.get(User, user_id) if user_id else None
+                if session:
+                    session.status = "Closed"
+                    session.ended_at = datetime.utcnow()
+                    log_activity(db, user, "terminal_session_closed", "terminal", "TerminalSession", session.id, f"Terminal session closed for {connection_name or 'SSH connection'}", request=websocket, commit=False)
+                    db.commit()
 
 
 @app.get("/api/webphone/pbx/status")
