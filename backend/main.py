@@ -4,25 +4,33 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
+import shutil
+import subprocess
+import zipfile
 from collections import Counter
 from datetime import date, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
 
 try:
     import bcrypt
 except ImportError:  # Keep local/dev imports working until requirements are installed.
     bcrypt = None
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import inspect, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine, get_db
-from models import BillingCharge, BillingSetting, CDR, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, User, VOSPortal
+from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
+    ActivityLogOut,
     BillingChargeCreate,
     BillingChargeOut,
     BillingChargeUpdate,
@@ -31,6 +39,13 @@ from schemas import (
     CDRCreate,
     CDROut,
     CDRUpdate,
+    ChatGroupCreate,
+    ChatGroupMessageCreate,
+    ChatGroupMessageOut,
+    ChatGroupOut,
+    ChatMessageCreate,
+    ChatMessageOut,
+    ChatRoomOut,
     ClientAccessIn,
     ClientLedgerCreate,
     ClientLedgerMutationOut,
@@ -53,12 +68,22 @@ from schemas import (
     PagePermissionOut,
     PasswordResetIn,
     TokenOut,
+    TicketCreate,
+    TicketMessageCreate,
+    TicketMessageOut,
+    TicketOut,
+    TicketUpdate,
     UserCreate,
     UserUpdate,
     UserOut,
     VOSPortalCreate,
     VOSPortalOut,
     VOSPortalUpdate,
+    WebphoneCallLogCreate,
+    WebphoneCallLogOut,
+    WebphoneProfileCreate,
+    WebphoneProfileOut,
+    WebphoneProfileUpdate,
 )
 
 logger = logging.getLogger("noc360")
@@ -90,6 +115,9 @@ CHARGE_TYPES = {
     "Other Charges",
 }
 LEDGER_CATEGORIES = CHARGE_TYPES | {"Payment", "Adjustment"}
+TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
+TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
+TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
 DEFAULT_USD_TO_INR = 83.0
 PAGE_KEYS = [
     "dashboard",
@@ -109,7 +137,49 @@ PAGE_KEYS = [
     "rdp_media",
     "routing_gateways",
     "user_access",
+    "activity_logs",
+    "chat_center",
+    "my_chat",
+    "group_chat",
+    "tickets",
+    "my_tickets",
+    "webphone",
 ]
+PAGE_KEY_ALIASES = {
+    "command_center": "dashboard",
+    "intelligence_core": "business_ai",
+    "data_intelligence": "reports",
+    "money_engine": "billing",
+    "vos_desktop": "vos_desktop_launcher",
+    "media_nodes": "rdp_media",
+    "traffic_control": "routing_gateways",
+}
+DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
+    "dashboard",
+    "command_center",
+    "intelligence_core",
+    "data_intelligence",
+    "management_portal",
+    "money_engine",
+    "clients",
+    "user_access",
+    "vos_portals",
+    "vos_desktop",
+    "dialer_clusters",
+    "media_nodes",
+    "traffic_control",
+    "reports",
+    "billing",
+    "activity_logs",
+    "chat_center",
+    "my_chat",
+    "group_chat",
+    "tickets",
+    "my_tickets",
+    "webphone",
+    *PAGE_KEYS,
+]))
+ALLOWED_PERMISSION_KEYS = sorted(set(PAGE_KEYS) | set(DEFAULT_PERMISSION_KEYS) | set(PAGE_KEY_ALIASES))
 MODULE_PAGE_MAP = {
     "dashboard": "dashboard",
     "businessAi": "business_ai",
@@ -122,12 +192,18 @@ MODULE_PAGE_MAP = {
     "rdps": "rdp_media",
     "gateways": "routing_gateways",
     "userAccess": "user_access",
+    "activityLogs": "activity_logs",
+    "chatCenter": "chat_center",
+    "tickets": "tickets",
+    "myChat": "my_chat",
+    "myTickets": "my_tickets",
+    "webphone": "webphone",
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone"],
     "viewer": ["dashboard", "reports"],
-    "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports"],
+    "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
 
 
@@ -191,6 +267,23 @@ class VOSDesktopLoginOut(BaseModel):
     anti_hack_password: str | None = None
 
 
+class VOSDesktopDetailsOut(BaseModel):
+    id: int
+    vos_name: str | None = None
+    vos_version: str | None = None
+    portal_type: str | None = None
+    server_ip: str | None = None
+    web_panel_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    anti_hack_url: str | None = None
+    anti_hack_password: str | None = None
+    uuid: str | None = None
+    notes: str | None = None
+    vos_notes: str | None = None
+    status: str | None = None
+
+
 class VOSLaunchIn(BaseModel):
     launcher_path: str | None = None
     shortcut_path: str | None = None
@@ -215,6 +308,40 @@ class VOSDesktopUpdateIn(BaseModel):
     vos_port: int | None = None
     vos_desktop_enabled: bool | None = None
     vos_notes: str | None = None
+
+
+class ActivityLogTrackIn(BaseModel):
+    action: str
+    module: str
+    record_type: str | None = None
+    record_id: int | None = None
+    description: str | None = None
+    old_value: dict | str | None = None
+    new_value: dict | str | None = None
+
+
+class WebphonePbxConfigIn(BaseModel):
+    pbx_domain: str = "pbx.voipzap.com"
+    wss_port: int = 8089
+    http_port: int = 8088
+    rtp_start: int = 10000
+    rtp_end: int = 20000
+    stun_server: str = "stun.l.google.com:19302"
+    sip_username: str = "1001"
+    sip_password: str
+    cli: str | None = None
+    trunk_name: str = "your_trunk"
+    trunk_host: str
+    trunk_username: str | None = None
+    trunk_password: str | None = None
+    from_domain: str | None = None
+    prefix: str | None = None
+
+
+class WebphonePbxConnectIn(BaseModel):
+    ip: str
+    username: str
+    password: str
 
 
 def b64url(data: bytes) -> str:
@@ -245,23 +372,43 @@ def verify_password(password: str, stored_hash: str) -> bool:
     return hmac.compare_digest(hash_password(password, salt), stored_hash)
 
 
+def canonical_page_key(page_key: str | None):
+    return PAGE_KEY_ALIASES.get(page_key or "", page_key)
+
+
+def permission_values(row: PagePermission):
+    return {
+        "can_view": bool(row.can_view),
+        "can_create": bool(row.can_create),
+        "can_edit": bool(row.can_edit),
+        "can_delete": bool(row.can_delete),
+        "can_export": bool(row.can_export),
+    }
+
+
+def merge_permission(existing: dict | None, incoming: dict):
+    if not existing:
+        return incoming
+    return {
+        key: bool(existing.get(key)) or bool(incoming.get(key))
+        for key in ["can_view", "can_create", "can_edit", "can_delete", "can_export"]
+    }
+
+
 def permission_dict(db: Session, user: User):
     if user.role == "admin":
-        return {key: {"can_view": True, "can_create": True, "can_edit": True, "can_delete": True, "can_export": True} for key in PAGE_KEYS}
+        rights = {"can_view": True, "can_create": True, "can_edit": True, "can_delete": True, "can_export": True}
+        return {key: rights.copy() for key in ALLOWED_PERMISSION_KEYS}
     rows = db.query(PagePermission).filter(PagePermission.user_id == user.id).all()
     if user.role == "customer":
         customer_pages = set(ROLE_DEFAULT_PAGES["customer"])
-        rows = [row for row in rows if row.page_key in customer_pages]
-    permissions = {
-        row.page_key: {
-            "can_view": bool(row.can_view),
-            "can_create": bool(row.can_create),
-            "can_edit": bool(row.can_edit),
-            "can_delete": bool(row.can_delete),
-            "can_export": bool(row.can_export),
-        }
-        for row in rows
-    }
+        rows = [row for row in rows if canonical_page_key(row.page_key) in customer_pages]
+    permissions = {}
+    for row in rows:
+        values = permission_values(row)
+        permissions[row.page_key] = merge_permission(permissions.get(row.page_key), values)
+        canonical = canonical_page_key(row.page_key)
+        permissions[canonical] = merge_permission(permissions.get(canonical), values)
     if not permissions and user.role in ROLE_DEFAULT_PAGES:
         readonly = user.role in {"viewer", "customer"}
         export_allowed = user.role == "customer"
@@ -365,6 +512,19 @@ def require_vos_desktop(action: str = "can_view"):
     return checker
 
 
+def require_webphone(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"admin", "noc_user"}:
+            raise HTTPException(status_code=403, detail="Webphone is restricted to admin and NOC users")
+        if user.role == "admin":
+            return user
+        permission = permission_dict(db, user).get("webphone")
+        if not permission or not permission.get(action):
+            raise HTTPException(status_code=403, detail="Webphone permission denied")
+        return user
+    return checker
+
+
 def has_page_permission(db: Session, user: User, page_key: str, action: str = "can_view"):
     if user.role == "admin":
         return True
@@ -391,6 +551,85 @@ def normalize(value):
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+SENSITIVE_LOG_KEYS = {"password", "password_hash", "login_password", "confirm_password", "new_password", "current_password", "anti_hack_password", "sip_password", "trunk_password", "trunk_pass"}
+
+
+def activity_ip(request: Request | None):
+    if not request:
+        return None
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip()
+    return request.client.host if request.client else None
+
+
+def sanitize_activity_value(value):
+    if value is None:
+        return None
+    if hasattr(value, "__table__"):
+        value = {column.name: getattr(value, column.name) for column in value.__table__.columns}
+    if isinstance(value, BaseModel):
+        value = value.model_dump()
+    if isinstance(value, dict):
+        return {
+            key: ("[redacted]" if key.lower() in SENSITIVE_LOG_KEYS else sanitize_activity_value(item))
+            for key, item in value.items()
+            if key.lower() not in {"password_hash"}
+        }
+    if isinstance(value, list):
+        return [sanitize_activity_value(item) for item in value]
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+def activity_json(value):
+    cleaned = sanitize_activity_value(value)
+    if cleaned is None:
+        return None
+    if isinstance(cleaned, str):
+        return cleaned
+    return json.dumps(cleaned, default=str, separators=(",", ":"))
+
+
+def log_activity(
+    db: Session,
+    user: User | None,
+    action: str,
+    module: str,
+    record_type: str | None = None,
+    record_id: int | None = None,
+    description: str | None = None,
+    old_value=None,
+    new_value=None,
+    request: Request | None = None,
+    commit: bool = False,
+    username: str | None = None,
+    role: str | None = None,
+):
+    try:
+        db.add(ActivityLog(
+            user_id=user.id if user else None,
+            username=user.username if user else username,
+            role=user.role if user else role,
+            action=action,
+            module=module,
+            record_type=record_type,
+            record_id=record_id,
+            description=description,
+            old_value=activity_json(old_value),
+            new_value=activity_json(new_value),
+            ip_address=activity_ip(request),
+            user_agent=request.headers.get("user-agent") if request else None,
+        ))
+        if commit:
+            db.commit()
+    except Exception:
+        if commit:
+            db.rollback()
+        logger.exception("Unable to write activity log")
 
 
 def is_missing(value):
@@ -439,6 +678,34 @@ def create_database():
     ensure_database_schema()
 
 
+def insert_permission_if_missing(db: Session, user_id: int, page_key: str, rights: dict):
+    # INSERT OR IGNORE-style behavior for SQLite/PostgreSQL without overwriting live permissions.
+    exists = db.query(PagePermission).filter(PagePermission.user_id == user_id, PagePermission.page_key == page_key).first()
+    if exists:
+        return False
+    db.add(PagePermission(user_id=user_id, page_key=page_key, **rights))
+    return True
+
+
+def default_pages_for_role(role: str):
+    if role == "admin":
+        return DEFAULT_PERMISSION_KEYS
+    return ROLE_DEFAULT_PAGES.get(role, [])
+
+
+def default_rights_for_role(role: str, page: str | None = None):
+    if role == "admin":
+        return {"can_view": 1, "can_create": 1, "can_edit": 1, "can_delete": 1, "can_export": 1}
+    readonly = role in {"viewer", "customer"}
+    export_allowed = role != "viewer"
+    rights = {"can_view": 1, "can_create": 0 if readonly else 1, "can_edit": 0 if readonly else 1, "can_delete": 0, "can_export": 1 if export_allowed else 0}
+    if role == "customer" and page in {"my_chat", "my_tickets"}:
+        rights = {"can_view": 1, "can_create": 1, "can_edit": 0, "can_delete": 0, "can_export": 0}
+    if role == "noc_user" and page in {"vos_desktop_launcher", "vos_desktop"}:
+        rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
+    return rights
+
+
 def seed_user_access_defaults(db: Session):
     clients_by_name = {client.name: client for client in db.query(Client).all()}
     existing_user_count = db.query(User).count()
@@ -452,22 +719,18 @@ def seed_user_access_defaults(db: Session):
             client = clients_by_name.get(client_name) if client_name else None
             db.add(User(username=username, password_hash=hash_password(password), role=role, client_id=client.id if client else None, status="Active", full_name=full_name, email=email))
         db.flush()
+    permissions_empty = db.query(PagePermission).count() == 0
     for user in db.query(User).all():
-        if user.role == "admin":
-            pages = PAGE_KEYS
-            rights = {"can_view": 1, "can_create": 1, "can_edit": 1, "can_delete": 1, "can_export": 1}
-        else:
-            pages = ROLE_DEFAULT_PAGES.get(user.role, [])
-            readonly = user.role in {"viewer", "customer"}
-            export_allowed = user.role != "viewer"
-            rights = {"can_view": 1, "can_create": 0 if readonly else 1, "can_edit": 0 if readonly else 1, "can_delete": 0, "can_export": 1 if export_allowed else 0}
+        pages = default_pages_for_role(user.role)
+        if permissions_empty and user.role != "admin":
+            pages = sorted(set(pages) | {page for page in ROLE_DEFAULT_PAGES.get(user.role, [])})
         existing = {row.page_key for row in db.query(PagePermission).filter(PagePermission.user_id == user.id).all()}
         for page in pages:
             if page not in existing:
-                page_rights = rights
-                if user.role == "noc_user" and page == "vos_desktop_launcher":
-                    page_rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
-                db.add(PagePermission(user_id=user.id, page_key=page, **page_rights))
+                insert_permission_if_missing(db, user.id, page, default_rights_for_role(user.role, page))
+        if user.role == "admin":
+            for page in DEFAULT_PERMISSION_KEYS:
+                insert_permission_if_missing(db, user.id, page, default_rights_for_role(user.role, page))
         if user.client_id and not db.query(ClientAccess).filter(ClientAccess.user_id == user.id, ClientAccess.client_id == user.client_id).first():
             db.add(ClientAccess(user_id=user.id, client_id=user.client_id))
     db.commit()
@@ -605,12 +868,15 @@ def health():
 
 @app.post("/api/auth/login", response_model=TokenOut)
 @app.post("/auth/login", response_model=TokenOut)
-def login(payload: LoginIn, db: Session = Depends(get_db)):
+def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        log_activity(db, None, "login_failed", "auth", "User", user.id if user else None, f"Failed login for {payload.username}", request=request, commit=True, username=payload.username, role=user.role if user else None)
         raise HTTPException(status_code=401, detail="Invalid username or password")
     if user.status != "Active":
+        log_activity(db, user, "login_failed", "auth", "User", user.id, "Login blocked because user is inactive", request=request, commit=True)
         raise HTTPException(status_code=403, detail="User is inactive")
+    log_activity(db, user, "login_success", "auth", "User", user.id, "Login success", request=request, commit=True)
     return {"access_token": create_token(user), "role": user.role, "client_id": user.client_id, "user": user_out(db, user)}
 
 
@@ -623,13 +889,15 @@ def me(user: User = Depends(current_user)):
 
 @app.put("/api/auth/update-profile")
 @app.put("/auth/update-profile")
-def update_profile(payload: ProfileUpdateIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+def update_profile(payload: ProfileUpdateIn, request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
     record = db.get(User, user.id)
     if not record:
         raise HTTPException(status_code=404, detail="User not found")
     if not payload.current_password or not verify_password(payload.current_password, record.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
+    old_value = {"email": record.email}
     new_password = (payload.new_password or "").strip()
+    password_changed = bool(new_password)
     if new_password:
         if len(new_password) < 6:
             raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
@@ -637,7 +905,1032 @@ def update_profile(payload: ProfileUpdateIn, db: Session = Depends(get_db), user
     record.email = (payload.email or "").strip() or None
     db.commit()
     db.refresh(record)
+    log_activity(db, record, "update_profile", "auth", "User", record.id, "Profile updated; password changed" if password_changed else "Profile updated", old_value=old_value, new_value={"email": record.email, "password_changed": password_changed}, request=request, commit=True)
     return user_out(db, record)
+
+
+@app.get("/api/activity-logs", response_model=list[ActivityLogOut])
+@app.get("/activity-logs", response_model=list[ActivityLogOut])
+def get_activity_logs(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    username: str | None = None,
+    role: str | None = None,
+    module: str | None = None,
+    action: str | None = None,
+    search: str | None = None,
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_page("activity_logs")),
+):
+    if user.role == "customer":
+        raise HTTPException(status_code=403, detail="Activity logs are restricted")
+    query = db.query(ActivityLog)
+    if date_from:
+        query = query.filter(ActivityLog.created_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(ActivityLog.created_at <= datetime.combine(date_to, datetime.max.time()))
+    if username:
+        query = query.filter(ActivityLog.username.ilike(f"%{username}%"))
+    if role:
+        query = query.filter(ActivityLog.role == role)
+    if module:
+        query = query.filter(ActivityLog.module == module)
+    if action:
+        query = query.filter(ActivityLog.action == action)
+    if search:
+        query = query.filter(ActivityLog.description.ilike(f"%{search}%"))
+    return query.order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc()).limit(limit).all()
+
+
+@app.get("/api/activity-logs/summary")
+@app.get("/activity-logs/summary")
+def get_activity_logs_summary(db: Session = Depends(get_db), user: User = Depends(require_page("activity_logs"))):
+    if user.role == "customer":
+        raise HTTPException(status_code=403, detail="Activity logs are restricted")
+    today = datetime.utcnow().date()
+    today_start = datetime.combine(today, datetime.min.time())
+    logs = db.query(ActivityLog).filter(ActivityLog.created_at >= today_start).all()
+    return {
+        "total_today": len(logs),
+        "login_attempts": len([row for row in logs if row.action in {"login_success", "login_failed"}]),
+        "billing_changes": len([row for row in logs if row.module == "billing"]),
+        "user_access_changes": len([row for row in logs if row.module == "user_access"]),
+        "vos_credential_actions": len([row for row in logs if row.module == "vos_desktop" and row.action in {"copy_credentials", "launch_desktop", "open_anti_hack"}]),
+    }
+
+
+@app.post("/api/activity-logs/track")
+@app.post("/activity-logs/track")
+def track_activity(payload: ActivityLogTrackIn, request: Request, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    allowed_actions = {"logout", "export_report", "copy_credentials", "open_anti_hack", "launch_desktop", "open_web_panel"}
+    if payload.action not in allowed_actions:
+        raise HTTPException(status_code=400, detail="Unsupported activity action")
+    log_activity(db, user, payload.action, payload.module, payload.record_type, payload.record_id, payload.description, payload.old_value, payload.new_value, request=request, commit=True)
+    return {"logged": True}
+
+
+def internal_user_ids(db: Session):
+    return [row.id for row in db.query(User.id).filter(User.role.in_(["admin", "noc_user"]), User.status == "Active").all()]
+
+
+def ensure_chat_room(db: Session, client_id: int):
+    room = db.query(ChatRoom).filter(ChatRoom.client_id == client_id).first()
+    if room:
+        return room
+    if not db.get(Client, client_id):
+        raise HTTPException(status_code=400, detail="Client does not exist")
+    room = ChatRoom(client_id=client_id)
+    db.add(room)
+    db.flush()
+    return room
+
+
+def can_access_chat_room(db: Session, user: User, room: ChatRoom):
+    if user.role in {"admin", "noc_user"} and has_page_permission(db, user, "chat_center"):
+        return True
+    if user.role == "customer" and has_page_permission(db, user, "my_chat"):
+        return room.client_id in user_client_ids(db, user)
+    return False
+
+
+def require_chat_room_access(db: Session, user: User, room_id: int):
+    room = db.get(ChatRoom, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Chat room not found")
+    if not can_access_chat_room(db, user, room):
+        raise HTTPException(status_code=403, detail="Chat access denied")
+    return room
+
+
+def chat_message_out(message: ChatMessage):
+    return {
+        "id": message.id,
+        "room_id": message.room_id,
+        "sender_id": message.sender_id,
+        "sender_name": message.sender.full_name or message.sender.username if message.sender else None,
+        "sender_role": message.sender_role,
+        "message": message.message,
+        "created_at": message.created_at,
+        "is_read": bool(message.is_read),
+    }
+
+
+def chat_room_out(db: Session, room: ChatRoom, user: User):
+    last = db.query(ChatMessage).filter(ChatMessage.room_id == room.id).order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc()).first()
+    unread = db.query(ChatMessage).filter(ChatMessage.room_id == room.id, ChatMessage.sender_id != user.id, ChatMessage.is_read == False).count()
+    return {
+        "id": room.id,
+        "client_id": room.client_id,
+        "client_name": room.client.name if room.client else None,
+        "unread_count": unread,
+        "last_message": last.message if last else None,
+        "last_message_at": last.created_at if last else None,
+        "created_at": room.created_at,
+    }
+
+
+def group_out(db: Session, group: ChatGroup, user: User):
+    members = db.query(ChatGroupMember).filter(ChatGroupMember.group_id == group.id).all()
+    member_users = [member.user for member in members if member.user]
+    unread = db.query(ChatGroupMessage).filter(ChatGroupMessage.group_id == group.id, ChatGroupMessage.sender_id != user.id).count()
+    return {
+        "id": group.id,
+        "name": group.name,
+        "created_by": group.created_by,
+        "created_by_name": group.creator.full_name or group.creator.username if group.creator else None,
+        "member_ids": [member.user_id for member in members],
+        "member_names": [member.full_name or member.username for member in member_users],
+        "unread_count": unread,
+        "created_at": group.created_at,
+    }
+
+
+def group_message_out(message: ChatGroupMessage):
+    return {
+        "id": message.id,
+        "group_id": message.group_id,
+        "sender_id": message.sender_id,
+        "sender_name": message.sender.full_name or message.sender.username if message.sender else None,
+        "message": message.message,
+        "created_at": message.created_at,
+    }
+
+
+def require_group_access(db: Session, user: User, group_id: int):
+    group = db.get(ChatGroup, group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if user.role != "admin":
+        is_member = db.query(ChatGroupMember).filter(ChatGroupMember.group_id == group_id, ChatGroupMember.user_id == user.id).first()
+        if not is_member:
+            raise HTTPException(status_code=403, detail="Group access denied")
+    return group
+
+
+def next_ticket_no(db: Session):
+    prefix = f"NOC-{date.today().strftime('%Y%m%d')}-"
+    count = db.query(Ticket).filter(Ticket.ticket_no.like(f"{prefix}%")).count()
+    while True:
+        count += 1
+        ticket_no = f"{prefix}{count:04d}"
+        if not db.query(Ticket).filter(Ticket.ticket_no == ticket_no).first():
+            return ticket_no
+
+
+def ticket_query_for_user(db: Session, user: User):
+    query = db.query(Ticket)
+    if user.role == "customer":
+        query = query.filter(Ticket.client_id.in_(user_client_ids(db, user) or [-1]))
+    return query
+
+
+def can_access_ticket(db: Session, user: User, ticket: Ticket):
+    if user.role in {"admin", "noc_user"} and has_page_permission(db, user, "tickets"):
+        return True
+    if user.role == "customer" and has_page_permission(db, user, "my_tickets"):
+        return ticket.client_id in user_client_ids(db, user)
+    return False
+
+
+def require_ticket_access(db: Session, user: User, ticket_id: int):
+    ticket = db.get(Ticket, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if not can_access_ticket(db, user, ticket):
+        raise HTTPException(status_code=403, detail="Ticket access denied")
+    return ticket
+
+
+def ticket_out(db: Session, ticket: Ticket, user: User):
+    message_query = db.query(TicketMessage).filter(TicketMessage.ticket_id == ticket.id)
+    if user.role == "customer":
+        message_query = message_query.filter(TicketMessage.visibility == "client")
+    last = message_query.order_by(TicketMessage.created_at.desc(), TicketMessage.id.desc()).first()
+    return {
+        "id": ticket.id,
+        "ticket_no": ticket.ticket_no,
+        "client_id": ticket.client_id,
+        "client_name": ticket.client.name if ticket.client else None,
+        "title": ticket.title,
+        "description": ticket.description,
+        "category": ticket.category,
+        "priority": ticket.priority,
+        "status": ticket.status,
+        "assigned_to": ticket.assigned_to,
+        "assigned_to_name": ticket.assignee.full_name or ticket.assignee.username if ticket.assignee else None,
+        "created_by": ticket.created_by,
+        "created_by_name": ticket.creator.full_name or ticket.creator.username if ticket.creator else None,
+        "created_at": ticket.created_at,
+        "updated_at": ticket.updated_at,
+        "message_count": message_query.count(),
+        "last_message_at": last.created_at if last else None,
+    }
+
+
+def ticket_message_out(message: TicketMessage):
+    return {
+        "id": message.id,
+        "ticket_id": message.ticket_id,
+        "user_id": message.user_id,
+        "user_name": message.user.full_name or message.user.username if message.user else None,
+        "user_role": message.user.role if message.user else None,
+        "message": message.message,
+        "visibility": message.visibility,
+        "created_at": message.created_at,
+    }
+
+
+@app.get("/api/communication/summary")
+@app.get("/communication/summary")
+def communication_summary(db: Session = Depends(get_db), user: User = Depends(current_user)):
+    direct_unread = 0
+    group_unread = 0
+    open_tickets = 0
+    if has_page_permission(db, user, "chat_center") or has_page_permission(db, user, "my_chat"):
+        rooms = db.query(ChatRoom).all()
+        if user.role == "customer":
+            allowed = set(user_client_ids(db, user))
+            rooms = [room for room in rooms if room.client_id in allowed]
+        direct_unread = sum(db.query(ChatMessage).filter(ChatMessage.room_id == room.id, ChatMessage.sender_id != user.id, ChatMessage.is_read == False).count() for room in rooms)
+    if has_page_permission(db, user, "group_chat") and user.role != "customer":
+        group_ids = [row.group_id for row in db.query(ChatGroupMember).filter(ChatGroupMember.user_id == user.id).all()]
+        query = db.query(ChatGroupMessage).filter(ChatGroupMessage.sender_id != user.id)
+        if user.role != "admin":
+            query = query.filter(ChatGroupMessage.group_id.in_(group_ids or [-1]))
+        group_unread = query.count()
+    if has_page_permission(db, user, "tickets") or has_page_permission(db, user, "my_tickets"):
+        query = ticket_query_for_user(db, user).filter(Ticket.status.notin_(["Resolved", "Closed"]))
+        open_tickets = query.count()
+    return {"direct_unread": direct_unread, "group_unread": group_unread, "chat_unread": direct_unread + group_unread, "open_tickets": open_tickets}
+
+
+@app.get("/api/chat/users", response_model=list[UserOut])
+@app.get("/chat/users", response_model=list[UserOut])
+def get_chat_users(db: Session = Depends(get_db), user: User = Depends(require_page("group_chat"))):
+    if user.role == "customer":
+        raise HTTPException(status_code=403, detail="Group chat is internal only")
+    return [user_out(db, row) for row in db.query(User).filter(User.role.in_(["admin", "noc_user"]), User.status == "Active").order_by(User.username.asc()).all()]
+
+
+@app.get("/api/chat/rooms", response_model=list[ChatRoomOut])
+@app.get("/chat/rooms", response_model=list[ChatRoomOut])
+def get_chat_rooms(db: Session = Depends(get_db), user: User = Depends(require_any_page(("chat_center", "can_view"), ("my_chat", "can_view")))):
+    client_query = db.query(Client)
+    if user.role == "customer":
+        client_query = client_query.filter(Client.id.in_(user_client_ids(db, user) or [-1]))
+    clients = client_query.order_by(Client.name.asc()).all()
+    rooms = [ensure_chat_room(db, client.id) for client in clients]
+    db.commit()
+    return [chat_room_out(db, room, user) for room in rooms]
+
+
+@app.get("/api/chat/rooms/{room_id}/messages", response_model=list[ChatMessageOut])
+@app.get("/chat/rooms/{room_id}/messages", response_model=list[ChatMessageOut])
+def get_chat_messages(room_id: int, db: Session = Depends(get_db), user: User = Depends(require_any_page(("chat_center", "can_view"), ("my_chat", "can_view")))):
+    require_chat_room_access(db, user, room_id)
+    messages = db.query(ChatMessage).filter(ChatMessage.room_id == room_id).order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc()).all()
+    for message in messages:
+        if message.sender_id != user.id and not message.is_read:
+            message.is_read = True
+    db.commit()
+    return [chat_message_out(message) for message in messages]
+
+
+@app.post("/api/chat/rooms/{room_id}/messages", response_model=ChatMessageOut)
+@app.post("/chat/rooms/{room_id}/messages", response_model=ChatMessageOut)
+def send_chat_message(room_id: int, payload: ChatMessageCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_any_page(("chat_center", "can_create"), ("my_chat", "can_create")))):
+    room = require_chat_room_access(db, user, room_id)
+    text_value = normalize(payload.message)
+    if not text_value:
+        raise HTTPException(status_code=400, detail="Message is required")
+    record = ChatMessage(room_id=room.id, sender_id=user.id, sender_role=user.role, message=text_value, is_read=False)
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "chat_sent", "chat", "ChatRoom", room.id, f"Chat message sent for {room.client.name if room.client else 'client'}", request=request)
+    db.commit()
+    db.refresh(record)
+    return chat_message_out(record)
+
+
+@app.put("/api/chat/messages/{message_id}/read", response_model=ChatMessageOut)
+@app.put("/chat/messages/{message_id}/read", response_model=ChatMessageOut)
+def mark_chat_message_read(message_id: int, db: Session = Depends(get_db), user: User = Depends(require_any_page(("chat_center", "can_view"), ("my_chat", "can_view")))):
+    record = get_record(db, ChatMessage, message_id)
+    require_chat_room_access(db, user, record.room_id)
+    record.is_read = True
+    db.commit()
+    db.refresh(record)
+    return chat_message_out(record)
+
+
+@app.get("/api/chat/groups", response_model=list[ChatGroupOut])
+@app.get("/chat/groups", response_model=list[ChatGroupOut])
+def get_chat_groups(db: Session = Depends(get_db), user: User = Depends(require_page("group_chat"))):
+    if user.role == "customer":
+        raise HTTPException(status_code=403, detail="Group chat is internal only")
+    query = db.query(ChatGroup)
+    if user.role != "admin":
+        group_ids = [row.group_id for row in db.query(ChatGroupMember).filter(ChatGroupMember.user_id == user.id).all()]
+        query = query.filter(ChatGroup.id.in_(group_ids or [-1]))
+    return [group_out(db, group, user) for group in query.order_by(ChatGroup.created_at.desc(), ChatGroup.id.desc()).all()]
+
+
+@app.post("/api/chat/groups", response_model=ChatGroupOut)
+@app.post("/chat/groups", response_model=ChatGroupOut)
+def create_chat_group(payload: ChatGroupCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("group_chat", "can_create"))):
+    if user.role == "customer":
+        raise HTTPException(status_code=403, detail="Group chat is internal only")
+    name = normalize(payload.name)
+    if not name:
+        raise HTTPException(status_code=400, detail="Group name is required")
+    valid_ids = set(internal_user_ids(db))
+    member_ids = sorted(set(payload.member_ids + [user.id]))
+    if any(member_id not in valid_ids for member_id in member_ids):
+        raise HTTPException(status_code=400, detail="Group members must be active admin/NOC users")
+    group = ChatGroup(name=name, created_by=user.id)
+    db.add(group)
+    db.flush()
+    for member_id in member_ids:
+        db.add(ChatGroupMember(group_id=group.id, user_id=member_id))
+    log_activity(db, user, "group_created", "group_chat", "ChatGroup", group.id, f"Created group chat {group.name}", new_value={"name": name, "member_ids": member_ids}, request=request)
+    db.commit()
+    db.refresh(group)
+    return group_out(db, group, user)
+
+
+@app.get("/api/chat/groups/{group_id}/messages", response_model=list[ChatGroupMessageOut])
+@app.get("/chat/groups/{group_id}/messages", response_model=list[ChatGroupMessageOut])
+def get_group_messages(group_id: int, db: Session = Depends(get_db), user: User = Depends(require_page("group_chat"))):
+    require_group_access(db, user, group_id)
+    return [group_message_out(row) for row in db.query(ChatGroupMessage).filter(ChatGroupMessage.group_id == group_id).order_by(ChatGroupMessage.created_at.asc(), ChatGroupMessage.id.asc()).all()]
+
+
+@app.post("/api/chat/groups/{group_id}/messages", response_model=ChatGroupMessageOut)
+@app.post("/chat/groups/{group_id}/messages", response_model=ChatGroupMessageOut)
+def send_group_message(group_id: int, payload: ChatGroupMessageCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("group_chat", "can_create"))):
+    group = require_group_access(db, user, group_id)
+    text_value = normalize(payload.message)
+    if not text_value:
+        raise HTTPException(status_code=400, detail="Message is required")
+    record = ChatGroupMessage(group_id=group.id, sender_id=user.id, message=text_value)
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "group_message_sent", "group_chat", "ChatGroup", group.id, f"Group message sent in {group.name}", request=request)
+    db.commit()
+    db.refresh(record)
+    return group_message_out(record)
+
+
+@app.get("/api/tickets", response_model=list[TicketOut])
+@app.get("/tickets", response_model=list[TicketOut])
+def get_tickets(
+    status: str | None = None,
+    client_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_any_page(("tickets", "can_view"), ("my_tickets", "can_view"))),
+):
+    query = ticket_query_for_user(db, user)
+    if status:
+        query = query.filter(Ticket.status == status)
+    if client_id:
+        if user.role == "customer" and client_id not in user_client_ids(db, user):
+            raise HTTPException(status_code=403, detail="Cannot view another customer's tickets")
+        query = query.filter(Ticket.client_id == client_id)
+    return [ticket_out(db, row, user) for row in query.order_by(Ticket.updated_at.desc(), Ticket.id.desc()).all()]
+
+
+@app.post("/api/tickets", response_model=TicketOut)
+@app.post("/tickets", response_model=TicketOut)
+def create_ticket(payload: TicketCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_any_page(("tickets", "can_create"), ("my_tickets", "can_create")))):
+    client_id = payload.client_id
+    if user.role == "customer":
+        allowed = user_client_ids(db, user)
+        client_id = allowed[0] if allowed else user.client_id
+    if not client_id or not db.get(Client, client_id):
+        raise HTTPException(status_code=400, detail="Valid client is required")
+    if user.role == "customer" and client_id not in user_client_ids(db, user):
+        raise HTTPException(status_code=403, detail="Cannot create ticket for another customer")
+    title = normalize(payload.title)
+    if not title:
+        raise HTTPException(status_code=400, detail="Ticket title is required")
+    if payload.category not in TICKET_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Invalid ticket category")
+    if payload.priority not in TICKET_PRIORITIES:
+        raise HTTPException(status_code=400, detail="Invalid ticket priority")
+    record = Ticket(ticket_no=next_ticket_no(db), client_id=client_id, title=title, description=payload.description, category=payload.category, priority=payload.priority, status="Open", created_by=user.id)
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "ticket_created", "tickets", "Ticket", record.id, f"Created ticket {record.ticket_no}", new_value=record, request=request)
+    db.commit()
+    db.refresh(record)
+    return ticket_out(db, record, user)
+
+
+@app.put("/api/tickets/{ticket_id}", response_model=TicketOut)
+@app.put("/tickets/{ticket_id}", response_model=TicketOut)
+def update_ticket(ticket_id: int, payload: TicketUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("tickets", "can_edit"))):
+    record = require_ticket_access(db, user, ticket_id)
+    old_value = ticket_out(db, record, user)
+    if payload.title is not None:
+        record.title = normalize(payload.title) or record.title
+    if payload.description is not None:
+        record.description = payload.description
+    if payload.category is not None:
+        if payload.category not in TICKET_CATEGORIES:
+            raise HTTPException(status_code=400, detail="Invalid ticket category")
+        record.category = payload.category
+    if payload.priority is not None:
+        if payload.priority not in TICKET_PRIORITIES:
+            raise HTTPException(status_code=400, detail="Invalid ticket priority")
+        record.priority = payload.priority
+    status_changed = False
+    if payload.status is not None:
+        if payload.status not in TICKET_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid ticket status")
+        status_changed = record.status != payload.status
+        record.status = payload.status
+    if payload.assigned_to is not None:
+        if payload.assigned_to and payload.assigned_to not in internal_user_ids(db):
+            raise HTTPException(status_code=400, detail="Ticket assignee must be an active admin/NOC user")
+        record.assigned_to = payload.assigned_to or None
+    db.commit()
+    db.refresh(record)
+    log_activity(db, user, "ticket_status_changed" if status_changed else "ticket_updated", "tickets", "Ticket", record.id, f"Updated ticket {record.ticket_no}", old_value=old_value, new_value=ticket_out(db, record, user), request=request, commit=True)
+    return ticket_out(db, record, user)
+
+
+@app.get("/api/tickets/{ticket_id}/messages", response_model=list[TicketMessageOut])
+@app.get("/tickets/{ticket_id}/messages", response_model=list[TicketMessageOut])
+def get_ticket_messages(ticket_id: int, db: Session = Depends(get_db), user: User = Depends(require_any_page(("tickets", "can_view"), ("my_tickets", "can_view")))):
+    require_ticket_access(db, user, ticket_id)
+    query = db.query(TicketMessage).filter(TicketMessage.ticket_id == ticket_id)
+    if user.role == "customer":
+        query = query.filter(TicketMessage.visibility == "client")
+    return [ticket_message_out(row) for row in query.order_by(TicketMessage.created_at.asc(), TicketMessage.id.asc()).all()]
+
+
+@app.post("/api/tickets/{ticket_id}/messages", response_model=TicketMessageOut)
+@app.post("/tickets/{ticket_id}/messages", response_model=TicketMessageOut)
+def send_ticket_message(ticket_id: int, payload: TicketMessageCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_any_page(("tickets", "can_create"), ("my_tickets", "can_create")))):
+    ticket = require_ticket_access(db, user, ticket_id)
+    text_value = normalize(payload.message)
+    if not text_value:
+        raise HTTPException(status_code=400, detail="Message is required")
+    visibility = "client" if user.role == "customer" else payload.visibility
+    if visibility not in {"client", "internal"}:
+        raise HTTPException(status_code=400, detail="Visibility must be client or internal")
+    record = TicketMessage(ticket_id=ticket.id, user_id=user.id, message=text_value, visibility=visibility)
+    ticket.updated_at = datetime.utcnow()
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "ticket_message_sent", "tickets", "Ticket", ticket.id, f"Ticket message added to {ticket.ticket_no}", new_value={"visibility": visibility}, request=request)
+    db.commit()
+    db.refresh(record)
+    return ticket_message_out(record)
+
+
+ASTERISK_DIR = Path("/etc/asterisk")
+CONFIG_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9_.:/@+\- ]+$")
+SECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def run_safe_command(args: list[str], timeout: int = 10):
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "output": (completed.stdout or completed.stderr or "").strip(),
+        }
+    except FileNotFoundError:
+        return {"ok": False, "returncode": 127, "output": f"{args[0]} not found"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "returncode": 124, "output": f"{args[0]} timed out"}
+
+
+def clean_config_value(name: str, value: str | None, required: bool = True):
+    normalized = normalize(value)
+    if not normalized:
+        if required:
+            raise HTTPException(status_code=400, detail=f"{name} is required")
+        return ""
+    if "\n" in normalized or "\r" in normalized or "[" in normalized or "]" in normalized:
+        raise HTTPException(status_code=400, detail=f"{name} contains invalid characters")
+    if not CONFIG_VALUE_PATTERN.match(normalized):
+        raise HTTPException(status_code=400, detail=f"{name} contains unsupported characters")
+    return normalized
+
+
+def clean_section_name(name: str, value: str | None):
+    normalized = clean_config_value(name, value)
+    if not SECTION_NAME_PATTERN.match(normalized):
+        raise HTTPException(status_code=400, detail=f"{name} must contain only letters, numbers, dots, dashes, or underscores")
+    return normalized
+
+
+def validate_pbx_config(payload: WebphonePbxConfigIn):
+    if payload.http_port < 1 or payload.http_port > 65535:
+        raise HTTPException(status_code=400, detail="HTTP port is invalid")
+    if payload.wss_port < 1 or payload.wss_port > 65535:
+        raise HTTPException(status_code=400, detail="WSS port is invalid")
+    if payload.rtp_start < 1 or payload.rtp_end > 65535 or payload.rtp_start >= payload.rtp_end:
+        raise HTTPException(status_code=400, detail="RTP port range is invalid")
+    return {
+        "pbx_domain": clean_config_value("PBX domain", payload.pbx_domain),
+        "stun_server": clean_config_value("STUN server", payload.stun_server, required=False) or "stun.l.google.com:19302",
+        "sip_username": clean_section_name("SIP username", payload.sip_username),
+        "sip_password": clean_config_value("SIP password", payload.sip_password),
+        "cli": clean_config_value("CLI", payload.cli, required=False),
+        "trunk_name": clean_section_name("Trunk name", payload.trunk_name),
+        "trunk_host": clean_config_value("Trunk host", payload.trunk_host),
+        "trunk_username": clean_config_value("Trunk username", payload.trunk_username, required=False),
+        "trunk_password": clean_config_value("Trunk password", payload.trunk_password, required=False),
+        "from_domain": clean_config_value("From domain", payload.from_domain, required=False),
+        "prefix": clean_config_value("Prefix", payload.prefix, required=False),
+        "http_port": payload.http_port,
+        "wss_port": payload.wss_port,
+        "rtp_start": payload.rtp_start,
+        "rtp_end": payload.rtp_end,
+    }
+
+
+def generated_webphone_password():
+    return secrets.token_urlsafe(18).replace("-", "A").replace("_", "B")[:18]
+
+
+def default_pbx_config_for_enable():
+    domain = os.getenv("NOC360_PBX_DOMAIN", "pbx.voipzap.com")
+    return {
+        "pbx_domain": clean_config_value("PBX domain", domain),
+        "stun_server": clean_config_value("STUN server", os.getenv("NOC360_PBX_STUN_SERVER", "stun.l.google.com:19302"), required=False) or "stun.l.google.com:19302",
+        "sip_username": clean_section_name("SIP username", os.getenv("NOC360_WEBPHONE_SIP_USER", "1001")),
+        "sip_password": generated_webphone_password(),
+        "cli": clean_config_value("CLI", os.getenv("NOC360_WEBPHONE_CLI", ""), required=False),
+        "trunk_name": clean_section_name("Trunk name", os.getenv("NOC360_PBX_TRUNK_NAME", "your_trunk")),
+        "trunk_host": clean_config_value("Trunk host", os.getenv("NOC360_PBX_TRUNK_HOST", ""), required=False),
+        "trunk_username": clean_config_value("Trunk username", os.getenv("NOC360_PBX_TRUNK_USER", ""), required=False),
+        "trunk_password": clean_config_value("Trunk password", os.getenv("NOC360_PBX_TRUNK_PASS", ""), required=False),
+        "from_domain": clean_config_value("From domain", os.getenv("NOC360_PBX_FROM_DOMAIN", domain), required=False),
+        "prefix": clean_config_value("Prefix", os.getenv("NOC360_PBX_PREFIX", ""), required=False),
+        "http_port": int(os.getenv("NOC360_PBX_HTTP_PORT", "8088")),
+        "wss_port": int(os.getenv("NOC360_PBX_WSS_PORT", "8089")),
+        "rtp_start": int(os.getenv("NOC360_PBX_RTP_START", "10000")),
+        "rtp_end": int(os.getenv("NOC360_PBX_RTP_END", "20000")),
+    }
+
+
+def pbx_cert_paths(domain: str):
+    root = Path("/etc/letsencrypt/live") / domain
+    return root / "fullchain.pem", root / "privkey.pem"
+
+
+def pbx_status_payload():
+    asterisk_binary = shutil.which("asterisk")
+    installed = bool(asterisk_binary)
+    running_check = run_safe_command(["systemctl", "is-active", "asterisk"], timeout=5)
+    running = running_check["ok"] and running_check["output"].strip() == "active"
+    version = run_safe_command(["asterisk", "-rx", "core show version"], timeout=8) if installed else {"ok": False, "output": ""}
+    transports = run_safe_command(["asterisk", "-rx", "pjsip show transports"], timeout=8) if installed else {"ok": False, "output": ""}
+    config_files = {
+        "http_conf": (ASTERISK_DIR / "http.conf").exists(),
+        "rtp_conf": (ASTERISK_DIR / "rtp.conf").exists(),
+        "pjsip_conf": (ASTERISK_DIR / "pjsip.conf").exists(),
+        "extensions_conf": (ASTERISK_DIR / "extensions.conf").exists(),
+    }
+    pjsip_text = ""
+    extensions_text = ""
+    try:
+        pjsip_text = (ASTERISK_DIR / "pjsip.conf").read_text(errors="ignore")
+        extensions_text = (ASTERISK_DIR / "extensions.conf").read_text(errors="ignore")
+        pjsip_text += "\n" + (ASTERISK_DIR / "pjsip_noc360_webrtc.conf").read_text(errors="ignore")
+        extensions_text += "\n" + (ASTERISK_DIR / "extensions_noc360_webrtc.conf").read_text(errors="ignore")
+    except OSError:
+        pass
+    config_ready = "noc360-transport-wss" in pjsip_text and "[webphone-test]" in extensions_text
+    wss_ready = "wss" in (transports.get("output") or "").lower() or "noc360-transport-wss" in pjsip_text
+    default_fullchain, default_privkey = pbx_cert_paths("pbx.voipzap.com")
+    return {
+        "installed": installed,
+        "running": running,
+        "websocket_status": "Configured" if wss_ready else "Not Configured",
+        "config_status": "Configured" if config_ready else "Not Configured",
+        "ssl_status": "Present" if default_fullchain.exists() and default_privkey.exists() else "Missing",
+        "version": version.get("output") or "",
+        "transports": transports.get("output") or "",
+        "systemctl": running_check.get("output") or "",
+        "config_files": config_files,
+        "message": "" if installed else "Asterisk is not installed. Please install it manually on the VPS first.",
+    }
+
+
+def backup_asterisk_configs():
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_dir = ASTERISK_DIR / f"noc360_backup_{timestamp}"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for file_name in ["http.conf", "rtp.conf", "pjsip.conf", "extensions.conf", "pjsip_noc360_webrtc.conf", "extensions_noc360_webrtc.conf"]:
+        source = ASTERISK_DIR / file_name
+        if source.exists():
+            shutil.copy2(source, backup_dir / file_name)
+    return backup_dir
+
+
+def ensure_asterisk_include(file_name: str, include_name: str):
+    path = ASTERISK_DIR / file_name
+    existing = path.read_text(errors="ignore") if path.exists() else ""
+    include_line = f'#include "{include_name}"'
+    if include_line not in existing:
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        path.write_text(f"{existing}{separator}{include_line}\n")
+
+
+def write_pbx_config_files(config: dict):
+    fullchain, privkey = pbx_cert_paths(config["pbx_domain"])
+    if not fullchain.exists() or not privkey.exists():
+        raise HTTPException(status_code=400, detail=f"SSL certificate missing. Run certbot manually for {config['pbx_domain']}.")
+    ASTERISK_DIR.mkdir(parents=True, exist_ok=True)
+    backup_dir = backup_asterisk_configs()
+    trunk_auth_line = f"outbound_auth={config['trunk_name']}-auth" if config["trunk_username"] and config["trunk_password"] else ""
+    trunk_auth_block = ""
+    if trunk_auth_line:
+        trunk_auth_block = f"""
+[{config['trunk_name']}-auth]
+type=auth
+auth_type=userpass
+username={config['trunk_username']}
+password={config['trunk_password']}
+"""
+    dial_prefix = config["prefix"] or ""
+    from_domain = config["from_domain"] or config["pbx_domain"]
+    trunk_block = ""
+    if config.get("trunk_host"):
+        trunk_block = f"""
+[{config['trunk_name']}]
+type=endpoint
+transport=noc360-transport-udp
+context=from-trunk
+disallow=all
+allow=ulaw,alaw
+aors={config['trunk_name']}-aor
+direct_media=no
+force_rport=yes
+rewrite_contact=yes
+from_domain={from_domain}
+{trunk_auth_line}
+
+[{config['trunk_name']}-aor]
+type=aor
+contact=sip:{config['trunk_host']}:5060
+{trunk_auth_block}
+"""
+    (ASTERISK_DIR / "http.conf").write_text(f"""[general]
+enabled=yes
+bindaddr=0.0.0.0
+bindport={config['http_port']}
+tlsenable=yes
+tlsbindaddr=0.0.0.0:{config['wss_port']}
+tlscertfile={fullchain}
+tlsprivatekey={privkey}
+""")
+    (ASTERISK_DIR / "rtp.conf").write_text(f"""[general]
+rtpstart={config['rtp_start']}
+rtpend={config['rtp_end']}
+icesupport=yes
+stunaddr={config['stun_server']}
+""")
+    ensure_asterisk_include("pjsip.conf", "pjsip_noc360_webrtc.conf")
+    ensure_asterisk_include("extensions.conf", "extensions_noc360_webrtc.conf")
+    (ASTERISK_DIR / "pjsip_noc360_webrtc.conf").write_text(f"""; Managed by NOC360 PBX Setup
+
+[noc360-transport-wss]
+type=transport
+protocol=wss
+bind=0.0.0.0
+
+[noc360-transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+
+[{config['sip_username']}]
+type=endpoint
+transport=noc360-transport-wss
+context=webphone-test
+disallow=all
+allow=opus,ulaw,alaw
+auth={config['sip_username']}-auth
+aors={config['sip_username']}-aor
+webrtc=yes
+use_avpf=yes
+media_encryption=dtls
+dtls_verify=fingerprint
+dtls_setup=actpass
+ice_support=yes
+rtcp_mux=yes
+direct_media=no
+force_rport=yes
+rewrite_contact=yes
+media_use_received_transport=yes
+rtp_symmetric=yes
+
+[{config['sip_username']}-aor]
+type=aor
+max_contacts=5
+remove_existing=yes
+
+[{config['sip_username']}-auth]
+type=auth
+auth_type=userpass
+username={config['sip_username']}
+password={config['sip_password']}
+{trunk_block}
+""")
+    (ASTERISK_DIR / "extensions_noc360_webrtc.conf").write_text(f"""; Managed by NOC360 PBX Setup
+
+[webphone-test]
+exten => _X.,1,NoOp(NOC360 Webphone DID Test)
+ same => n,Dial(PJSIP/{dial_prefix}${{EXTEN}}@{config['trunk_name']},60)
+ same => n,Hangup()
+""")
+    return backup_dir
+
+
+def validate_webphone_profile(payload: WebphoneProfileCreate | WebphoneProfileUpdate):
+    if not normalize(payload.profile_name):
+        raise HTTPException(status_code=400, detail="Profile name is required")
+    if not normalize(payload.sip_username):
+        raise HTTPException(status_code=400, detail="SIP username is required")
+    if not normalize(payload.sip_password):
+        raise HTTPException(status_code=400, detail="SIP password is required")
+    websocket_url = normalize(payload.websocket_url)
+    if not websocket_url or not websocket_url.lower().startswith("wss://"):
+        raise HTTPException(status_code=400, detail="Secure WSS required")
+    if not normalize(payload.sip_domain):
+        raise HTTPException(status_code=400, detail="SIP domain is required")
+
+
+def webphone_profile_out(record: WebphoneProfile):
+    return {
+        "id": record.id,
+        "profile_name": record.profile_name,
+        "sip_username": record.sip_username,
+        "sip_password": record.sip_password,
+        "websocket_url": record.websocket_url,
+        "sip_domain": record.sip_domain,
+        "outbound_proxy": record.outbound_proxy,
+        "cli": record.cli,
+        "status": record.status,
+        "notes": record.notes,
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def webphone_call_log_out(record: WebphoneCallLog):
+    return {
+        "id": record.id,
+        "profile_id": record.profile_id,
+        "profile_name": record.profile.profile_name if record.profile else None,
+        "cli": record.cli,
+        "destination": record.destination,
+        "status": record.status,
+        "duration": record.duration or 0,
+        "notes": record.notes,
+        "created_by": record.created_by,
+        "created_at": record.created_at,
+    }
+
+
+@app.get("/api/webphone/profiles", response_model=list[WebphoneProfileOut])
+@app.get("/webphone/profiles", response_model=list[WebphoneProfileOut])
+def get_webphone_profiles(db: Session = Depends(get_db), user: User = Depends(require_webphone())):
+    return [webphone_profile_out(row) for row in db.query(WebphoneProfile).order_by(WebphoneProfile.profile_name.asc(), WebphoneProfile.id.asc()).all()]
+
+
+@app.post("/api/webphone/profiles", response_model=WebphoneProfileOut)
+@app.post("/webphone/profiles", response_model=WebphoneProfileOut)
+def create_webphone_profile(payload: WebphoneProfileCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_create"))):
+    validate_webphone_profile(payload)
+    record = WebphoneProfile(
+        profile_name=normalize(payload.profile_name),
+        sip_username=normalize(payload.sip_username),
+        sip_password=normalize(payload.sip_password),
+        websocket_url=normalize(payload.websocket_url),
+        sip_domain=normalize(payload.sip_domain),
+        outbound_proxy=normalize(payload.outbound_proxy),
+        cli=normalize(payload.cli),
+        status=payload.status or "Active",
+        notes=payload.notes,
+    )
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "create", "webphone", "WebphoneProfile", record.id, f"Created Webphone profile {record.profile_name}", new_value=record, request=request)
+    db.commit()
+    db.refresh(record)
+    return webphone_profile_out(record)
+
+
+@app.put("/api/webphone/profiles/{record_id}", response_model=WebphoneProfileOut)
+@app.put("/webphone/profiles/{record_id}", response_model=WebphoneProfileOut)
+def update_webphone_profile(record_id: int, payload: WebphoneProfileUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_edit"))):
+    validate_webphone_profile(payload)
+    record = get_record(db, WebphoneProfile, record_id)
+    old_value = sanitize_activity_value(record)
+    record.profile_name = normalize(payload.profile_name)
+    record.sip_username = normalize(payload.sip_username)
+    record.sip_password = normalize(payload.sip_password)
+    record.websocket_url = normalize(payload.websocket_url)
+    record.sip_domain = normalize(payload.sip_domain)
+    record.outbound_proxy = normalize(payload.outbound_proxy)
+    record.cli = normalize(payload.cli)
+    record.status = payload.status or "Active"
+    record.notes = payload.notes
+    record.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(record)
+    log_activity(db, user, "update", "webphone", "WebphoneProfile", record.id, f"Updated Webphone profile {record.profile_name}", old_value=old_value, new_value=record, request=request, commit=True)
+    return webphone_profile_out(record)
+
+
+@app.delete("/api/webphone/profiles/{record_id}")
+@app.delete("/webphone/profiles/{record_id}")
+def delete_webphone_profile(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_delete"))):
+    record = get_record(db, WebphoneProfile, record_id)
+    old_value = sanitize_activity_value(record)
+    db.query(WebphoneCallLog).filter(WebphoneCallLog.profile_id == record.id).update({"profile_id": None})
+    db.delete(record)
+    log_activity(db, user, "delete", "webphone", "WebphoneProfile", record_id, f"Deleted Webphone profile {record.profile_name}", old_value=old_value, request=request)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/webphone/call-logs", response_model=list[WebphoneCallLogOut])
+@app.get("/webphone/call-logs", response_model=list[WebphoneCallLogOut])
+def get_webphone_call_logs(
+    profile_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_webphone()),
+):
+    query = db.query(WebphoneCallLog)
+    if profile_id:
+        query = query.filter(WebphoneCallLog.profile_id == profile_id)
+    if date_from:
+        query = query.filter(WebphoneCallLog.created_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(WebphoneCallLog.created_at <= datetime.combine(date_to, datetime.max.time()))
+    return [webphone_call_log_out(row) for row in query.order_by(WebphoneCallLog.created_at.desc(), WebphoneCallLog.id.desc()).limit(limit).all()]
+
+
+@app.post("/api/webphone/call-logs", response_model=WebphoneCallLogOut)
+@app.post("/webphone/call-logs", response_model=WebphoneCallLogOut)
+def create_webphone_call_log(payload: WebphoneCallLogCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_create"))):
+    if payload.profile_id and not db.get(WebphoneProfile, payload.profile_id):
+        raise HTTPException(status_code=400, detail="Webphone profile does not exist")
+    destination = normalize(payload.destination)
+    if not destination:
+        raise HTTPException(status_code=400, detail="Destination is required")
+    record = WebphoneCallLog(
+        profile_id=payload.profile_id,
+        cli=normalize(payload.cli),
+        destination=destination,
+        status=normalize(payload.status) or "Unknown",
+        duration=max(int(payload.duration or 0), 0),
+        notes=payload.notes,
+        created_by=user.username,
+    )
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "webphone_call_test", "webphone", "WebphoneCallLog", record.id, f"Webphone DID test to {destination} ended with {record.status}", new_value={"profile_id": payload.profile_id, "cli": record.cli, "destination": destination, "status": record.status, "duration": record.duration}, request=request)
+    db.commit()
+    db.refresh(record)
+    return webphone_call_log_out(record)
+
+
+@app.get("/api/webphone/pbx/status")
+@app.get("/webphone/pbx/status")
+def get_webphone_pbx_status(user: User = Depends(require_webphone())):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="PBX Setup is restricted to admin")
+    return pbx_status_payload()
+
+
+@app.post("/api/webphone/pbx/connect")
+@app.post("/webphone/pbx/connect")
+def connect_webphone_pbx(payload: WebphonePbxConnectIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    ip_value = clean_config_value("IP", payload.ip)
+    clean_config_value("Username", payload.username)
+    if not normalize(payload.password):
+        raise HTTPException(status_code=400, detail="Password is required")
+    status = pbx_status_payload()
+    if not status["installed"]:
+        raise HTTPException(status_code=400, detail="Asterisk is not installed. Please install it manually on the VPS first.")
+    if not status["running"]:
+        raise HTTPException(status_code=400, detail="Asterisk is installed but not running.")
+    log_activity(db, user, "pbx_connected", "webphone", "Asterisk", None, f"PBX connection checked for {ip_value}", new_value={"ip": ip_value, "username": payload.username, "password": "[redacted]"}, request=request, commit=True)
+    return {"connected": True, "status": status}
+
+
+@app.get("/api/webphone/pbx/install-guide")
+@app.get("/webphone/pbx/install-guide")
+def download_webphone_pbx_guide(user: User = Depends(require_webphone())):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="PBX Setup is restricted to admin")
+    guide_path = Path(__file__).resolve().parent.parent / "docs" / "ASTERISK_WEBRTC_SETUP.md"
+    if not guide_path.exists():
+        raise HTTPException(status_code=404, detail="Asterisk install guide is missing")
+    return FileResponse(guide_path, media_type="text/markdown", filename="ASTERISK_WEBRTC_SETUP.md")
+
+
+def upsert_webphone_profile_from_config(db: Session, config: dict):
+    profile_name = f"{config['pbx_domain']} DID Test"
+    profile = db.query(WebphoneProfile).filter(WebphoneProfile.profile_name == profile_name).first()
+    if not profile:
+        profile = WebphoneProfile(profile_name=profile_name)
+        db.add(profile)
+    profile.sip_username = config["sip_username"]
+    profile.sip_password = config["sip_password"]
+    profile.websocket_url = f"wss://{config['pbx_domain']}:{config['wss_port']}/ws"
+    profile.sip_domain = config["pbx_domain"]
+    profile.outbound_proxy = None
+    profile.cli = config["cli"] or None
+    profile.status = "Active"
+    profile.notes = f"Auto-created by PBX Setup. Dialplan trunk: {config['trunk_name']}"
+    profile.updated_at = datetime.utcnow()
+    db.flush()
+    return profile
+
+
+@app.post("/api/webphone/pbx/enable-webrtc")
+@app.post("/webphone/pbx/enable-webrtc")
+def enable_webphone_webrtc(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if not shutil.which("asterisk"):
+        raise HTTPException(status_code=400, detail="Asterisk is not installed. Please install it manually on the VPS first.")
+    config = default_pbx_config_for_enable()
+    backup_dir = write_pbx_config_files(config)
+    restart = run_safe_command(["systemctl", "restart", "asterisk"], timeout=20)
+    if not restart["ok"]:
+        reload_result = run_safe_command(["asterisk", "-rx", "core reload"], timeout=12)
+        if not reload_result["ok"]:
+            raise HTTPException(status_code=500, detail=f"Asterisk config written but restart/reload failed: {restart['output'] or reload_result['output']}")
+    profile = upsert_webphone_profile_from_config(db, config)
+    log_activity(
+        db,
+        user,
+        "pbx_webrtc_enabled",
+        "webphone",
+        "WebphoneProfile",
+        profile.id,
+        "WebRTC enabled successfully from simplified PBX Setup",
+        new_value={**config, "backup_dir": str(backup_dir), "sip_password": "[redacted]", "trunk_password": "[redacted]"},
+        request=request,
+    )
+    db.commit()
+    db.refresh(profile)
+    return {"enabled": True, "message": "WebRTC Enabled Successfully", "backup_dir": str(backup_dir), "profile": webphone_profile_out(profile), "status": pbx_status_payload()}
+
+
+@app.post("/api/webphone/pbx/configure")
+@app.post("/webphone/pbx/configure")
+def configure_webphone_pbx(payload: WebphonePbxConfigIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if not shutil.which("asterisk"):
+        raise HTTPException(status_code=400, detail="Asterisk is not installed. Please install it manually on the VPS first.")
+    config = validate_pbx_config(payload)
+    backup_dir = write_pbx_config_files(config)
+    restart = run_safe_command(["systemctl", "restart", "asterisk"], timeout=20)
+    if not restart["ok"]:
+        reload_result = run_safe_command(["asterisk", "-rx", "core reload"], timeout=12)
+        if not reload_result["ok"]:
+            raise HTTPException(status_code=500, detail=f"Asterisk config written but restart/reload failed: {restart['output'] or reload_result['output']}")
+    profile = upsert_webphone_profile_from_config(db, config)
+    log_activity(
+        db,
+        user,
+        "pbx_config_applied",
+        "webphone",
+        "WebphoneProfile",
+        profile.id,
+        f"PBX WebRTC config applied for {config['pbx_domain']}",
+        new_value={**config, "backup_dir": str(backup_dir), "sip_password": "[redacted]", "trunk_password": "[redacted]"},
+        request=request,
+    )
+    db.commit()
+    db.refresh(profile)
+    return {"configured": True, "backup_dir": str(backup_dir), "profile": webphone_profile_out(profile), "status": pbx_status_payload()}
+
+
+@app.post("/api/webphone/pbx/restart")
+@app.post("/webphone/pbx/restart")
+def restart_webphone_pbx(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    if not shutil.which("asterisk"):
+        raise HTTPException(status_code=400, detail="Asterisk is not installed. Please install it manually on the VPS first.")
+    result = run_safe_command(["systemctl", "restart", "asterisk"], timeout=20)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result["output"] or "Asterisk restart failed")
+    log_activity(db, user, "pbx_restarted", "webphone", "Asterisk", None, "Asterisk restarted from NOC360 PBX Setup", request=request, commit=True)
+    return {"restarted": True, "status": pbx_status_payload()}
 
 
 def seed_data(db: Session):
@@ -1888,6 +3181,25 @@ def vos_desktop_out(portal: VOSPortal):
     }
 
 
+def vos_desktop_details_out(portal: VOSPortal):
+    return {
+        "id": portal.id,
+        "vos_name": portal.portal_type,
+        "vos_version": portal.vos_version,
+        "portal_type": portal.portal_type,
+        "server_ip": portal.server_ip,
+        "web_panel_url": portal.web_panel_url,
+        "username": portal.username,
+        "password": portal.password,
+        "anti_hack_url": portal.anti_hack_url,
+        "anti_hack_password": portal.anti_hack_password,
+        "uuid": portal.uuid,
+        "notes": portal.notes or portal.vos_notes,
+        "vos_notes": portal.vos_notes,
+        "status": portal.status,
+    }
+
+
 def get_vos_desktop_portal(db: Session, record_id: int):
     return get_record(db, VOSPortal, record_id)
 
@@ -1898,27 +3210,58 @@ def get_vos_desktop(db: Session = Depends(get_db), user: User = Depends(require_
     return [vos_desktop_out(portal) for portal in vos_desktop_records(db)]
 
 
+@app.get("/api/vos-desktop/download-launcher")
+@app.get("/vos-desktop/download-launcher")
+def download_vos_launcher(user: User = Depends(require_vos_desktop("can_export"))):
+    root = Path(__file__).resolve().parent.parent
+    agent_dir = root / "local-agent"
+    if not agent_dir.exists():
+        raise HTTPException(status_code=404, detail="Local agent package is missing")
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in agent_dir.rglob("*"):
+            if path.is_file():
+                archive.write(path, path.relative_to(root).as_posix())
+        docs_path = root / "docs" / "LOCAL_AGENT.md"
+        if docs_path.exists():
+            archive.write(docs_path, "docs/LOCAL_AGENT.md")
+    buffer.seek(0)
+    headers = {"Content-Disposition": 'attachment; filename="noc360-local-launcher.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
+@app.get("/api/vos-desktop/{record_id}/details", response_model=VOSDesktopDetailsOut)
+@app.get("/vos-desktop/{record_id}/details", response_model=VOSDesktopDetailsOut)
+def get_vos_desktop_details(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
+    portal = get_vos_desktop_portal(db, record_id)
+    log_activity(db, user, "view_credentials", "vos_desktop", "VOSPortal", portal.id, f"VOS details viewed for {portal.portal_type}", request=request, commit=True)
+    return vos_desktop_details_out(portal)
+
+
 @app.get("/api/vos-desktop/{record_id}/login", response_model=VOSDesktopLoginOut)
 @app.get("/vos-desktop/{record_id}/login", response_model=VOSDesktopLoginOut)
-def get_vos_desktop_login(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
+def get_vos_desktop_login(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
     portal = get_vos_desktop_portal(db, record_id)
+    log_activity(db, user, "copy_credentials", "vos_desktop", "VOSPortal", portal.id, f"VOS credentials copied for {portal.portal_type}", request=request, commit=True)
     return {"server": portal.server_ip, "username": portal.username, "password": portal.password, "anti_hack_url": portal.anti_hack_url, "anti_hack_password": portal.anti_hack_password}
 
 
 @app.put("/api/vos-desktop/{record_id}", response_model=VOSDesktopOut)
 @app.put("/vos-desktop/{record_id}", response_model=VOSDesktopOut)
-def update_vos_desktop(record_id: int, payload: VOSDesktopUpdateIn, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
+def update_vos_desktop(record_id: int, payload: VOSDesktopUpdateIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
     portal = get_vos_desktop_portal(db, record_id)
+    old_value = sanitize_activity_value(portal)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(portal, key, value)
     db.commit()
     db.refresh(portal)
+    log_activity(db, user, "update_vos_desktop", "vos_desktop", "VOSPortal", portal.id, f"VOS Desktop settings updated for {portal.portal_type}", old_value=old_value, new_value=portal, request=request, commit=True)
     return vos_desktop_out(portal)
 
 
 @app.post("/api/vos-desktop/{record_id}/launch")
 @app.post("/vos-desktop/{record_id}/launch")
-def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))) -> VOSLaunchOut:
+def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))) -> VOSLaunchOut:
     portal = get_vos_desktop_portal(db, record_id)
     launcher_path = normalize(payload.launcher_path) or normalize(payload.vos_path)
     shortcut_path = normalize(payload.shortcut_path)
@@ -1930,6 +3273,7 @@ def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, db: Session = Depen
         raise HTTPException(status_code=400, detail="Server IP is missing")
     anti_hack_url = portal.anti_hack_url or ""
     command = f'"{launcher_path}" "{anti_hack_url}" "{shortcut_path}"'
+    log_activity(db, user, "launch_desktop", "vos_desktop", "VOSPortal", portal.id, f"VOS desktop launch requested for {portal.portal_type}", new_value={"launcher_path": launcher_path, "shortcut_path": shortcut_path, "anti_hack_url": bool(anti_hack_url)}, request=request, commit=True)
     return {
         "launcher_path": launcher_path,
         "shortcut_path": shortcut_path,
@@ -1940,7 +3284,7 @@ def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, db: Session = Depen
 
 @app.post("/api/vos-desktop/{record_id}/last-used")
 @app.post("/vos-desktop/{record_id}/last-used")
-def mark_vos_desktop_last_used(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
+def mark_vos_desktop_last_used(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
     get_vos_desktop_portal(db, record_id)
     return {"updated": True}
 
@@ -1953,21 +3297,26 @@ def get_vos_portals(db: Session = Depends(get_db), user: User = Depends(require_
 
 @app.post("/api/vos-portals", response_model=VOSPortalOut)
 @app.post("/vos-portals", response_model=VOSPortalOut)
-def create_vos_portal(payload: VOSPortalCreate, db: Session = Depends(get_db), user: User = Depends(require_page("vos_portals", "can_create"))):
+def create_vos_portal(payload: VOSPortalCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("vos_portals", "can_create"))):
     validate_vos_portal(db, payload)
-    return save_record(db, VOSPortal(**payload.model_dump()))
+    saved = save_record(db, VOSPortal(**payload.model_dump()))
+    log_activity(db, user, "create", "vos_portals", "VOSPortal", saved.id, f"Created VOS Portal {saved.portal_type}", new_value=saved, request=request, commit=True)
+    return saved
 
 
 @app.put("/api/vos-portals/{record_id}", response_model=VOSPortalOut)
 @app.put("/vos-portals/{record_id}", response_model=VOSPortalOut)
-def update_vos_portal(record_id: int, payload: VOSPortalUpdate, db: Session = Depends(get_db), user: User = Depends(require_page("vos_portals", "can_edit"))):
+def update_vos_portal(record_id: int, payload: VOSPortalUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("vos_portals", "can_edit"))):
     validate_vos_portal(db, payload, record_id)
     record = get_record(db, VOSPortal, record_id)
+    old_value = sanitize_activity_value(record)
     old_type = record.portal_type
     for key, value in payload.model_dump().items():
         setattr(record, key, value)
     sync_vos_references(db, old_type, record)
-    return save_record(db, record)
+    saved = save_record(db, record)
+    log_activity(db, user, "update", "vos_portals", "VOSPortal", saved.id, f"Updated VOS Portal {saved.portal_type}", old_value=old_value, new_value=saved, request=request, commit=True)
+    return saved
 
 
 @app.delete("/api/vos-portals/{record_id}")
@@ -1984,19 +3333,24 @@ def get_dialer_clusters(db: Session = Depends(get_db), user: User = Depends(requ
 
 @app.post("/api/dialer-clusters", response_model=DialerClusterOut)
 @app.post("/dialer-clusters", response_model=DialerClusterOut)
-def create_dialer_cluster(payload: DialerClusterCreate, db: Session = Depends(get_db), user: User = Depends(require_page("dialer_clusters", "can_create"))):
+def create_dialer_cluster(payload: DialerClusterCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("dialer_clusters", "can_create"))):
     payload = apply_cluster_assignment_rules(db, payload)
-    return save_record(db, DialerCluster(**payload.model_dump()))
+    saved = save_record(db, DialerCluster(**payload.model_dump()))
+    log_activity(db, user, "create", "dialer_clusters", "DialerCluster", saved.id, f"Created dialer cluster {saved.cluster_name}", new_value=saved, request=request, commit=True)
+    return saved
 
 
 @app.put("/api/dialer-clusters/{record_id}", response_model=DialerClusterOut)
 @app.put("/dialer-clusters/{record_id}", response_model=DialerClusterOut)
-def update_dialer_cluster(record_id: int, payload: DialerClusterUpdate, db: Session = Depends(get_db), user: User = Depends(require_page("dialer_clusters", "can_edit"))):
+def update_dialer_cluster(record_id: int, payload: DialerClusterUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("dialer_clusters", "can_edit"))):
     record = get_record(db, DialerCluster, record_id)
+    old_value = sanitize_activity_value(record)
     payload = apply_cluster_assignment_rules(db, payload, record_id)
     for key, value in payload.model_dump().items():
         setattr(record, key, value)
-    return save_record(db, record)
+    saved = save_record(db, record)
+    log_activity(db, user, "update", "dialer_clusters", "DialerCluster", saved.id, f"Updated dialer cluster {saved.cluster_name}", old_value=old_value, new_value=saved, request=request, commit=True)
+    return saved
 
 
 @app.delete("/api/dialer-clusters/{record_id}")
@@ -2046,19 +3400,24 @@ def get_routing_gateways(db: Session = Depends(get_db), user: User = Depends(req
 
 @app.post("/api/routing-gateways", response_model=RoutingGatewayOut)
 @app.post("/routing-gateways", response_model=RoutingGatewayOut)
-def create_routing_gateway(payload: RoutingGatewayCreate, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_create"))):
+def create_routing_gateway(payload: RoutingGatewayCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_create"))):
     payload = apply_gateway_rules(db, payload)
-    return routing_gateway_out(save_record(db, RoutingGateway(**routing_gateway_db_payload(payload))))
+    saved = save_record(db, RoutingGateway(**routing_gateway_db_payload(payload)))
+    log_activity(db, user, "create", "routing_gateways", "RoutingGateway", saved.id, f"Created routing gateway mapping {saved.live_gateway_name}", new_value=routing_gateway_out(saved), request=request, commit=True)
+    return routing_gateway_out(saved)
 
 
 @app.put("/api/routing-gateways/{record_id}", response_model=RoutingGatewayOut)
 @app.put("/routing-gateways/{record_id}", response_model=RoutingGatewayOut)
-def update_routing_gateway(record_id: int, payload: RoutingGatewayUpdate, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_edit"))):
+def update_routing_gateway(record_id: int, payload: RoutingGatewayUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("routing_gateways", "can_edit"))):
     record = get_record(db, RoutingGateway, record_id)
+    old_value = routing_gateway_out(record)
     payload = apply_gateway_rules(db, payload, record.id)
     for key, value in routing_gateway_db_payload(payload).items():
         setattr(record, key, value)
-    return routing_gateway_out(save_record(db, record))
+    saved = save_record(db, record)
+    log_activity(db, user, "update", "routing_gateways", "RoutingGateway", saved.id, f"Updated routing gateway mapping {saved.live_gateway_name}", old_value=old_value, new_value=routing_gateway_out(saved), request=request, commit=True)
+    return routing_gateway_out(saved)
 
 
 @app.delete("/api/routing-gateways/{record_id}")
@@ -2079,7 +3438,7 @@ def get_clients(db: Session = Depends(get_db), user: User = Depends(current_user
 
 @app.post("/clients", response_model=ClientOut)
 @app.post("/api/clients", response_model=ClientOut)
-def create_client(payload: ClientCreate, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_create"))):
+def create_client(payload: ClientCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_create"))):
     payload.name = normalize(payload.name)
     if not payload.name:
         raise HTTPException(status_code=400, detail="Client name is required")
@@ -2098,32 +3457,35 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db), user: Us
     customer = User(username=username, password_hash=hash_password(password), role="customer", client_id=client.id, status="Active", full_name=payload.name)
     db.add(customer)
     db.flush()
-    rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
     for page in ROLE_DEFAULT_PAGES["customer"]:
-        db.add(PagePermission(user_id=customer.id, page_key=page, **rights))
+        db.add(PagePermission(user_id=customer.id, page_key=page, **default_rights_for_role("customer", page)))
     db.add(ClientAccess(user_id=customer.id, client_id=client.id))
     db.commit()
     db.refresh(client)
+    log_activity(db, user, "create", "clients", "Client", client.id, f"Created client {client.name}", new_value={"client": client, "login_user": username}, request=request, commit=True)
     return client_out(db, client)
 
 
 @app.put("/clients/{record_id}", response_model=ClientOut)
 @app.put("/api/clients/{record_id}", response_model=ClientOut)
-def update_client(record_id: int, payload: ClientCreate, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_edit"))):
+def update_client(record_id: int, payload: ClientCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_edit"))):
     record = get_record(db, Client, record_id)
+    old_value = sanitize_activity_value(record)
     payload.name = normalize(payload.name)
     if not payload.name:
         raise HTTPException(status_code=400, detail="Client name is required")
     record.name = payload.name
     record.status = payload.status
     record.notes = payload.notes
-    return client_out(db, save_record(db, record))
+    saved = save_record(db, record)
+    log_activity(db, user, "update", "clients", "Client", saved.id, f"Updated client {saved.name}", old_value=old_value, new_value=saved, request=request, commit=True)
+    return client_out(db, saved)
 
 
 @app.post("/clients/{record_id}/reset-password")
 @app.post("/api/clients/{record_id}/reset-password")
-def reset_client_password(record_id: int, payload: PasswordResetIn, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_edit"))):
-    get_record(db, Client, record_id)
+def reset_client_password(record_id: int, payload: PasswordResetIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("clients", "can_edit"))):
+    client = get_record(db, Client, record_id)
     customer = db.query(User).filter(User.role == "customer", User.client_id == record_id).order_by(User.id.asc()).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Linked customer user not found")
@@ -2131,6 +3493,7 @@ def reset_client_password(record_id: int, payload: PasswordResetIn, db: Session 
         raise HTTPException(status_code=400, detail="Password is required")
     customer.password_hash = hash_password(payload.password)
     save_record(db, customer)
+    log_activity(db, user, "reset_password", "clients", "Client", client.id, f"Reset customer login password for {client.name}", new_value={"customer_user": customer.username, "password_changed": True}, request=request, commit=True)
     return {"reset": True}
 
 
@@ -2148,7 +3511,7 @@ def get_users(db: Session = Depends(get_db), user: User = Depends(require_page("
 
 @app.post("/api/users", response_model=UserOut)
 @app.post("/users", response_model=UserOut)
-def create_user(payload: UserCreate, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_create"))):
+def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_create"))):
     username = normalize(payload.username)
     if not username or not normalize(payload.password):
         raise HTTPException(status_code=400, detail="Username and password are required")
@@ -2159,13 +3522,15 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), user: User =
     record = User(username=username, password_hash=hash_password(payload.password), full_name=payload.full_name, email=payload.email, role=payload.role, client_id=payload.client_id, status=payload.status)
     saved = save_record(db, record)
     seed_user_access_defaults(db)
+    log_activity(db, user, "create_user", "user_access", "User", saved.id, f"Created user {saved.username}", new_value=saved, request=request, commit=True)
     return user_out(db, saved)
 
 
 @app.put("/api/users/{record_id}", response_model=UserOut)
 @app.put("/users/{record_id}", response_model=UserOut)
-def update_user(record_id: int, payload: UserUpdate, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
+def update_user(record_id: int, payload: UserUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
     record = get_record(db, User, record_id)
+    old_value = sanitize_activity_value(record)
     if payload.role not in {"admin", "noc_user", "customer", "viewer"}:
         raise HTTPException(status_code=400, detail="Invalid role")
     if payload.client_id and not db.get(Client, payload.client_id):
@@ -2174,6 +3539,7 @@ def update_user(record_id: int, payload: UserUpdate, db: Session = Depends(get_d
         setattr(record, key, normalize(value) if key == "username" else value)
     saved = save_record(db, record)
     seed_user_access_defaults(db)
+    log_activity(db, user, "update_user", "user_access", "User", saved.id, f"Updated user {saved.username}", old_value=old_value, new_value=saved, request=request, commit=True)
     return user_out(db, saved)
 
 
@@ -2189,12 +3555,14 @@ def delete_user(record_id: int, db: Session = Depends(get_db), user: User = Depe
 
 @app.post("/api/users/{record_id}/reset-password", response_model=UserOut)
 @app.post("/users/{record_id}/reset-password", response_model=UserOut)
-def reset_user_password(record_id: int, payload: PasswordResetIn, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
+def reset_user_password(record_id: int, payload: PasswordResetIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
     record = get_record(db, User, record_id)
     if not normalize(payload.password):
         raise HTTPException(status_code=400, detail="Password is required")
     record.password_hash = hash_password(payload.password)
-    return user_out(db, save_record(db, record))
+    saved = save_record(db, record)
+    log_activity(db, user, "reset_password", "user_access", "User", saved.id, f"Reset password for user {saved.username}", new_value={"username": saved.username, "password_changed": True}, request=request, commit=True)
+    return user_out(db, saved)
 
 
 @app.get("/api/users/{record_id}/permissions", response_model=list[PagePermissionOut])
@@ -2206,14 +3574,16 @@ def get_user_permissions(record_id: int, db: Session = Depends(get_db), user: Us
 
 @app.post("/api/users/{record_id}/permissions", response_model=list[PagePermissionOut])
 @app.post("/users/{record_id}/permissions", response_model=list[PagePermissionOut])
-def save_user_permissions(record_id: int, payload: list[PagePermissionIn], db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
+def save_user_permissions(record_id: int, payload: list[PagePermissionIn], request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
     get_record(db, User, record_id)
+    old_value = [sanitize_activity_value(row) for row in db.query(PagePermission).filter(PagePermission.user_id == record_id).order_by(PagePermission.page_key.asc()).all()]
     db.query(PagePermission).filter(PagePermission.user_id == record_id).delete()
     for item in payload:
-        if item.page_key not in PAGE_KEYS:
+        if item.page_key not in ALLOWED_PERMISSION_KEYS:
             raise HTTPException(status_code=400, detail=f"Invalid page key: {item.page_key}")
         db.add(PagePermission(user_id=record_id, page_key=item.page_key, can_view=int(item.can_view), can_create=int(item.can_create), can_edit=int(item.can_edit), can_delete=int(item.can_delete), can_export=int(item.can_export)))
     db.commit()
+    log_activity(db, user, "update_permissions", "user_access", "User", record_id, "Updated page permission matrix", old_value=old_value, new_value=[item.model_dump() for item in payload], request=request, commit=True)
     return get_user_permissions(record_id, db, user)
 
 
@@ -2226,8 +3596,9 @@ def get_user_client_access(record_id: int, db: Session = Depends(get_db), user: 
 
 @app.post("/api/users/{record_id}/client-access")
 @app.post("/users/{record_id}/client-access")
-def save_user_client_access(record_id: int, payload: ClientAccessIn, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
+def save_user_client_access(record_id: int, payload: ClientAccessIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
     record = get_record(db, User, record_id)
+    old_value = {"client_ids": [row.client_id for row in db.query(ClientAccess).filter(ClientAccess.user_id == record_id).all()]}
     valid_ids = {client.id for client in db.query(Client).all()}
     if any(client_id not in valid_ids for client_id in payload.client_ids):
         raise HTTPException(status_code=400, detail="Invalid client id")
@@ -2237,6 +3608,7 @@ def save_user_client_access(record_id: int, payload: ClientAccessIn, db: Session
     if record.role == "customer" and payload.client_ids:
         record.client_id = payload.client_ids[0]
     db.commit()
+    log_activity(db, user, "update_client_access", "user_access", "User", record_id, f"Updated client access for {record.username}", old_value=old_value, new_value={"client_ids": payload.client_ids}, request=request, commit=True)
     return {"client_ids": payload.client_ids}
 
 
@@ -2343,7 +3715,7 @@ def get_ledger(
 @app.post("/ledger", response_model=ClientLedgerMutationOut)
 @app.post("/api/billing/ledger", response_model=ClientLedgerMutationOut)
 @app.post("/billing/ledger", response_model=ClientLedgerMutationOut)
-def create_ledger(payload: ClientLedgerCreate, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_create"))):
+def create_ledger(payload: ClientLedgerCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_create"))):
     data = ledger_payload_values(db, payload, user)
     record = ClientLedger(**data)
     db.add(record)
@@ -2352,6 +3724,7 @@ def create_ledger(payload: ClientLedgerCreate, db: Session = Depends(get_db), us
     db.commit()
     db.refresh(record)
     logger.info("Ledger entry saved id=%s client_id=%s user=%s", record.id, record.client_id, user.username)
+    log_activity(db, user, "create_ledger", "billing", "ClientLedger", record.id, f"Created {record.entry_type} ledger entry for {record.client_name}", new_value=record, request=request, commit=True)
     return {"success": True, "entry": record}
 
 
@@ -2359,8 +3732,9 @@ def create_ledger(payload: ClientLedgerCreate, db: Session = Depends(get_db), us
 @app.put("/ledger/{record_id}", response_model=ClientLedgerMutationOut)
 @app.put("/api/billing/ledger/{record_id}", response_model=ClientLedgerMutationOut)
 @app.put("/billing/ledger/{record_id}", response_model=ClientLedgerMutationOut)
-def update_ledger(record_id: int, payload: ClientLedgerCreate, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_edit"))):
+def update_ledger(record_id: int, payload: ClientLedgerCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_edit"))):
     record = get_record(db, ClientLedger, record_id)
+    old_value = sanitize_activity_value(record)
     old_client_id = record.client_id
     data = ledger_payload_values(db, payload)
     data.pop("created_by", None)
@@ -2373,6 +3747,7 @@ def update_ledger(record_id: int, payload: ClientLedgerCreate, db: Session = Dep
     db.commit()
     db.refresh(record)
     logger.info("Ledger entry updated id=%s old_client_id=%s client_id=%s user=%s", record.id, old_client_id, record.client_id, user.username)
+    log_activity(db, user, "update_ledger", "billing", "ClientLedger", record.id, f"Updated ledger entry {record.id}", old_value=old_value, new_value=record, request=request, commit=True)
     return {"success": True, "entry": record}
 
 
@@ -2380,14 +3755,16 @@ def update_ledger(record_id: int, payload: ClientLedgerCreate, db: Session = Dep
 @app.delete("/ledger/{record_id}")
 @app.delete("/api/billing/ledger/{record_id}")
 @app.delete("/billing/ledger/{record_id}")
-def delete_ledger(record_id: int, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_delete"))):
+def delete_ledger(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_delete"))):
     record = get_record(db, ClientLedger, record_id)
+    old_value = sanitize_activity_value(record)
     client_id = record.client_id
     db.delete(record)
     db.flush()
     recalc_client_ledger(db, client_id)
     db.commit()
     logger.info("Ledger entry deleted id=%s client_id=%s user=%s", record_id, client_id, user.username)
+    log_activity(db, user, "delete_ledger", "billing", "ClientLedger", record_id, f"Deleted ledger entry {record_id}", old_value=old_value, request=request, commit=True)
     return {"success": True, "deleted_id": record_id}
 
 
@@ -2543,12 +3920,15 @@ def get_cluster_assignments(db: Session = Depends(get_db), user: User = Depends(
 @app.post("/management/cluster-client-assignments")
 @app.post("/api/management/cluster-assignments")
 @app.post("/management/cluster-assignments")
-def save_cluster_assignment(payload: ClusterAccountAssignmentIn, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
+def save_cluster_assignment(payload: ClusterAccountAssignmentIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
     cluster = get_record(db, DialerCluster, payload.cluster_id)
+    old_value = sanitize_activity_value(cluster)
     if payload.client_id is not None and not db.get(Client, payload.client_id):
         raise HTTPException(status_code=400, detail="Client does not exist")
     cluster.client_id = payload.client_id
-    return cluster_assignment_out(save_record(db, cluster))
+    saved = save_record(db, cluster)
+    log_activity(db, user, "update_cluster_client_assignment", "management_portal", "DialerCluster", saved.id, f"Updated client assignment for {saved.cluster_name}", old_value=old_value, new_value=saved, request=request, commit=True)
+    return cluster_assignment_out(saved)
 
 
 @app.get("/api/management/rdp-cluster-assignments")
@@ -2563,8 +3943,9 @@ def get_rdp_cluster_assignments(db: Session = Depends(get_db), user: User = Depe
 @app.put("/management/rdp-cluster-assignments")
 @app.post("/api/management/rdp-cluster-assignments")
 @app.post("/management/rdp-cluster-assignments")
-def save_rdp_cluster_assignment(payload: RDPClusterAssignmentIn, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
+def save_rdp_cluster_assignment(payload: RDPClusterAssignmentIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
     cluster = get_record(db, DialerCluster, payload.cluster_id)
+    old_value = sanitize_activity_value(cluster)
     payload_data = DialerClusterUpdate(
         cluster_no=cluster.cluster_no,
         account_name=cluster.account_name,
@@ -2585,6 +3966,7 @@ def save_rdp_cluster_assignment(payload: RDPClusterAssignmentIn, db: Session = D
     cluster.assigned_rdp_ip = payload_data.assigned_rdp_ip
     cluster.rdp_vos_id = payload_data.rdp_vos_id
     saved = save_record(db, cluster)
+    log_activity(db, user, "update_rdp_assignment", "management_portal", "DialerCluster", saved.id, f"Updated RDP assignment for {saved.cluster_name}", old_value=old_value, new_value=saved, request=request, commit=True)
     duplicate_names = active_rdp_duplicate_names(db.query(DialerCluster).all())
     return rdp_cluster_assignment_out(saved, duplicate_names)
 
@@ -2607,7 +3989,7 @@ def get_routing_media_assignments(db: Session = Depends(get_db), user: User = De
 @app.put("/management/routing-media-assignments")
 @app.post("/api/management/routing-media-assignments")
 @app.post("/management/routing-media-assignments")
-def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
+def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
     gateway = get_portal_by_id(db, payload.routing_gateway_id, "RTNG") or get_portal_by_id(db, payload.rtng_vos_id, "RTNG") or get_portal_by_type(db, payload.gateway_name, "RTNG")
     if not gateway:
         raise HTTPException(status_code=400, detail="Routing gateway must exist in VOS Portal Master")
@@ -2638,6 +4020,7 @@ def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, db: Session
     record = db.query(RoutingGateway).filter(or_(RoutingGateway.routing_gateway_id == data.routing_gateway_id, RoutingGateway.rtng_vos_id == data.rtng_vos_id)).first()
     if not record:
         record = db.query(RoutingGateway).filter(RoutingGateway.gateway_name == data.gateway_name).first()
+    old_value = routing_gateway_out(record) if record else None
     data = apply_gateway_rules(db, data, record.id if record else None)
     if not record:
         record = RoutingGateway(**routing_gateway_db_payload(data))
@@ -2645,6 +4028,7 @@ def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, db: Session
         for key, value in routing_gateway_db_payload(data).items():
             setattr(record, key, value)
     saved = save_record(db, record)
+    log_activity(db, user, "update_routing_assignment", "management_portal", "RoutingGateway", saved.id, f"Updated routing media assignment for {saved.live_gateway_name}", old_value=old_value, new_value=routing_gateway_out(saved), request=request, commit=True)
     saved._management_clusters = db.query(DialerCluster).all()
     return routing_media_assignment_out(saved.gateway_name, saved.gateway_ip, saved)
 

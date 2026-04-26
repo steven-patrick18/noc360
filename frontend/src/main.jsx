@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Activity,
@@ -12,7 +12,12 @@ import {
   Globe2,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   MonitorCog,
+  Mic,
+  MicOff,
+  Phone,
+  PhoneOff,
   Play,
   Plus,
   ReceiptText,
@@ -20,8 +25,10 @@ import {
   RefreshCcw,
   Router,
   Search,
+  Send,
   Server,
   Star,
+  Ticket,
   Trash2,
   Users,
   X,
@@ -32,7 +39,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment'];
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -50,6 +57,12 @@ const modulePageKeys = {
   rdps: 'rdp_media',
   gateways: 'routing_gateways',
   userAccess: 'user_access',
+  activityLogs: 'activity_logs',
+  chatCenter: 'chat_center',
+  tickets: 'tickets',
+  myChat: 'my_chat',
+  myTickets: 'my_tickets',
+  webphone: 'webphone',
 };
 
 const modules = {
@@ -59,7 +72,11 @@ const modules = {
   management: { label: 'Management Portal', icon: LayoutDashboard },
   billing: { label: 'Money Engine', icon: ReceiptText },
   clients: { label: 'Clients', icon: Users },
+  chatCenter: { label: 'Chat Center', icon: MessageSquare },
+  tickets: { label: 'Tickets', icon: Ticket },
+  webphone: { label: 'Webphone', icon: Phone },
   userAccess: { label: 'User Access', icon: Users },
+  activityLogs: { label: 'Activity Logs', icon: Activity },
   vos: {
     label: 'VOS Portals',
     icon: Globe2,
@@ -154,6 +171,8 @@ const modules = {
 
 const customerModules = {
   myDashboard: { label: 'My Dashboard', icon: Activity },
+  myChat: { label: 'My Chat', icon: MessageSquare },
+  myTickets: { label: 'My Tickets', icon: Ticket },
   myBilling: { label: 'My Ledger', icon: ReceiptText },
   myCdr: { label: 'My CDR', icon: RadioTower },
   myReports: { label: 'My Reports', icon: Download },
@@ -172,8 +191,16 @@ async function request(path, options = {}) {
     ...options,
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || 'Request failed');
+    const contentType = response.headers.get('content-type') || '';
+    const error = contentType.includes('application/json') ? await response.json().catch(() => ({})) : {};
+    const fallback = await (!contentType.includes('application/json') ? response.text().catch(() => '') : Promise.resolve(''));
+    const message = error.detail || fallback || `Request failed (${response.status})`;
+    if (response.status === 401 && path !== '/auth/login') {
+      localStorage.removeItem('noc360_token');
+      localStorage.removeItem('noc360_user');
+      if (window.location.pathname !== '/login') window.history.pushState({}, '', '/login');
+    }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -181,15 +208,15 @@ async function request(path, options = {}) {
 function StatusPill({ value }) {
   const raw = String(value || 'Unknown');
   const normalized = raw.toLowerCase().trim();
-  const statusText = {
-    active: '🟢 ONLINE',
-    pending: '🟡 WARMING',
-    inactive: '🔴 OFFLINE',
-    'high usage': '⚡ HIGH LOAD',
-    'high load': '⚡ HIGH LOAD',
+  const displayStatus = {
+    active: 'ONLINE',
+    pending: 'WARMING',
+    inactive: 'OFFLINE',
+    'high usage': 'HIGH LOAD',
+    'high load': 'HIGH LOAD',
   }[normalized] || raw;
   const className = normalized === 'high usage' ? 'high-load' : normalized.replace(/[^a-z0-9]+/g, '-');
-  return <span className={`status ${className}`}>{statusText}</span>;
+  return <span className={`status ${className}`}>{displayStatus}</span>;
 }
 
 function canDo(user, pageKey, action = 'can_view') {
@@ -208,17 +235,17 @@ function isRtngPortalName(value) {
 
 function cyberAlertMessage(alert) {
   const message = String(alert?.message || alert || '');
-  if (/rdp|media/i.test(message)) return `🚨 Media node overloaded — ${message}`;
-  if (/payment|outstanding|billing/i.test(message)) return `💸 Payment pending – follow up before it disappears`;
+  if (/rdp|media/i.test(message)) return `Media node attention - ${message}`;
+  if (/payment|outstanding|billing/i.test(message)) return 'Payment follow-up required';
   return message;
 }
 
 function cyberInsightText(item, fallbackClient = 'ROLEX') {
   const text = String(item || '');
-  if (/outstanding|cashflow|payment/i.test(text)) return `🧠 Suggestion: improve cashflow from ${fallbackClient}`;
-  if (/revenue|billing|growth/i.test(text)) return `⚡ Growth Signal: ${text}`;
-  if (/rdp|gateway|risk|drop/i.test(text)) return `🚨 Risk Signal: ${text}`;
-  return `🧠 ${text}`;
+  if (/outstanding|cashflow|payment/i.test(text)) return `Cashflow signal: improve collection from ${fallbackClient}`;
+  if (/revenue|billing|growth/i.test(text)) return `Growth signal: ${text}`;
+  if (/rdp|gateway|risk|drop/i.test(text)) return `Risk signal: ${text}`;
+  return `Insight: ${text}`;
 }
 
 function ledgerQuery(filters = {}, defaultLimit = true) {
@@ -254,6 +281,7 @@ function App() {
   const [management, setManagement] = useState({ summary: null, cluster: [], rdpCluster: [], routing: [] });
   const [data, setData] = useState({ vos: [], vosDesktop: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
   const [billing, setBilling] = useState({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
+  const [communicationSummary, setCommunicationSummary] = useState({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 });
   const [settings, setSettings] = useState({ usd_to_inr_rate: 83 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -291,6 +319,10 @@ function App() {
     setError('');
     try {
       await refreshBillingData();
+      const hasComms = ['chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets'].some((pageKey) => canDo(auth.user, pageKey));
+      if (hasComms) {
+        request('/communication/summary').then(setCommunicationSummary).catch(() => setCommunicationSummary({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 }));
+      }
 
       if (auth.user.role !== 'customer') {
         const can = (pageKey) => canDo(auth.user, pageKey);
@@ -360,6 +392,10 @@ function App() {
   };
 
   const logout = () => {
+    request('/activity-logs/track', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'logout', module: 'auth', record_type: 'User', record_id: auth?.user?.id, description: 'User logged out' }),
+    }).catch(() => {});
     localStorage.removeItem('noc360_token');
     localStorage.removeItem('noc360_user');
     setAuth(null);
@@ -378,6 +414,12 @@ function App() {
   const activeModules = auth.user.role === 'customer'
     ? Object.fromEntries(Object.entries(customerModules).filter(([key]) => hasPermission(key)))
     : Object.fromEntries(Object.entries(modules).filter(([key]) => hasPermission(key)));
+  const moduleBadges = {
+    chatCenter: communicationSummary.chat_unread,
+    myChat: communicationSummary.direct_unread,
+    tickets: communicationSummary.open_tickets,
+    myTickets: communicationSummary.open_tickets,
+  };
   const activeKey = activeModules[active] ? active : Object.keys(activeModules)[0];
   const ActiveIcon = activeModules[activeKey]?.icon || Activity;
   const shellStats = [
@@ -417,6 +459,7 @@ function App() {
               <button key={key} className={activeKey === key ? 'active' : ''} onClick={() => setActive(key)} style={{ '--nav-index': index }}>
                 <Icon size={18} />
                 <span>{item.label}</span>
+                {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
                 <i className="navPulse" />
               </button>
             );
@@ -447,6 +490,10 @@ function App() {
         <section className="pageShell" key={activeKey || 'no-access'}>
           {auth.user.role === 'customer' && activeKey === 'myDashboard' ? (
             <CustomerDashboard billing={billing} user={auth.user} />
+          ) : auth.user.role === 'customer' && activeKey === 'myChat' ? (
+            <ChatCenterPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
+          ) : auth.user.role === 'customer' && activeKey === 'myTickets' ? (
+            <TicketsPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
           ) : auth.user.role === 'customer' && activeKey === 'myBilling' ? (
             <BillingPage billing={billing} data={data} reload={loadAll} refreshBilling={refreshBillingData} user={auth.user} settings={settings} />
           ) : auth.user.role === 'customer' && activeKey === 'myCdr' ? (
@@ -461,6 +508,12 @@ function App() {
             <BusinessAIPage data={data} />
           ) : activeKey === 'reports' ? (
             <ReportsPage data={data} user={auth.user} />
+          ) : activeKey === 'chatCenter' ? (
+            <ChatCenterPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
+          ) : activeKey === 'tickets' ? (
+            <TicketsPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
+          ) : activeKey === 'webphone' ? (
+            <WebphonePage user={auth.user} />
           ) : activeKey === 'vosDesktop' ? (
             <VOSDesktopPage rows={data.vosDesktop} user={auth.user} reload={loadAll} />
           ) : activeKey === 'billing' ? (
@@ -469,6 +522,8 @@ function App() {
           <ClientsPage clients={data.clients} reload={loadAll} user={auth.user} />
           ) : activeKey === 'userAccess' ? (
           <UserAccessPage users={data.users} clients={data.clients} reload={loadAll} user={auth.user} />
+          ) : activeKey === 'activityLogs' ? (
+            <ActivityLogsPage users={data.users} user={auth.user} />
           ) : activeKey ? (
             <CrudPage
               moduleKey={activeKey}
@@ -611,33 +666,6 @@ function AccountSettingsModal({ user, onClose, onUpdated, onLogout }) {
   );
 }
 
-function loadLauncherSettings() {
-  const defaults = {
-    launcherPath: 'D:\\NOC360\\Launcher\\vos_launcher.bat',
-    v1Name: 'VOS v1',
-    v1Path: 'C:\\Users\\ASUS\\Desktop\\VOS Shortcuts\\VOS3000-v1.lnk',
-    v2Name: 'VOS v2',
-    v2Path: 'C:\\Users\\ASUS\\Desktop\\VOS Shortcuts\\VOS3000-v2.lnk',
-    customPath: '',
-  };
-  try {
-    const saved = JSON.parse(localStorage.getItem('vos_launcher_paths') || '{}');
-    const savedKeys = Object.keys(saved).filter((key) => !['Custom', '__launcher_path'].includes(key));
-    const v1Name = savedKeys[0] || defaults.v1Name;
-    const v2Name = savedKeys[1] || defaults.v2Name;
-    return {
-      launcherPath: saved.__launcher_path || localStorage.getItem('vos_launcher_path') || defaults.launcherPath,
-      v1Name,
-      v1Path: saved[v1Name] ?? defaults.v1Path,
-      v2Name,
-      v2Path: saved[v2Name] ?? defaults.v2Path,
-      customPath: saved.Custom ?? defaults.customPath,
-    };
-  } catch {
-    return defaults;
-  }
-}
-
 function VOSDesktopEditModal({ record, onClose, onSave }) {
   const [form, setForm] = useState({
     ...record,
@@ -688,12 +716,118 @@ function VOSDesktopEditModal({ record, onClose, onSave }) {
   );
 }
 
+function VOSDesktopDetailsModal({ details, revealed, onToggleReveal, onClose, onCopy, onOpenWeb, onOpenAntiHack }) {
+  const [copyStatus, setCopyStatus] = useState('');
+  const valueOrDash = (value) => (value === undefined || value === null || value === '' ? '-' : value);
+  const secretValue = (value) => {
+    if (value === undefined || value === null || value === '') return '-';
+    return revealed ? value : '************';
+  };
+  const copyValue = async (value, label) => {
+    if (value === undefined || value === null || value === '') return;
+    await onCopy(String(value));
+    setCopyStatus(`${label} copied`);
+    window.setTimeout(() => setCopyStatus(''), 1800);
+  };
+  const allDetails = [
+    ['VOS Name / Portal Type', details.vos_name || details.portal_type || ''],
+    ['VOS Version', details.vos_version || ''],
+    ['Portal Type', details.portal_type || ''],
+    ['Server IP', details.server_ip || ''],
+    ['Web Panel URL', details.web_panel_url || ''],
+    ['Username', details.username || ''],
+    ['Password', details.password || ''],
+    ['Anti-Hack URL', details.anti_hack_url || ''],
+    ['Anti-Hack Password / PIN', details.anti_hack_password || ''],
+    ['UUID', details.uuid || ''],
+    ['Notes', details.notes || details.vos_notes || ''],
+    ['Status', details.status || ''],
+  ].map(([label, value]) => `${label}: ${value}`).join('\n');
+  const fields = [
+    ['VOS Name / Portal Type', valueOrDash(details.vos_name || details.portal_type)],
+    ['VOS Version', valueOrDash(details.vos_version)],
+    ['Portal Type', valueOrDash(details.portal_type)],
+    ['Server IP', valueOrDash(details.server_ip)],
+    ['Web Panel URL', valueOrDash(details.web_panel_url), 'openWeb'],
+    ['Username', valueOrDash(details.username), 'copyUsername'],
+    ['Password', secretValue(details.password), 'copyPassword', true],
+    ['Anti-Hack URL', valueOrDash(details.anti_hack_url), 'openAntiHack'],
+    ['Anti-Hack Password / PIN', secretValue(details.anti_hack_password), 'copyPin', true],
+    ['UUID', secretValue(details.uuid), 'copyUuid', true],
+    ['Notes', valueOrDash(details.notes || details.vos_notes)],
+    ['Status', valueOrDash(details.status)],
+  ];
+  const actionFor = {
+    openWeb: <button type="button" onClick={onOpenWeb} disabled={!details.web_panel_url && !details.server_ip}><ExternalLink size={14} /> Open</button>,
+    openAntiHack: <button type="button" onClick={onOpenAntiHack} disabled={!details.anti_hack_url}><ExternalLink size={14} /> Open</button>,
+    copyUsername: <button type="button" onClick={() => copyValue(details.username, 'Username')} disabled={!details.username}><Copy size={14} /> Copy</button>,
+    copyPassword: <button type="button" onClick={() => copyValue(details.password, 'Password')} disabled={!details.password}><Copy size={14} /> Copy</button>,
+    copyPin: <button type="button" onClick={() => copyValue(details.anti_hack_password, 'Anti-Hack PIN')} disabled={!details.anti_hack_password}><Copy size={14} /> Copy</button>,
+    copyUuid: <button type="button" onClick={() => copyValue(details.uuid, 'UUID')} disabled={!details.uuid}><Copy size={14} /> Copy</button>,
+  };
+
+  return (
+    <div className="modalBackdrop modal-overlay">
+      <div className="modal modal-box vosDetailsModal">
+        <div className="modalHeader vosDetailHeader">
+          <div>
+            <span className="eyebrow">Secure VOS credential vault</span>
+            <h2>{details.vos_name || details.portal_type || 'VOS Portal'} Details</h2>
+            <p className="muted">Full record from VOS Portal Master. Sensitive values stay masked until revealed.</p>
+          </div>
+          <div className="vosDetailHeaderActions">
+            <button type="button" onClick={onToggleReveal}>{revealed ? <EyeOff size={16} /> : <Eye size={16} />} {revealed ? 'Hide Secrets' : 'Reveal Secrets'}</button>
+            <button type="button" className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>
+          </div>
+        </div>
+
+        <div className="vosDetailHero">
+          <div>
+            <span className="eyebrow">Portal</span>
+            <strong>{details.portal_type || '-'}</strong>
+          </div>
+          <div>
+            <span className="eyebrow">Server IP</span>
+            <strong>{details.server_ip || '-'}</strong>
+          </div>
+          <div>
+            <span className="eyebrow">Status</span>
+            <StatusPill value={details.status} />
+          </div>
+        </div>
+
+        <div className="vosDetailGrid">
+          {fields.map(([label, value, action, secret]) => (
+            <div className={`vosDetailItem ${secret ? 'secretItem' : ''}`} key={label}>
+              <span>{label}</span>
+              <div className="vosDetailValue">
+                <code className={secret ? 'secretValue' : ''}>{value}</code>
+                {action && actionFor[action]}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="modalActions vosDetailActions">
+          <button type="button" onClick={() => copyValue(details.username, 'Username')} disabled={!details.username}><Copy size={15} /> Copy Username</button>
+          <button type="button" onClick={() => copyValue(details.password, 'Password')} disabled={!details.password}><Copy size={15} /> Copy Password</button>
+          <button type="button" onClick={() => copyValue(details.anti_hack_password, 'Anti-Hack PIN')} disabled={!details.anti_hack_password}><Copy size={15} /> Copy Anti-Hack PIN</button>
+          <button type="button" onClick={() => copyValue(details.uuid, 'UUID')} disabled={!details.uuid}><Copy size={15} /> Copy UUID</button>
+          <button type="button" onClick={() => copyValue(allDetails, 'All VOS details')}><Copy size={15} /> Copy All Details</button>
+          <button type="button" onClick={onOpenWeb} disabled={!details.web_panel_url && !details.server_ip}><ExternalLink size={15} /> Open Web Panel</button>
+          <button type="button" onClick={onOpenAntiHack} disabled={!details.anti_hack_url}><ExternalLink size={15} /> Open Anti-Hack URL</button>
+        </div>
+        {copyStatus && <div className="copyStatus">{copyStatus}</div>}
+      </div>
+    </div>
+  );
+}
+
 function VOSDesktopPage({ rows, user, reload }) {
   const canUseLauncher = canDo(user, 'vos_desktop_launcher', 'can_export') || user?.role === 'admin';
   const canEdit = canDo(user, 'vos_desktop_launcher', 'can_edit') || user?.role === 'admin';
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
-  const [launcherSettings, setLauncherSettings] = useState(() => loadLauncherSettings());
   const [selectedVersions, setSelectedVersions] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('vos_launcher_selected_versions') || '{}');
@@ -715,18 +849,17 @@ function VOSDesktopPage({ rows, user, reload }) {
       return {};
     }
   });
-  const [revealed, setRevealed] = useState({});
+  const [detailsModal, setDetailsModal] = useState(null);
+  const [detailsRevealed, setDetailsRevealed] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [agentStatus, setAgentStatus] = useState({ checking: true, running: false, message: 'Checking launcher...' });
+  const [agentVersions, setAgentVersions] = useState([]);
+  const [autoLogin, setAutoLogin] = useState(() => localStorage.getItem('vos_auto_login') !== 'false');
   const [message, setMessage] = useState('');
+  const [launchDetails, setLaunchDetails] = useState([]);
   const [error, setError] = useState('');
 
-  const launcherNames = [launcherSettings.v1Name || 'VOS v1', launcherSettings.v2Name || 'VOS v2', 'Custom'];
-  const launcherPaths = {
-    __launcher_path: launcherSettings.launcherPath || 'D:\\NOC360\\Launcher\\vos_launcher.bat',
-    [launcherNames[0]]: launcherSettings.v1Path || '',
-    [launcherNames[1]]: launcherSettings.v2Path || '',
-    Custom: launcherSettings.customPath || '',
-  };
+  const launcherVersions = agentVersions.length ? agentVersions : [];
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const filtered = useMemo(() => {
     const needle = query.toLowerCase();
@@ -742,21 +875,69 @@ function VOSDesktopPage({ rows, user, reload }) {
     ['Other', 'Other VOS'],
   ]).map(([type, title]) => [type, title, filtered.filter((row) => row.vos_type === type)]).filter(([, , groupRows]) => groupRows.length), [filtered]);
 
-  const saveLauncherPaths = () => {
-    localStorage.setItem('vos_launcher_paths', JSON.stringify(launcherPaths));
-    localStorage.setItem('vos_launcher_path', launcherPaths.__launcher_path);
-    setMessage('Permanent launcher paths saved');
-    setError('');
+  const refreshAgent = async () => {
+    setAgentStatus({ checking: true, running: false, message: 'Checking launcher...' });
+    try {
+      const health = await fetch('http://127.0.0.1:5055/health', { method: 'GET' });
+      if (!health.ok) throw new Error('Launcher health check failed');
+      const versionsResponse = await fetch('http://127.0.0.1:5055/versions', { method: 'GET' });
+      if (!versionsResponse.ok) throw new Error('Unable to load launcher versions');
+      const versionData = await versionsResponse.json();
+      const versions = Array.isArray(versionData.versions) ? versionData.versions : [];
+      setAgentVersions(versions);
+      setAgentStatus({ checking: false, running: true, message: versions.length ? `${versions.length} VOS version(s) detected` : 'Running, but no VOS versions detected' });
+      setError('');
+    } catch {
+      setAgentVersions([]);
+      setAgentStatus({ checking: false, running: false, message: 'Not Installed / Not Running' });
+    }
   };
 
-  const selectedVersionFor = (row) => (launcherNames.includes(selectedVersions[row.id]) ? selectedVersions[row.id] : launcherNames[0]);
-  const selectedPathFor = (row) => launcherPaths[selectedVersionFor(row)] || '';
-  const permanentLauncherPath = () => launcherPaths.__launcher_path || '';
+  useEffect(() => {
+    refreshAgent();
+  }, []);
+
+  const downloadLauncher = async () => {
+    try {
+      const token = localStorage.getItem('noc360_token');
+      const response = await fetch(`${API_BASE_URL}/vos-desktop/download-launcher`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.detail || 'Launcher download failed');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'noc360-local-launcher.zip';
+      link.click();
+      URL.revokeObjectURL(url);
+      const downloadMessage = 'Download complete. Run NOC360 Launcher once on this PC. After that, Launch buttons will open VOS automatically.';
+      setMessage(downloadMessage);
+      window.alert(downloadMessage);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const selectedVersionFor = (row) => {
+    const saved = selectedVersions[row.id];
+    if (launcherVersions.some((version) => version.name === saved)) return saved;
+    return launcherVersions[0]?.name || '';
+  };
 
   const setSelectedVersion = (row, version) => {
     const next = { ...selectedVersions, [row.id]: version };
     setSelectedVersions(next);
     localStorage.setItem('vos_launcher_selected_versions', JSON.stringify(next));
+  };
+
+  const setAutoLoginPreference = (value) => {
+    setAutoLogin(value);
+    localStorage.setItem('vos_auto_login', value ? 'true' : 'false');
   };
 
   const toggleFavorite = (row) => {
@@ -790,11 +971,6 @@ function VOSDesktopPage({ rows, user, reload }) {
     document.body.removeChild(textarea);
   };
 
-  const fileUrlForWindowsPath = (path) => {
-    if (!path) return '';
-    return `file:///${path.replaceAll('\\', '/')}`;
-  };
-
   const copyLogin = async (row) => {
     if (!canUseLauncher) return;
     try {
@@ -814,14 +990,12 @@ function VOSDesktopPage({ rows, user, reload }) {
     }
   };
 
-  const toggleReveal = async (row) => {
-    if (revealed[row.id]) {
-      setRevealed((current) => ({ ...current, [row.id]: null }));
-      return;
-    }
+  const openDetails = async (row) => {
+    if (!canUseLauncher) return;
     try {
-      const login = await fetchLogin(row);
-      setRevealed((current) => ({ ...current, [row.id]: login }));
+      const details = await request(`/vos-desktop/${row.id}/details`);
+      setDetailsModal(details);
+      setDetailsRevealed(false);
       setError('');
     } catch (err) {
       setError(err.message);
@@ -830,35 +1004,59 @@ function VOSDesktopPage({ rows, user, reload }) {
 
   const launchDesktop = async (row) => {
     if (!canUseLauncher) return;
-    const launcherPath = permanentLauncherPath();
-    const shortcutPath = selectedPathFor(row);
-    if (!launcherPath.trim()) {
-      setError('Launcher not configured. Please create vos_launcher.bat in D:\\NOC360\\Launcher');
+    const versionName = selectedVersionFor(row);
+    if (!agentStatus.running) {
+      setError('NOC360 Launcher not running. Please start local launcher.');
       return;
     }
-    if (!shortcutPath.trim()) {
-      setError('Please set local VOS shortcut/app path first.');
+    if (!versionName) {
+      setError('No local VOS version detected. Edit C:\\NOC360\\config.json, then click Refresh Agent.');
       return;
     }
     try {
-      const token = localStorage.getItem('noc360_token');
-      const response = await fetch(`${API_BASE_URL}/vos-desktop/${row.id}/launch`, {
+      const login = await fetchLogin(row);
+      setMessage(autoLogin ? 'Auto-login started...' : 'Launching VOS. Login will be copied to clipboard.');
+      setLaunchDetails([]);
+      const response = await fetch('http://127.0.0.1:5055/launch-vos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ launcher_path: launcherPath, shortcut_path: shortcutPath }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version_name: versionName,
+          server_ip: login.server || row.server_ip || '',
+          username: login.username || row.username || '',
+          password: login.password || '',
+          anti_hack_url: login.anti_hack_url || row.anti_hack_url || '',
+          anti_hack_password: login.anti_hack_password || '',
+          system_tag: '',
+          auto_login: autoLogin,
+          focus_strategy: 'vos_window',
+          login_wait_seconds: 5,
+          anti_hack_use_ctrl_l: false,
+          anti_hack_press_escape: true,
+          anti_hack_tab_count_to_pin: 1,
+        }),
       });
+      const result = await response.json().catch(() => ({}));
+      setLaunchDetails(Array.isArray(result.details) ? result.details : []);
       if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(detail.detail || 'Launcher command failed');
+        throw new Error(result.message || result.error || result.detail || 'Launcher command failed');
       }
-      const launchInfo = await response.json();
-      await copyText(launchInfo.command);
-      window.open(fileUrlForWindowsPath(launchInfo.launcher_path), '_blank', 'noopener,noreferrer');
       markLastUsed(row);
-      setMessage(`Permanent launcher command copied for ${row.vos_name}. If the browser blocks local launch, run the copied command.`);
+      request('/activity-logs/track', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'launch_desktop',
+          module: 'vos_desktop',
+          record_type: 'VOSPortal',
+          record_id: row.id,
+          description: `Local agent launch requested for ${row.vos_name} using ${versionName}`,
+        }),
+      }).catch(() => {});
+      setMessage(result.message || `VOS launched for ${row.vos_name}. Login copied to clipboard.`);
       setError('');
     } catch (err) {
-      setError(err.message);
+      const message = err?.message || '';
+      setError(message.includes('Failed to fetch') ? 'NOC360 Launcher not running. Please start local launcher.' : message);
     }
   };
 
@@ -869,6 +1067,10 @@ function VOSDesktopPage({ rows, user, reload }) {
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+    request('/activity-logs/track', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'open_anti_hack', module: 'vos_desktop', record_type: 'VOSPortal', record_id: row.id, description: `Anti-hack URL opened for ${row.vos_name}` }),
+    }).catch(() => {});
     fetchLogin(row)
       .then((login) => (login.anti_hack_password ? copyText(login.anti_hack_password) : null))
       .then(() => {
@@ -880,6 +1082,10 @@ function VOSDesktopPage({ rows, user, reload }) {
 
   const openWebPanel = (row) => {
     window.open(row.web_panel_url || `http://${row.server_ip}`, '_blank', 'noopener,noreferrer');
+    request('/activity-logs/track', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'open_web_panel', module: 'vos_desktop', record_type: 'VOSPortal', record_id: row.id, description: `Web panel opened for ${row.vos_name}` }),
+    }).catch(() => {});
   };
 
   const lastUsedText = (row) => {
@@ -914,8 +1120,8 @@ function VOSDesktopPage({ rows, user, reload }) {
       <div className="panel vosDesktopHero">
         <div>
           <span className="eyebrow">VOS Desktop Launcher</span>
-          <h2><Play size={20} /> Local shortcut launch from VOS Portal Master</h2>
-          <p className="muted">RDP, RTNG, DID, and every other VOS portal use one trusted permanent launcher. No repeated downloads, no temp scripts.</p>
+          <h2><Play size={20} /> Local agent launch from VOS Portal Master</h2>
+          <p className="muted">RDP, RTNG, DID, and every other VOS portal launch through the NOC360 Local Launcher Agent running on this PC.</p>
         </div>
         <div className="launcherStats">
           <span>{rows.length} VOS records</span>
@@ -924,21 +1130,27 @@ function VOSDesktopPage({ rows, user, reload }) {
         </div>
       </div>
 
-      <div className="panel launcherSettingsPanel">
+      <div className="panel launcherAgentPanel">
         <div>
-          <span className="eyebrow">Local VOS Launcher Paths</span>
-          <h2>Shortcut/App Paths</h2>
+          <span className="eyebrow">Local Agent</span>
+          <h2>127.0.0.1:5055 Launcher</h2>
+          <p className="muted">Install and run the NOC360 Launcher once on this PC. Local VOS app paths stay inside <code>C:\NOC360\config.json</code>.</p>
         </div>
-        <label className="wideLauncherField"><span>Launcher Path</span><input value={launcherSettings.launcherPath} onChange={(event) => setLauncherSettings({ ...launcherSettings, launcherPath: event.target.value })} placeholder="D:\NOC360\Launcher\vos_launcher.bat" /></label>
-        <label><span>VOS Version 1 Name</span><input value={launcherSettings.v1Name} onChange={(event) => setLauncherSettings({ ...launcherSettings, v1Name: event.target.value })} placeholder="VOS v1" /></label>
-        <label className="wideLauncherField"><span>VOS Version 1 Path</span><input value={launcherSettings.v1Path} onChange={(event) => setLauncherSettings({ ...launcherSettings, v1Path: event.target.value })} placeholder="C:\Users\ASUS\Desktop\VOS Shortcuts\VOS3000-v1.lnk" /></label>
-        <label><span>VOS Version 2 Name</span><input value={launcherSettings.v2Name} onChange={(event) => setLauncherSettings({ ...launcherSettings, v2Name: event.target.value })} placeholder="VOS v2" /></label>
-        <label className="wideLauncherField"><span>VOS Version 2 Path</span><input value={launcherSettings.v2Path} onChange={(event) => setLauncherSettings({ ...launcherSettings, v2Path: event.target.value })} placeholder="C:\Users\ASUS\Desktop\VOS Shortcuts\VOS3000-v2.lnk" /></label>
-        <label className="wideLauncherField"><span>Custom Path</span><input value={launcherSettings.customPath} onChange={(event) => setLauncherSettings({ ...launcherSettings, customPath: event.target.value })} placeholder="C:\Program Files\VOS3000\VOS3000.exe" /></label>
-        <button className="primary" onClick={saveLauncherPaths}>Save Launcher Paths</button>
+        <div className="launcherAgentControls">
+          <span className={`agentStatus ${agentStatus.running ? 'running' : 'offline'}`}>{agentStatus.checking ? 'CHECKING' : agentStatus.running ? 'ONLINE' : 'OFFLINE'} - {agentStatus.message}</span>
+          <label className="autoLoginToggle"><span>Auto Login</span><input type="checkbox" checked={autoLogin} onChange={(event) => setAutoLoginPreference(event.target.checked)} /></label>
+          <button onClick={downloadLauncher}><Download size={16} /> Download NOC360 Launcher</button>
+          <button onClick={refreshAgent}><RefreshCcw size={16} /> Refresh Agent</button>
+        </div>
       </div>
 
       {message && <div className="toastSuccess">{message}</div>}
+      {launchDetails.length > 0 && (
+        <div className="panel launcherDetails">
+          <h3>Launcher Details</h3>
+          <ul>{launchDetails.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+        </div>
+      )}
       {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
 
       <div className="toolbar">
@@ -974,30 +1186,21 @@ function VOSDesktopPage({ rows, user, reload }) {
                       <td><StatusPill value={row.status} /></td>
                       <td>{lastUsedText(row)}</td>
                       <td>
-                        <select value={selectedVersionFor(row)} onChange={(event) => setSelectedVersion(row, event.target.value)}>
-                          {launcherNames.map((name) => <option key={name}>{name}</option>)}
+                        <select value={selectedVersionFor(row)} onChange={(event) => setSelectedVersion(row, event.target.value)} disabled={!agentVersions.length}>
+                          {!agentVersions.length && <option value="">No versions detected</option>}
+                          {agentVersions.map((version) => <option key={version.name} value={version.name}>{version.name}</option>)}
                         </select>
-                        <small className={selectedPathFor(row) ? 'muted' : 'missing'}>{selectedPathFor(row) || 'Path not set'}</small>
+                        {agentVersions.find((version) => version.name === selectedVersionFor(row))?.args_template && <small className="muted">CLI args enabled</small>}
                       </td>
                       <td className="actions vosActions">
                         {canUseLauncher && <button className="primary" onClick={() => launchDesktop(row)}><Play size={15} /> Launch Desktop Client</button>}
                         <button onClick={() => openWhitelist(row)}>Whitelist IP</button>
                         {canUseLauncher && <button onClick={() => copyLogin(row)}><Copy size={15} /> Copy Login</button>}
                         <button onClick={() => openWebPanel(row)}><ExternalLink size={15} /> Open Web Panel</button>
-                        {canUseLauncher && <button onClick={() => toggleReveal(row)}>{revealed[row.id] ? <EyeOff size={15} /> : <Eye size={15} />} {revealed[row.id] ? 'Hide Password' : 'Show Password'}</button>}
+                        {canUseLauncher && <button onClick={() => openDetails(row)}><Eye size={15} /> Show Password</button>}
                         {canEdit && <button className="iconButton" onClick={() => setEditing(row)} title="Edit"><Edit3 size={16} /></button>}
                       </td>
                     </tr>
-                    {revealed[row.id] && (
-                      <tr className="credentialRow">
-                        <td colSpan="8">
-                          <span>Server: <b>{revealed[row.id].server || '-'}</b></span>
-                          <span>Username: <b>{revealed[row.id].username || '-'}</b></span>
-                          <span>Password: <b>{revealed[row.id].password || '-'}</b></span>
-                          <span>Anti-Hack Pass: <b>{revealed[row.id].anti_hack_password || '-'}</b></span>
-                        </td>
-                      </tr>
-                    )}
                   </React.Fragment>
                 ))}
               </tbody>
@@ -1006,6 +1209,17 @@ function VOSDesktopPage({ rows, user, reload }) {
         </div>
       ))}
       {!groupedRows.length && <div className="panel muted">No VOS desktop records found.</div>}
+      {detailsModal && (
+        <VOSDesktopDetailsModal
+          details={detailsModal}
+          revealed={detailsRevealed}
+          onToggleReveal={() => setDetailsRevealed((current) => !current)}
+          onClose={() => setDetailsModal(null)}
+          onCopy={copyText}
+          onOpenWeb={() => window.open(detailsModal.web_panel_url || `http://${detailsModal.server_ip}`, '_blank', 'noopener,noreferrer')}
+          onOpenAntiHack={() => window.open(detailsModal.anti_hack_url || '', '_blank', 'noopener,noreferrer')}
+        />
+      )}
       {editing && <VOSDesktopEditModal record={editing} onClose={() => setEditing(null)} onSave={saveEdit} />}
     </section>
   );
@@ -1103,6 +1317,972 @@ function makeQuery(filters) {
   if (filters.client_ids?.length) params.set('client_ids', filters.client_ids.join(','));
   if (filters.charge_type) params.set('charge_type', filters.charge_type);
   return params.toString() ? `?${params}` : '';
+}
+
+function activityQuery(filters) {
+  const params = new URLSearchParams();
+  if (filters.date_from) params.set('date_from', filters.date_from);
+  if (filters.date_to) params.set('date_to', filters.date_to);
+  if (filters.username) params.set('username', filters.username);
+  if (filters.role) params.set('role', filters.role);
+  if (filters.module) params.set('module', filters.module);
+  if (filters.action) params.set('action', filters.action);
+  if (filters.search) params.set('search', filters.search);
+  params.set('limit', '1000');
+  return `?${params}`;
+}
+
+function formatLogValue(value) {
+  if (!value) return '-';
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function ActivityLogsPage({ users, user }) {
+  const [filters, setFilters] = useState({ date_from: '', date_to: '', username: '', role: '', module: '', action: '', search: '' });
+  const [logs, setLogs] = useState([]);
+  const [summary, setSummary] = useState({});
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const canExport = canDo(user, 'activity_logs', 'can_export');
+  const modules = ['auth', 'clients', 'billing', 'reports', 'management_portal', 'vos_portals', 'vos_desktop', 'dialer_clusters', 'routing_gateways', 'user_access', 'chat', 'group_chat', 'tickets', 'webphone'];
+  const actions = ['login_success', 'login_failed', 'logout', 'create', 'update', 'delete', 'create_ledger', 'update_ledger', 'delete_ledger', 'reset_password', 'update_permissions', 'update_client_access', 'copy_credentials', 'launch_desktop', 'open_anti_hack', 'export_report', 'chat_sent', 'group_created', 'group_message_sent', 'ticket_created', 'ticket_updated', 'ticket_status_changed', 'ticket_message_sent', 'webphone_call_test'];
+
+  const loadLogs = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [logRows, logSummary] = await Promise.all([
+        request(`/activity-logs${activityQuery(filters)}`),
+        request('/activity-logs/summary'),
+      ]);
+      setLogs(logRows);
+      setSummary(logSummary);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
+
+  const setFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+  const cards = [
+    ['Total Activities Today', summary.total_today || 0],
+    ['Login Attempts', summary.login_attempts || 0],
+    ['Billing Changes', summary.billing_changes || 0],
+    ['User Access Changes', summary.user_access_changes || 0],
+    ['VOS Credential Actions', summary.vos_credential_actions || 0],
+  ];
+
+  return (
+    <section className="page activityLogsPage">
+      <div className="cards managementCards">
+        {cards.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+      </div>
+      <div className="reportFilters">
+        <label>From Date<input type="date" value={filters.date_from} onChange={(event) => setFilter('date_from', event.target.value)} /></label>
+        <label>To Date<input type="date" value={filters.date_to} onChange={(event) => setFilter('date_to', event.target.value)} /></label>
+        <label>User<select value={filters.username} onChange={(event) => setFilter('username', event.target.value)}><option value="">All Users</option>{users.map((item) => <option key={item.id} value={item.username}>{item.username}</option>)}</select></label>
+        <label>Role<select value={filters.role} onChange={(event) => setFilter('role', event.target.value)}><option value="">All Roles</option>{['admin', 'noc_user', 'viewer', 'customer'].map((role) => <option key={role}>{role}</option>)}</select></label>
+        <label>Module<select value={filters.module} onChange={(event) => setFilter('module', event.target.value)}><option value="">All Modules</option>{modules.map((module) => <option key={module}>{module}</option>)}</select></label>
+        <label>Action<select value={filters.action} onChange={(event) => setFilter('action', event.target.value)}><option value="">All Actions</option>{actions.map((action) => <option key={action}>{action}</option>)}</select></label>
+        <label>Search Description<input value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Search activity..." /></label>
+        <button className="primary" onClick={loadLogs}>Run</button>
+        {canExport && <button onClick={() => exportRows('activity-logs.csv', logs)}><Download size={16} /> Export CSV</button>}
+      </div>
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+      {loading && <div className="loading">Loading activity trail...</div>}
+      <div className="tableWrap">
+        <table>
+          <thead><tr><th>Date/Time</th><th>User</th><th>Role</th><th>Module</th><th>Action</th><th>Description</th><th>IP</th><th>Details</th></tr></thead>
+          <tbody>{logs.map((row) => (
+            <tr key={row.id}>
+              <td>{row.created_at ? new Date(row.created_at).toLocaleString() : '-'}</td>
+              <td>{row.username || '-'}</td>
+              <td>{row.role || '-'}</td>
+              <td>{row.module}</td>
+              <td>{row.action}</td>
+              <td>{row.description || '-'}</td>
+              <td>{row.ip_address || '-'}</td>
+              <td><button onClick={() => setSelected(row)}>Details</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {selected && (
+        <div className="modalBackdrop modal-overlay">
+          <div className="modal modal-box activityDetailModal">
+            <div className="modalHeader"><h2>Activity Details</h2><button className="iconButton" onClick={() => setSelected(null)}><X size={18} /></button></div>
+            <div className="activityDetailGrid">
+              <p><strong>User:</strong> {selected.username || '-'}</p>
+              <p><strong>Role:</strong> {selected.role || '-'}</p>
+              <p><strong>Module:</strong> {selected.module}</p>
+              <p><strong>Action:</strong> {selected.action}</p>
+              <p><strong>Record:</strong> {selected.record_type || '-'} #{selected.record_id || '-'}</p>
+              <p><strong>IP:</strong> {selected.ip_address || '-'}</p>
+              <p className="wide"><strong>User Agent:</strong> {selected.user_agent || '-'}</p>
+              <div className="wide"><strong>Old Value</strong><pre>{formatLogValue(selected.old_value)}</pre></div>
+              <div className="wide"><strong>New Value</strong><pre>{formatLogValue(selected.new_value)}</pre></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ChatCenterPage({ user, clients, onSummaryRefresh }) {
+  const [rooms, setRooms] = useState([]);
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [groups, setGroups] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [groupMessages, setGroupMessages] = useState([]);
+  const [groupDraft, setGroupDraft] = useState('');
+  const [chatUsers, setChatUsers] = useState([]);
+  const [groupForm, setGroupForm] = useState({ name: '', member_ids: [] });
+  const [error, setError] = useState('');
+  const isCustomer = user.role === 'customer';
+  const canGroup = !isCustomer && canDo(user, 'group_chat');
+  const canCreateGroup = !isCustomer && canDo(user, 'group_chat', 'can_create');
+
+  const loadRooms = async () => {
+    const next = await request('/chat/rooms');
+    setRooms(next);
+    setSelectedRoom((current) => next.find((room) => room.id === current?.id) || next[0] || null);
+  };
+
+  const loadGroups = async () => {
+    if (!canGroup) return;
+    const [nextGroups, users] = await Promise.all([request('/chat/groups'), request('/chat/users')]);
+    setGroups(nextGroups);
+    setChatUsers(users);
+    setSelectedGroup((current) => nextGroups.find((group) => group.id === current?.id) || nextGroups[0] || null);
+  };
+
+  useEffect(() => {
+    loadRooms().catch((err) => setError(err.message));
+    loadGroups().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRoom?.id) {
+      setMessages([]);
+      return;
+    }
+    request(`/chat/rooms/${selectedRoom.id}/messages`)
+      .then((rows) => {
+        setMessages(rows);
+        onSummaryRefresh?.();
+      })
+      .catch((err) => setError(err.message));
+  }, [selectedRoom?.id]);
+
+  useEffect(() => {
+    if (!selectedGroup?.id) {
+      setGroupMessages([]);
+      return;
+    }
+    request(`/chat/groups/${selectedGroup.id}/messages`)
+      .then(setGroupMessages)
+      .catch((err) => setError(err.message));
+  }, [selectedGroup?.id]);
+
+  const sendMessage = async () => {
+    if (!draft.trim() || !selectedRoom) return;
+    const row = await request(`/chat/rooms/${selectedRoom.id}/messages`, { method: 'POST', body: JSON.stringify({ message: draft }) });
+    setMessages((current) => [...current, row]);
+    setDraft('');
+    await loadRooms();
+    onSummaryRefresh?.();
+  };
+
+  const createGroup = async () => {
+    if (!groupForm.name.trim()) return;
+    const group = await request('/chat/groups', { method: 'POST', body: JSON.stringify({ name: groupForm.name, member_ids: groupForm.member_ids.map(Number) }) });
+    setGroupForm({ name: '', member_ids: [] });
+    await loadGroups();
+    setSelectedGroup(group);
+  };
+
+  const sendGroupMessage = async () => {
+    if (!groupDraft.trim() || !selectedGroup) return;
+    const row = await request(`/chat/groups/${selectedGroup.id}/messages`, { method: 'POST', body: JSON.stringify({ message: groupDraft }) });
+    setGroupMessages((current) => [...current, row]);
+    setGroupDraft('');
+    await loadGroups();
+  };
+
+  const roomTitle = isCustomer ? 'My NOC Chat' : 'Client Chat';
+
+  return (
+    <section className="communicationPage">
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+      <div className={`chatGrid ${isCustomer ? 'singleChatGrid' : ''}`}>
+        {!isCustomer && (
+          <aside className="chatList panel">
+            <h2>{roomTitle}</h2>
+            {rooms.map((room) => (
+              <button key={room.id} className={selectedRoom?.id === room.id ? 'activeChat' : ''} onClick={() => setSelectedRoom(room)}>
+                <span>{room.client_name || `Client #${room.client_id}`}</span>
+                {room.unread_count > 0 && <b>{room.unread_count}</b>}
+                <small>{room.last_message || 'No messages yet'}</small>
+              </button>
+            ))}
+          </aside>
+        )}
+        <div className="chatWindow panel">
+          <div className="chatHeader">
+            <div><span className="eyebrow">{roomTitle}</span><h2>{selectedRoom?.client_name || user.client_name || 'NOC Support'}</h2></div>
+            <span className="typeBadge">{messages.length} messages</span>
+          </div>
+          <div className="messageStream">
+            {messages.length === 0 && <p className="muted">No messages yet. Start the conversation.</p>}
+            {messages.map((message) => (
+              <div key={message.id} className={`messageBubble ${message.sender_id === user.id ? 'mine' : 'theirs'}`}>
+                <strong>{message.sender_name || message.sender_role}</strong>
+                <p>{message.message}</p>
+                <small>{message.created_at ? new Date(message.created_at).toLocaleString() : ''}{message.is_read ? ' • read' : ''}</small>
+              </div>
+            ))}
+          </div>
+          <div className="chatComposer">
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type message..." onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } }} />
+            <button className="primary" onClick={sendMessage}><Send size={16} /> Send</button>
+          </div>
+        </div>
+      </div>
+
+      {canGroup && (
+        <div className="chatGrid groupChatGrid">
+          <aside className="chatList panel">
+            <h2>Group Chat</h2>
+            {groups.map((group) => (
+              <button key={group.id} className={selectedGroup?.id === group.id ? 'activeChat' : ''} onClick={() => setSelectedGroup(group)}>
+                <span>{group.name}</span>
+                <small>{group.member_names?.join(', ') || 'Internal NOC'}</small>
+              </button>
+            ))}
+            {canCreateGroup && (
+              <div className="groupCreateBox">
+                <input value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} placeholder="New group name" />
+                <select multiple value={groupForm.member_ids} onChange={(event) => setGroupForm({ ...groupForm, member_ids: Array.from(event.target.selectedOptions).map((option) => option.value) })}>
+                  {chatUsers.map((item) => <option key={item.id} value={item.id}>{item.full_name || item.username}</option>)}
+                </select>
+                <button onClick={createGroup}><Plus size={15} /> Create Group</button>
+              </div>
+            )}
+          </aside>
+          <div className="chatWindow panel">
+            <div className="chatHeader"><div><span className="eyebrow">Internal NOC Team</span><h2>{selectedGroup?.name || 'Select Group'}</h2></div></div>
+            <div className="messageStream">
+              {groupMessages.length === 0 && <p className="muted">No group messages yet.</p>}
+              {groupMessages.map((message) => (
+                <div key={message.id} className={`messageBubble ${message.sender_id === user.id ? 'mine' : 'theirs'}`}>
+                  <strong>{message.sender_name || 'NOC User'}</strong>
+                  <p>{message.message}</p>
+                  <small>{message.created_at ? new Date(message.created_at).toLocaleString() : ''}</small>
+                </div>
+              ))}
+            </div>
+            <div className="chatComposer">
+              <textarea value={groupDraft} onChange={(event) => setGroupDraft(event.target.value)} placeholder="Message the NOC team..." onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendGroupMessage(); } }} />
+              <button className="primary" disabled={!selectedGroup} onClick={sendGroupMessage}><Send size={16} /> Send</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TicketsPage({ user, clients, onSummaryRefresh }) {
+  const isCustomer = user.role === 'customer';
+  const pageKey = isCustomer ? 'my_tickets' : 'tickets';
+  const [tickets, setTickets] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [reply, setReply] = useState('');
+  const [replyVisibility, setReplyVisibility] = useState('client');
+  const [users, setUsers] = useState([]);
+  const [form, setForm] = useState({ client_id: '', title: '', description: '', category: 'Other', priority: 'Medium' });
+  const [error, setError] = useState('');
+  const canCreate = canDo(user, pageKey, 'can_create');
+  const canEdit = !isCustomer && canDo(user, 'tickets', 'can_edit');
+  const categories = ['Billing', 'Routing', 'VOS', 'RDP', 'DID', 'Other'];
+  const priorities = ['Low', 'Medium', 'High', 'Critical'];
+  const statuses = ['Open', 'In Progress', 'Waiting Client', 'Resolved', 'Closed'];
+
+  const loadTickets = async () => {
+    const rows = await request('/tickets');
+    setTickets(rows);
+    setSelected((current) => rows.find((ticket) => ticket.id === current?.id) || current);
+    onSummaryRefresh?.();
+  };
+
+  useEffect(() => {
+    loadTickets().catch((err) => setError(err.message));
+    if (!isCustomer) request('/chat/users').then(setUsers).catch(() => setUsers([]));
+  }, []);
+
+  useEffect(() => {
+    if (!selected?.id) {
+      setMessages([]);
+      return;
+    }
+    request(`/tickets/${selected.id}/messages`).then(setMessages).catch((err) => setError(err.message));
+  }, [selected?.id]);
+
+  const createTicket = async () => {
+    if (!form.title.trim()) return;
+    const payload = {
+      ...form,
+      client_id: isCustomer ? null : Number(form.client_id),
+    };
+    const ticket = await request('/tickets', { method: 'POST', body: JSON.stringify(payload) });
+    setForm({ client_id: '', title: '', description: '', category: 'Other', priority: 'Medium' });
+    await loadTickets();
+    setSelected(ticket);
+  };
+
+  const updateTicket = async (patch) => {
+    if (!selected) return;
+    const updated = await request(`/tickets/${selected.id}`, { method: 'PUT', body: JSON.stringify(patch) });
+    setSelected(updated);
+    await loadTickets();
+  };
+
+  const sendReply = async () => {
+    if (!reply.trim() || !selected) return;
+    const row = await request(`/tickets/${selected.id}/messages`, { method: 'POST', body: JSON.stringify({ message: reply, visibility: replyVisibility }) });
+    setMessages((current) => [...current, row]);
+    setReply('');
+    await loadTickets();
+  };
+
+  return (
+    <section className="communicationPage ticketsPage">
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+      {canCreate && (
+        <div className="panel ticketCreatePanel">
+          <div><span className="eyebrow">Issue Tracking</span><h2>Create Ticket</h2></div>
+          <div className="ticketFormGrid">
+            {!isCustomer && <label><span>Client</span><ClientSelect value={form.client_id} clients={clients} onChange={(value) => setForm({ ...form, client_id: value })} /></label>}
+            <label><span>Title</span><input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="Short issue title" /></label>
+            <label><span>Category</span><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label><span>Priority</span><select value={form.priority} onChange={(event) => setForm({ ...form, priority: event.target.value })}>{priorities.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label className="wide"><span>Description</span><textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Describe the issue..." /></label>
+            <button className="primary" onClick={createTicket}><Plus size={16} /> Create Ticket</button>
+          </div>
+        </div>
+      )}
+
+      <div className="tableWrap">
+        <table>
+          <thead><tr><th>Ticket</th><th>Client</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Updated</th><th>Actions</th></tr></thead>
+          <tbody>{tickets.map((ticket) => (
+            <tr key={ticket.id}>
+              <td><strong>{ticket.ticket_no}</strong></td>
+              <td>{ticket.client_name || '-'}</td>
+              <td>{ticket.title}</td>
+              <td>{ticket.category}</td>
+              <td><span className={`priorityBadge ${ticket.priority?.toLowerCase()}`}>{ticket.priority}</span></td>
+              <td><StatusPill value={ticket.status} /></td>
+              <td>{ticket.assigned_to_name || 'Unassigned'}</td>
+              <td>{ticket.updated_at ? new Date(ticket.updated_at).toLocaleString() : '-'}</td>
+              <td><button onClick={() => setSelected(ticket)}>Open</button></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+
+      {selected && (
+        <div className="modalBackdrop modal-overlay">
+          <div className="modal modal-box ticketModal">
+            <div className="modalHeader">
+              <div><span className="eyebrow">{selected.ticket_no}</span><h2>{selected.title}</h2></div>
+              <button className="iconButton" onClick={() => setSelected(null)}><X size={18} /></button>
+            </div>
+            <div className="ticketDetailGrid">
+              <div className="ticketMetaPanel">
+                <p><strong>Client:</strong> {selected.client_name}</p>
+                <p><strong>Category:</strong> {selected.category}</p>
+                <p><strong>Priority:</strong> {selected.priority}</p>
+                <p><strong>Status:</strong> <StatusPill value={selected.status} /></p>
+                <p><strong>Description:</strong> {selected.description || '-'}</p>
+                {canEdit && (
+                  <div className="ticketControls">
+                    <label>Status<select value={selected.status} onChange={(event) => updateTicket({ status: event.target.value })}>{statuses.map((item) => <option key={item}>{item}</option>)}</select></label>
+                    <label>Assignee<select value={selected.assigned_to || ''} onChange={(event) => updateTicket({ assigned_to: event.target.value ? Number(event.target.value) : null })}><option value="">Unassigned</option>{users.map((item) => <option key={item.id} value={item.id}>{item.full_name || item.username}</option>)}</select></label>
+                  </div>
+                )}
+              </div>
+              <div className="ticketTimeline">
+                {messages.map((message) => (
+                  <div key={message.id} className={`ticketMessage ${message.visibility}`}>
+                    <div><strong>{message.user_name || 'User'}</strong><span>{message.visibility}</span></div>
+                    <p>{message.message}</p>
+                    <small>{message.created_at ? new Date(message.created_at).toLocaleString() : ''}</small>
+                  </div>
+                ))}
+                {messages.length === 0 && <p className="muted">No replies yet.</p>}
+                <div className="chatComposer">
+                  <textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="Reply to ticket..." />
+                  {!isCustomer && <select value={replyVisibility} onChange={(event) => setReplyVisibility(event.target.value)}><option value="client">Client Reply</option><option value="internal">Internal Note</option></select>}
+                  <button className="primary" onClick={sendReply}><Send size={16} /> Reply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WebphonePage({ user }) {
+  const canCreate = canDo(user, 'webphone', 'can_create');
+  const canEdit = canDo(user, 'webphone', 'can_edit');
+  const canDelete = canDo(user, 'webphone', 'can_delete');
+  const canTest = canCreate;
+  const isAdmin = user.role === 'admin';
+  const [profiles, setProfiles] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [activeTab, setActiveTab] = useState('dialer');
+  const [selectedId, setSelectedId] = useState('');
+  const [registrationStatus, setRegistrationStatus] = useState('Unregistered');
+  const [lastCallStatus, setLastCallStatus] = useState('Idle');
+  const [destination, setDestination] = useState('');
+  const [cli, setCli] = useState('');
+  const [muted, setMuted] = useState(false);
+  const [callSeconds, setCallSeconds] = useState(0);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({
+    profile_name: '',
+    sip_username: '',
+    sip_password: '',
+    websocket_url: '',
+    sip_domain: '',
+    outbound_proxy: '',
+    cli: '',
+    status: 'Active',
+    notes: '',
+  });
+  const [pbxStatus, setPbxStatus] = useState(null);
+  const [pbxConnected, setPbxConnected] = useState(false);
+  const [webRtcEnabled, setWebRtcEnabled] = useState(false);
+  const [pbxConnect, setPbxConnect] = useState({ ip: '127.0.0.1', username: '', password: '' });
+  const uaRef = useRef(null);
+  const sessionRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const timerRef = useRef(null);
+  const callStartedAtRef = useRef(null);
+  const logSavedRef = useRef(false);
+
+  const selectedProfile = profiles.find((profile) => String(profile.id) === String(selectedId));
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayCalls = logs.filter((log) => String(log.created_at || '').slice(0, 10) === todayKey).length;
+  const isRegistered = registrationStatus === 'Registered';
+  const isConnecting = ['Requesting microphone', 'Connecting', 'Connected'].includes(registrationStatus);
+  const registrationDisplay = isRegistered ? '🟢 Registered' : isConnecting ? '⚡ Connecting' : '🔴 Not Connected';
+  const registrationClass = isRegistered ? 'running' : isConnecting ? 'warming' : 'offline';
+  const inCall = Boolean(sessionRef.current);
+
+  const loadWebphone = async () => {
+    const [profileRows, logRows] = await Promise.all([
+      request('/webphone/profiles'),
+      request('/webphone/call-logs'),
+    ]);
+    setProfiles(profileRows);
+    setLogs(logRows);
+    setSelectedId((current) => current || String(profileRows[0]?.id || ''));
+    if (!cli && profileRows[0]?.cli) setCli(profileRows[0].cli);
+  };
+
+  useEffect(() => {
+    loadWebphone().catch((err) => setError(err.message));
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+      try {
+        sessionRef.current?.terminate();
+        uaRef.current?.stop();
+      } catch {
+        // Best effort cleanup when leaving the page.
+      }
+      localStreamRef.current?.getTracks()?.forEach((track) => track.stop());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedProfile?.cli) setCli(selectedProfile.cli);
+  }, [selectedId]);
+
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const setPbxConnectField = (key, value) => setPbxConnect((current) => ({ ...current, [key]: value }));
+
+  const loadPbxStatus = async () => {
+    if (!isAdmin) return;
+    try {
+      const status = await request('/webphone/pbx/status');
+      setPbxStatus(status);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const connectPbx = async (event) => {
+    event.preventDefault();
+    if (!isAdmin) return;
+    setError('');
+    try {
+      if (!pbxConnect.ip.trim()) throw new Error('IP is required');
+      if (!pbxConnect.username.trim()) throw new Error('Username is required');
+      if (!pbxConnect.password.trim()) throw new Error('Password is required');
+      const result = await request('/webphone/pbx/connect', {
+        method: 'POST',
+        body: JSON.stringify(pbxConnect),
+      });
+      setPbxConnected(true);
+      setPbxStatus(result.status);
+      setMessage('PBX connected');
+    } catch (err) {
+      setPbxConnected(false);
+      setError(err.message);
+    }
+  };
+
+  const enableWebRtc = async () => {
+    if (!isAdmin) return;
+    setError('');
+    try {
+      const result = await request('/webphone/pbx/enable-webrtc', { method: 'POST', body: JSON.stringify({}) });
+      setMessage(result.message || 'WebRTC Enabled Successfully');
+      setWebRtcEnabled(true);
+      setPbxStatus(result.status);
+      await loadWebphone();
+      setSelectedId(String(result.profile?.id || selectedId));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const validateProfilePayload = (payload) => {
+    if (!payload.profile_name.trim()) throw new Error('Profile name is required');
+    if (!payload.sip_username.trim()) throw new Error('SIP username is required');
+    if (!payload.sip_password.trim()) throw new Error('SIP password is required');
+    if (!payload.websocket_url.trim().toLowerCase().startsWith('wss://')) throw new Error('Secure WSS required');
+    if (!payload.sip_domain.trim()) throw new Error('SIP domain is required');
+  };
+
+  const resetProfileForm = () => {
+    setEditingId(null);
+    setForm({ profile_name: '', sip_username: '', sip_password: '', websocket_url: '', sip_domain: '', outbound_proxy: '', cli: '', status: 'Active', notes: '' });
+  };
+
+  const saveProfile = async (event) => {
+    event.preventDefault();
+    if (!canCreate && !editingId) return;
+    if (!canEdit && editingId) return;
+    setError('');
+    try {
+      validateProfilePayload(form);
+      const path = editingId ? `/webphone/profiles/${editingId}` : '/webphone/profiles';
+      const method = editingId ? 'PUT' : 'POST';
+      const saved = await request(path, { method, body: JSON.stringify(form) });
+      setMessage(editingId ? 'Webphone profile updated' : 'Webphone profile created');
+      resetProfileForm();
+      await loadWebphone();
+      setSelectedId(String(saved.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const editProfile = (profile) => {
+    setEditingId(profile.id);
+    setForm({
+      profile_name: profile.profile_name || '',
+      sip_username: profile.sip_username || '',
+      sip_password: profile.sip_password || '',
+      websocket_url: profile.websocket_url || '',
+      sip_domain: profile.sip_domain || '',
+      outbound_proxy: profile.outbound_proxy || '',
+      cli: profile.cli || '',
+      status: profile.status || 'Active',
+      notes: profile.notes || '',
+    });
+  };
+
+  const deleteProfile = async (profile) => {
+    if (!canDelete) return;
+    if (!window.confirm(`Delete Webphone profile ${profile.profile_name}?`)) return;
+    await request(`/webphone/profiles/${profile.id}`, { method: 'DELETE' });
+    setMessage('Webphone profile deleted');
+    await loadWebphone();
+  };
+
+  const startTimer = () => {
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    callStartedAtRef.current = Date.now();
+    setCallSeconds(0);
+    timerRef.current = window.setInterval(() => {
+      setCallSeconds(Math.floor((Date.now() - callStartedAtRef.current) / 1000));
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+    return callStartedAtRef.current ? Math.floor((Date.now() - callStartedAtRef.current) / 1000) : 0;
+  };
+
+  const clearRemoteAudio = () => {
+    if (!remoteAudioRef.current) return;
+    remoteAudioRef.current.pause?.();
+    remoteAudioRef.current.srcObject = null;
+  };
+
+  const saveCallLog = async (status, notes = '') => {
+    if (logSavedRef.current || !selectedProfile || !destination.trim()) return;
+    logSavedRef.current = true;
+    const duration = stopTimer();
+    try {
+      await request('/webphone/call-logs', {
+        method: 'POST',
+        body: JSON.stringify({
+          profile_id: selectedProfile.id,
+          cli: cli || selectedProfile.cli || '',
+          destination,
+          status,
+          duration,
+          notes,
+        }),
+      });
+      const nextLogs = await request('/webphone/call-logs');
+      setLogs(nextLogs);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const registerWebphone = async () => {
+    if (!canTest) {
+      setError('Webphone test permission is required');
+      return;
+    }
+    if (!selectedProfile) {
+      setError('Select a Webphone profile first');
+      return;
+    }
+    if (!selectedProfile.websocket_url?.toLowerCase().startsWith('wss://')) {
+      setError('Secure WSS required');
+      return;
+    }
+    setError('');
+    try {
+      setRegistrationStatus('Requesting microphone');
+      localStreamRef.current?.getTracks()?.forEach((track) => track.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      const JsSIPModule = await import('jssip');
+      const JsSIP = JsSIPModule.default || JsSIPModule;
+      const socket = new JsSIP.WebSocketInterface(selectedProfile.websocket_url);
+      const ua = new JsSIP.UA({
+        sockets: [socket],
+        uri: `sip:${selectedProfile.sip_username}@${selectedProfile.sip_domain}`,
+        authorization_user: selectedProfile.sip_username,
+        password: selectedProfile.sip_password,
+        register: true,
+        register_expires: 300,
+        connection_recovery_min_interval: 2,
+        connection_recovery_max_interval: 30,
+        session_timers: false,
+        display_name: selectedProfile.cli || selectedProfile.sip_username,
+      });
+      ua.on('connecting', () => setRegistrationStatus('Connecting'));
+      ua.on('connected', () => setRegistrationStatus('Connected'));
+      ua.on('disconnected', () => setRegistrationStatus('Not Connected'));
+      ua.on('registered', () => {
+        setRegistrationStatus('Registered');
+        setMessage('Webphone registered');
+      });
+      ua.on('unregistered', () => setRegistrationStatus('Unregistered'));
+      ua.on('registrationFailed', (event) => {
+        setRegistrationStatus('Registration Failed');
+        setError(event?.cause || 'Registration failed');
+      });
+      uaRef.current?.stop();
+      uaRef.current = ua;
+      ua.start();
+    } catch (err) {
+      setRegistrationStatus('Microphone Failed');
+      setError(err?.name === 'NotAllowedError' ? 'Allow microphone access' : err.message);
+    }
+  };
+
+  const unregisterWebphone = () => {
+    try {
+      uaRef.current?.unregister();
+      uaRef.current?.stop();
+    } catch {
+      // Ignore cleanup errors from a half-open WebRTC stack.
+    }
+    uaRef.current = null;
+    setRegistrationStatus('Unregistered');
+    clearRemoteAudio();
+    localStreamRef.current?.getTracks()?.forEach((track) => track.stop());
+    localStreamRef.current = null;
+  };
+
+  const attachRemoteAudio = (session) => {
+    const connection = session.connection;
+    if (!connection) return;
+    connection.addEventListener('track', (event) => {
+      const [remoteStream] = event.streams || [];
+      if (remoteStream && remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = remoteStream;
+        remoteAudioRef.current.play?.().catch(() => {});
+      }
+    });
+  };
+
+  const callDid = () => {
+    if (!canTest) {
+      setError('Webphone test permission is required');
+      return;
+    }
+    if (!selectedProfile || !uaRef.current || !isRegistered) {
+      setError('Register the selected profile before calling');
+      return;
+    }
+    const did = destination.trim();
+    if (!did) {
+      setError('Enter DID/destination number');
+      return;
+    }
+    logSavedRef.current = false;
+    setError('');
+    setLastCallStatus('Calling');
+    const callerId = cli || selectedProfile.cli || selectedProfile.sip_username;
+    const target = `sip:${did}@${selectedProfile.sip_domain}`;
+    const session = uaRef.current.call(target, {
+      mediaStream: localStreamRef.current || undefined,
+      mediaConstraints: { audio: true, video: false },
+      pcConfig: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
+      rtcOfferConstraints: { offerToReceiveAudio: true, offerToReceiveVideo: false },
+      extraHeaders: [
+        `P-Asserted-Identity: <sip:${callerId}@${selectedProfile.sip_domain}>`,
+        `Remote-Party-ID: <sip:${callerId}@${selectedProfile.sip_domain}>;party=calling;privacy=off;screen=no`,
+      ],
+      eventHandlers: {
+        progress: () => setLastCallStatus('Ringing'),
+        confirmed: () => {
+          setLastCallStatus('Connected');
+          startTimer();
+        },
+        ended: (event) => {
+          setLastCallStatus('Ended');
+          sessionRef.current = null;
+          clearRemoteAudio();
+          saveCallLog('Ended', event?.cause || '');
+        },
+        failed: (event) => {
+          const reason = event?.cause || 'Call failed';
+          setLastCallStatus(`Failed: ${reason}`);
+          sessionRef.current = null;
+          clearRemoteAudio();
+          saveCallLog('Failed', reason);
+        },
+      },
+    });
+    sessionRef.current = session;
+    session.on('peerconnection', () => attachRemoteAudio(session));
+    attachRemoteAudio(session);
+  };
+
+  const hangup = () => {
+    if (!sessionRef.current) return;
+    try {
+      sessionRef.current.terminate();
+    } catch {
+      // Session may already be terminated by the remote side.
+    }
+    setLastCallStatus('Hangup');
+    sessionRef.current = null;
+    clearRemoteAudio();
+    saveCallLog('Hangup', 'Manual hangup');
+  };
+
+  const toggleMute = () => {
+    const nextMuted = !muted;
+    localStreamRef.current?.getAudioTracks()?.forEach((track) => {
+      track.enabled = !nextMuted;
+    });
+    setMuted(nextMuted);
+  };
+
+  const durationText = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const remain = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(remain).padStart(2, '0')}`;
+  };
+
+  const cards = [
+    ['Registration Status', registrationDisplay],
+    ['Selected Profile', selectedProfile?.profile_name || 'None'],
+    ['Last Call Status', lastCallStatus],
+    ['Today Test Calls', todayCalls],
+  ];
+
+  return (
+    <section className="webphonePage">
+      <div className="cards managementCards">
+        {cards.map(([label, value]) => <div className="metric" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+      </div>
+      {message && <div className="toastSuccess">{message}</div>}
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
+
+      <div className="webphoneTabs">
+        {['dialer', 'profiles', 'logs', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
+          <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => setActiveTab(tab)}>
+            {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Call Logs' : tab[0].toUpperCase() + tab.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'dialer' && (
+        <div className="panel webphoneDialerPanel">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">DID Test Dialer</span><h2>Browser WebRTC Webphone</h2></div>
+            <span className={`agentStatus ${registrationClass}`}>{registrationDisplay}</span>
+          </div>
+          <div className="dialerForm">
+            <label><span>Profile</span><select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">Select profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.profile_name}</option>)}</select></label>
+            <label><span>DID / Destination</span><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Enter DID to test" /></label>
+            <label><span>CLI / Caller ID</span><input value={cli} onChange={(event) => setCli(event.target.value)} placeholder="Caller ID" /></label>
+            <label><span>Call Timer</span><input value={durationText(callSeconds)} readOnly /></label>
+          </div>
+          <div className="dialerControls">
+            <button onClick={registerWebphone} disabled={!canTest || isRegistered || !selectedProfile}><RadioTower size={16} /> Register</button>
+            <button onClick={unregisterWebphone} disabled={!uaRef.current}><PhoneOff size={16} /> Unregister</button>
+            <button className="primary" onClick={callDid} disabled={!canTest || !isRegistered || inCall}><Phone size={16} /> Call</button>
+            <button className="danger" onClick={hangup} disabled={!inCall}><PhoneOff size={16} /> Hangup</button>
+            <button onClick={toggleMute} disabled={!localStreamRef.current}>{muted ? <MicOff size={16} /> : <Mic size={16} />} {muted ? 'Unmute' : 'Mute'}</button>
+          </div>
+          <audio ref={remoteAudioRef} autoPlay playsInline />
+          <p className="muted">Only secure WSS WebRTC is supported. Calls route through Asterisk to VOS/carrier trunks.</p>
+        </div>
+      )}
+
+      {activeTab === 'profiles' && (
+        <div className="panel webphoneProfilePanel">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">WSS SIP Profile</span><h2>WebRTC Gateway Profiles</h2></div>
+            <span className="typeBadge">{profiles.length} profiles</span>
+          </div>
+          {(canCreate || editingId) && (
+            <form className="webphoneForm" onSubmit={saveProfile}>
+              <label><span>Profile Name</span><input value={form.profile_name} onChange={(event) => setField('profile_name', event.target.value)} placeholder="pbx.voipzap.com DID Test" /></label>
+              <label><span>SIP Username</span><input value={form.sip_username} onChange={(event) => setField('sip_username', event.target.value)} placeholder="1001" /></label>
+              <label><span>SIP Password</span><input type="password" value={form.sip_password} onChange={(event) => setField('sip_password', event.target.value)} placeholder="SIP secret" /></label>
+              <label><span>WebSocket URL</span><input value={form.websocket_url} onChange={(event) => setField('websocket_url', event.target.value)} placeholder="wss://pbx.voipzap.com:8089/ws" /></label>
+              <label><span>SIP Domain</span><input value={form.sip_domain} onChange={(event) => setField('sip_domain', event.target.value)} placeholder="pbx.voipzap.com" /></label>
+              <label><span>Outbound Proxy</span><input value={form.outbound_proxy} onChange={(event) => setField('outbound_proxy', event.target.value)} placeholder="Optional" /></label>
+              <label><span>Default CLI</span><input value={form.cli} onChange={(event) => setField('cli', event.target.value)} placeholder="Caller ID" /></label>
+              <label><span>Status</span><select value={form.status} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+              <label className="wide"><span>Notes</span><textarea value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Gateway/trunk notes" /></label>
+              <div className="wide formActions">
+                <button className="primary">{editingId ? 'Update Profile' : 'Save Profile'}</button>
+                {editingId && <button type="button" onClick={resetProfileForm}>Cancel Edit</button>}
+              </div>
+            </form>
+          )}
+          <div className="tableWrap webphoneProfileTable">
+            <table>
+              <thead><tr><th>Profile</th><th>SIP User</th><th>WSS</th><th>Domain</th><th>CLI</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>{profiles.map((profile) => (
+                <tr key={profile.id} className={String(profile.id) === String(selectedId) ? 'selectedRow' : ''}>
+                  <td><strong>{profile.profile_name}</strong><small>Password: ********</small></td>
+                  <td>{profile.sip_username}</td>
+                  <td>{profile.websocket_url}</td>
+                  <td>{profile.sip_domain}</td>
+                  <td>{profile.cli || '-'}</td>
+                  <td><StatusPill value={profile.status} /></td>
+                  <td className="actions">
+                    <button onClick={() => { setSelectedId(String(profile.id)); setActiveTab('dialer'); }}>Use</button>
+                    {canEdit && <button onClick={() => editProfile(profile)}><Edit3 size={15} /> Edit</button>}
+                    {canDelete && <button className="danger" onClick={() => deleteProfile(profile)}><Trash2 size={15} /> Delete</button>}
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className="panel">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">DID Test Trail</span><h2>Webphone Call Logs</h2></div>
+            <button onClick={loadWebphone}><RefreshCcw size={16} /> Refresh</button>
+          </div>
+          <div className="tableWrap">
+            <table>
+              <thead><tr><th>Date/Time</th><th>Profile</th><th>CLI</th><th>DID</th><th>Status</th><th>Duration</th><th>Notes</th><th>Created By</th></tr></thead>
+              <tbody>{logs.map((log) => (
+                <tr key={log.id}>
+                  <td>{log.created_at ? new Date(log.created_at).toLocaleString() : '-'}</td>
+                  <td>{log.profile_name || '-'}</td>
+                  <td>{log.cli || '-'}</td>
+                  <td>{log.destination}</td>
+                  <td><StatusPill value={log.status} /></td>
+                  <td>{durationText(log.duration || 0)}</td>
+                  <td>{log.notes || '-'}</td>
+                  <td>{log.created_by || '-'}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'pbx' && isAdmin && (
+        <div className="panel pbxSetupPanel">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Safe PBX Setup</span><h2>Connect &gt; Enable WebRTC &gt; Done</h2></div>
+          </div>
+          {pbxStatus?.message && <div className="error"><AlertTriangle size={18} /> {pbxStatus.message}</div>}
+          {webRtcEnabled && <div className="toastSuccess">WebRTC Enabled Successfully</div>}
+          {!pbxConnected ? (
+            <form className="webphoneForm pbxConnectForm" onSubmit={connectPbx}>
+              <label><span>IP</span><input value={pbxConnect.ip} onChange={(event) => setPbxConnectField('ip', event.target.value)} placeholder="127.0.0.1" /></label>
+              <label><span>Username</span><input value={pbxConnect.username} onChange={(event) => setPbxConnectField('username', event.target.value)} placeholder="Server admin username" /></label>
+              <label><span>Password</span><input type="password" value={pbxConnect.password} onChange={(event) => setPbxConnectField('password', event.target.value)} placeholder="Not stored" /></label>
+              <div className="wide formActions">
+                <button className="primary">Connect</button>
+              </div>
+            </form>
+          ) : (
+            <div className="pbxEnableBox">
+              <button className="primary pbxEnableButton" onClick={enableWebRtc}>Enable WebRTC</button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function MultiSelect({ values, options, labelKey = 'name', onChange }) {
@@ -1489,6 +2669,10 @@ function exchangeText(rate) {
 
 function exportRows(filename, rows) {
   if (!rows.length) return;
+  request('/activity-logs/track', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'export_report', module: 'reports', description: `Exported ${filename}` }),
+  }).catch(() => {});
   const headers = Object.keys(rows[0]);
   const csv = [headers.join(','), ...rows.map((row) => headers.map((key) => `"${String(row[key] ?? '').replaceAll('"', '""')}"`).join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -1750,7 +2934,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   return (
     <section>
       <BillingCards summary={billing.ledgerSummary || {}} />
-      {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">💸 Payment pending – follow up before it disappears</div>}
+      {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">Payment follow-up required for outstanding balance.</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
       {false && (
         <form className="inlineForm billingEntryForm" onSubmit={save}>

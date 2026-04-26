@@ -12,13 +12,14 @@ USD_TO_INR = 83.0
 PAGE_KEYS = [
     "dashboard", "my_dashboard", "business_ai", "reports", "my_reports", "management_portal",
     "billing", "my_ledger", "clients", "cdr", "my_cdr", "vos_portals", "dialer_clusters",
-    "rdp_media", "routing_gateways", "vos_desktop_launcher", "user_access",
+    "rdp_media", "routing_gateways", "vos_desktop_launcher", "user_access", "activity_logs",
+    "chat_center", "my_chat", "group_chat", "tickets", "my_tickets", "webphone",
 ]
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone"],
     "viewer": ["dashboard", "reports"],
-    "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports"],
+    "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
 
 
@@ -174,6 +175,8 @@ def create_users(db, clients):
             page_rights = rights
             if user.role == "noc_user" and page == "vos_desktop_launcher":
                 page_rights = {"can_view": 1, "can_create": 0, "can_edit": 0, "can_delete": 0, "can_export": 1}
+            if user.role == "customer" and page in {"my_chat", "my_tickets"}:
+                page_rights = {"can_view": 1, "can_create": 1, "can_edit": 0, "can_delete": 0, "can_export": 0}
             db.add(PagePermission(user_id=user.id, page_key=page, **page_rights))
         if user.client_id:
             db.add(ClientAccess(user_id=user.id, client_id=user.client_id))

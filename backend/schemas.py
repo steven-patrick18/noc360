@@ -210,6 +210,172 @@ class ClientAccessIn(BaseModel):
     client_ids: list[int] = []
 
 
+class ActivityLogOut(OrmModel):
+    id: int
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+    role: Optional[str] = None
+    action: str
+    module: str
+    record_type: Optional[str] = None
+    record_id: Optional[int] = None
+    description: Optional[str] = None
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ChatRoomOut(BaseModel):
+    id: int
+    client_id: int
+    client_name: Optional[str] = None
+    unread_count: int = 0
+    last_message: Optional[str] = None
+    last_message_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class ChatMessageCreate(BaseModel):
+    message: str
+
+
+class ChatMessageOut(BaseModel):
+    id: int
+    room_id: int
+    sender_id: int
+    sender_name: Optional[str] = None
+    sender_role: str
+    message: str
+    created_at: Optional[datetime] = None
+    is_read: bool = False
+
+
+class ChatGroupCreate(BaseModel):
+    name: str
+    member_ids: list[int] = []
+
+
+class ChatGroupOut(BaseModel):
+    id: int
+    name: str
+    created_by: int
+    created_by_name: Optional[str] = None
+    member_ids: list[int] = []
+    member_names: list[str] = []
+    unread_count: int = 0
+    created_at: Optional[datetime] = None
+
+
+class ChatGroupMessageCreate(BaseModel):
+    message: str
+
+
+class ChatGroupMessageOut(BaseModel):
+    id: int
+    group_id: int
+    sender_id: int
+    sender_name: Optional[str] = None
+    message: str
+    created_at: Optional[datetime] = None
+
+
+class TicketCreate(BaseModel):
+    client_id: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    category: str = "Other"
+    priority: str = "Medium"
+
+
+class TicketUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    assigned_to: Optional[int] = None
+
+
+class TicketOut(BaseModel):
+    id: int
+    ticket_no: str
+    client_id: int
+    client_name: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    category: str
+    priority: str
+    status: str
+    assigned_to: Optional[int] = None
+    assigned_to_name: Optional[str] = None
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    message_count: int = 0
+    last_message_at: Optional[datetime] = None
+
+
+class TicketMessageCreate(BaseModel):
+    message: str
+    visibility: str = "client"
+
+
+class TicketMessageOut(BaseModel):
+    id: int
+    ticket_id: int
+    user_id: int
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    message: str
+    visibility: str
+    created_at: Optional[datetime] = None
+
+
+class WebphoneProfileBase(BaseModel):
+    profile_name: str
+    sip_username: str
+    sip_password: str
+    websocket_url: str
+    sip_domain: str
+    outbound_proxy: Optional[str] = None
+    cli: Optional[str] = None
+    status: str = "Active"
+    notes: Optional[str] = None
+
+
+class WebphoneProfileCreate(WebphoneProfileBase):
+    pass
+
+
+class WebphoneProfileUpdate(WebphoneProfileBase):
+    pass
+
+
+class WebphoneProfileOut(WebphoneProfileBase, OrmModel):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class WebphoneCallLogCreate(BaseModel):
+    profile_id: Optional[int] = None
+    cli: Optional[str] = None
+    destination: str
+    status: str
+    duration: int = 0
+    notes: Optional[str] = None
+
+
+class WebphoneCallLogOut(WebphoneCallLogCreate, OrmModel):
+    id: int
+    profile_name: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
 class BillingSettingOut(OrmModel):
     id: int
     usd_to_inr_rate: float = 83.0

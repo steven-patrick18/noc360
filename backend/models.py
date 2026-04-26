@@ -76,6 +76,150 @@ class ClientAccess(Base):
     client = relationship("Client")
 
 
+class ActivityLog(Base):
+    __tablename__ = "activity_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    username = Column(String, nullable=True, index=True)
+    role = Column(String, nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    module = Column(String, nullable=False, index=True)
+    record_type = Column(String, nullable=True, index=True)
+    record_id = Column(Integer, nullable=True, index=True)
+    description = Column(Text, nullable=True)
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    user = relationship("User")
+
+
+class ChatRoom(Base):
+    __tablename__ = "chat_rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    client = relationship("Client")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("chat_rooms.id"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    sender_role = Column(String, nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    is_read = Column(Boolean, default=False, index=True)
+    room = relationship("ChatRoom")
+    sender = relationship("User")
+
+
+class ChatGroup(Base):
+    __tablename__ = "chat_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    creator = relationship("User")
+
+
+class ChatGroupMember(Base):
+    __tablename__ = "chat_group_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    group = relationship("ChatGroup")
+    user = relationship("User")
+
+
+class ChatGroupMessage(Base):
+    __tablename__ = "chat_group_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("chat_groups.id"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    group = relationship("ChatGroup")
+    sender = relationship("User")
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_no = Column(String, unique=True, nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    title = Column(String, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    category = Column(String, default="Other", index=True)
+    priority = Column(String, default="Medium", index=True)
+    status = Column(String, default="Open", index=True)
+    assigned_to = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+    client = relationship("Client")
+    assignee = relationship("User", foreign_keys=[assigned_to])
+    creator = relationship("User", foreign_keys=[created_by])
+
+
+class TicketMessage(Base):
+    __tablename__ = "ticket_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    message = Column(Text, nullable=False)
+    visibility = Column(String, default="client", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    ticket = relationship("Ticket")
+    user = relationship("User")
+
+
+class WebphoneProfile(Base):
+    __tablename__ = "webphone_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_name = Column(String, nullable=False, index=True)
+    sip_username = Column(String, nullable=False, index=True)
+    sip_password = Column(String, nullable=False)
+    websocket_url = Column(String, nullable=False)
+    sip_domain = Column(String, nullable=False, index=True)
+    outbound_proxy = Column(String, nullable=True)
+    cli = Column(String, nullable=True, index=True)
+    status = Column(String, default="Active", index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+
+
+class WebphoneCallLog(Base):
+    __tablename__ = "webphone_call_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey("webphone_profiles.id"), nullable=True, index=True)
+    cli = Column(String, nullable=True, index=True)
+    destination = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, index=True)
+    duration = Column(Integer, default=0)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    profile = relationship("WebphoneProfile")
+
+    @property
+    def profile_name(self):
+        return self.profile.profile_name if self.profile else None
+
+
 class BillingSetting(Base):
     __tablename__ = "billing_settings"
 
