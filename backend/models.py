@@ -404,6 +404,30 @@ class RoutingGateway(Base):
         return portal.server_ip if portal else self.media2_ip
 
 
+class SystemRoutingPlacement(Base):
+    __tablename__ = "system_routing_placements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cluster_id = Column(Integer, ForeignKey("dialer_clusters.id"), nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    routing_gateway_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
+    media_1_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
+    media_2_id = Column(Integer, ForeignKey("vos_portals.id"), nullable=True, index=True)
+    inbound_id = Column(String, nullable=True)
+    did_patch = Column(String, nullable=True)
+    placement_date = Column(Date, nullable=False, default=func.current_date(), index=True)
+    status = Column(String, default="Active", index=True)
+    notes = Column(Text, nullable=True)
+    updated_by = Column(String, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    cluster = relationship("DialerCluster")
+    client = relationship("Client")
+    routing_gateway = relationship("VOSPortal", foreign_keys=[routing_gateway_id])
+    media_1 = relationship("VOSPortal", foreign_keys=[media_1_id])
+    media_2 = relationship("VOSPortal", foreign_keys=[media_2_id])
+
+
 class BillingCharge(Base):
     __tablename__ = "billing_charges"
 

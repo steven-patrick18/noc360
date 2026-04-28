@@ -268,6 +268,10 @@ function isMediaPortal(portal) {
   return type.startsWith('RDP') || type.startsWith('DID') || type.includes('DID');
 }
 
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function isRtngPortalName(value) {
   return String(value || '').toUpperCase().startsWith('RTNG');
 }
@@ -561,7 +565,7 @@ function App() {
           ) : auth.user.role === 'customer' && activeKey === 'myReports' ? (
             <ReportsPage data={data} user={auth.user} />
           ) : activeKey === 'dashboard' ? (
-            <Dashboard dashboard={dashboard} data={data} setActive={setActive} />
+          <Dashboard dashboard={dashboard} data={data} user={auth.user} onDashboardUpdate={setDashboard} />
           ) : activeKey === 'management' ? (
           <ManagementPortal management={management} data={data} reload={loadAll} user={auth.user} />
           ) : activeKey === 'businessAi' ? (
@@ -3493,10 +3497,10 @@ function MediaSelect({ value, mediaPortals, usedBy = {}, onChange }) {
   );
 }
 
-function ClientSelect({ value, clients, onChange }) {
+function ClientSelect({ value, clients, onChange, placeholder = 'Unassigned' }) {
   return (
     <select value={value || ''} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Unassigned</option>
+      <option value="">{placeholder}</option>
       {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
     </select>
   );
@@ -4021,8 +4025,8 @@ function UserAccessPage({ users, clients, reload, user }) {
         <input placeholder="Username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
         <input placeholder="Full name" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         <input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-        <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option>admin</option><option>noc_user</option><option>customer</option><option>viewer</option></select>
-        {form.role === 'customer' && <ClientSelect value={form.client_id} clients={clients} onChange={(value) => setForm({ ...form, client_id: value })} />}
+        <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, client_id: e.target.value === 'admin' ? '' : form.client_id })}><option>admin</option><option>noc_user</option><option>customer</option><option>viewer</option></select>
+        {form.role !== 'admin' && <ClientSelect value={form.client_id} clients={clients} onChange={(value) => setForm({ ...form, client_id: value })} placeholder="Assign client" />}
         <input type="password" placeholder="Password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
         <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select>
         <button className="primary"><Plus size={16} /> Create User</button>
@@ -4109,7 +4113,22 @@ function CustomerCdrPage({ user }) {
   );
 }
 
-function Dashboard({ dashboard, data, setActive }) {
+function Dashboard({ dashboard, data, user, onDashboardUpdate }) {
+  const layoutKey = 'noc360_command_center_layout';
+  const defaultLayout = ['kpis', 'rdp', 'routing', 'cluster', 'client', 'placement', 'alerts'];
+  const normalizeLayout = (stored) => {
+    const parsed = Array.isArray(stored) ? stored : defaultLayout;
+    return [...parsed.filter((key, index) => defaultLayout.includes(key) && parsed.indexOf(key) === index), ...defaultLayout.filter((key) => !parsed.includes(key))];
+  };
+  const [layout, setLayout] = useState(() => {
+    try {
+      return normalizeLayout(JSON.parse(localStorage.getItem(layoutKey) || '[]'));
+    } catch {
+      return defaultLayout;
+    }
+  });
+  const [draggingKey, setDraggingKey] = useState('');
+  const [dragOverKey, setDragOverKey] = useState('');
   const summary = dashboard?.summary || {};
   const cards = [
     ['RDP Total', summary.rdp_total, MonitorCog],
@@ -4120,38 +4139,343 @@ function Dashboard({ dashboard, data, setActive }) {
     ['Clients', summary.clients, Users],
     ['Alerts', summary.alerts, AlertTriangle],
   ];
+  const canCustomizeLayout = ['admin', 'noc_user'].includes(user?.role);
+
+  const moveSection = (fromKey, toKey) => {
+    if (!fromKey || !toKey || fromKey === toKey) return;
+    setLayout((current) => {
+      const next = [...current];
+      const fromIndex = next.indexOf(fromKey);
+      const toIndex = next.indexOf(toKey);
+      if (fromIndex < 0 || toIndex < 0) return current;
+      next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, fromKey);
+      return next;
+    });
+  };
+
+  const saveLayout = () => localStorage.setItem(layoutKey, JSON.stringify(layout));
+  const resetLayout = () => {
+    localStorage.removeItem(layoutKey);
+    setLayout(defaultLayout);
+  };
+
+  const sections = {
+    kpis: {
+      title: 'KPI Cards',
+      content: (
+        <div className="cards commandKpiCards">
+          {cards.map(([label, value, Icon]) => (
+            <button className={`metric ${label === 'Alerts' && value ? 'metricAlert' : ''}`} key={label}>
+              <Icon size={24} />
+              <span>{label}</span>
+              <strong>{value ?? 0}</strong>
+            </button>
+          ))}
+        </div>
+      ),
+    },
+    rdp: {
+      title: 'RDP Brief View',
+      content: <RdpBriefTable rows={dashboard?.rdp_brief || []} user={user} onDashboardUpdate={onDashboardUpdate} hideTitle />,
+    },
+    routing: {
+      title: 'Routing Brief View',
+      content: <BriefTable title="Routing Brief View" rows={dashboard?.routing_brief || []} columns={[['gateway_name','RTNG'],['gateway_ip','Gateway IP'],['media_1_name','Media 1'],['media_2_name','Media 2'],['carrier_ip','Carrier IP'],['ports','Ports'],['vendor','Vendor']]} hideTitle />,
+    },
+    cluster: {
+      title: 'Cluster Brief View',
+      content: <BriefTable title="Cluster Brief View" rows={dashboard?.cluster_brief || []} columns={[['cluster_no','Cluster No'],['cluster_name','Cluster Name'],['inbound_ip','Inbound IP'],['client','Client'],['assigned_rdp','Assigned RDP'],['assigned_rdp_ip','RDP IP']]} hideTitle />,
+    },
+    client: {
+      title: 'Client Brief View',
+      content: <BriefTable title="Client Brief View" rows={dashboard?.client_brief || []} columns={[['client','Client'],['assigned_clusters','Assigned Clusters'],['used_rdp','Used RDP'],['outstanding','Outstanding']]} moneyKey="outstanding" moneyInrKey="outstanding_inr" hideTitle />,
+    },
+    placement: {
+      title: 'System Routing Placement',
+      content: <SystemRoutingPlacementTable data={data} user={user} hideTitle />,
+    },
+    alerts: {
+      title: 'Alerts',
+      content: <CommandCenterAlerts alerts={dashboard?.alerts || []} />,
+    },
+  };
 
   return (
     <section className="dashboard">
-      <div className="cards">
-        {cards.map(([label, value, Icon]) => (
-          <button className={`metric ${label === 'Alerts' && value ? 'metricAlert' : ''}`} key={label}>
-            <Icon size={24} />
-            <span>{label}</span>
-            <strong>{value ?? 0}</strong>
-          </button>
-        ))}
+      <div className="commandCenterHeader">
+        <h2>Command Center</h2>
+        {canCustomizeLayout && (
+          <div className="layoutActions">
+            <button onClick={saveLayout}>Save Layout</button>
+            <button onClick={resetLayout}>Reset Layout</button>
+          </div>
+        )}
       </div>
-
-      <BriefTable title="RDP Brief View" rows={dashboard?.rdp_brief || []} columns={[['rdp_name','RDP Name'],['ip','IP'],['status','Status'],['assigned_cluster','Assigned Cluster'],['client','Client'],['used_in_routing','Used In Routing'],['usage_status','Usage Status']]} />
-      <BriefTable title="Routing Brief View" rows={dashboard?.routing_brief || []} columns={[['gateway_name','RTNG'],['gateway_ip','Gateway IP'],['media_1_name','Media 1'],['media_2_name','Media 2'],['carrier_ip','Carrier IP'],['ports','Ports'],['vendor','Vendor']]} />
-      <BriefTable title="Cluster Brief View" rows={dashboard?.cluster_brief || []} columns={[['cluster_no','Cluster No'],['cluster_name','Cluster Name'],['inbound_ip','Inbound IP'],['client','Client'],['assigned_rdp','Assigned RDP'],['assigned_rdp_ip','RDP IP']]} />
-      <BriefTable title="Client Brief View" rows={dashboard?.client_brief || []} columns={[['client','Client'],['assigned_clusters','Assigned Clusters'],['used_rdp','Used RDP'],['outstanding','Outstanding']]} moneyKey="outstanding" moneyInrKey="outstanding_inr" />
-      <div className="panel">
-        <h2><AlertTriangle size={19} /> Alerts</h2>
-        <div className="alertList">
-          {(dashboard?.alerts || []).length === 0 && <p className="muted">No duplicate or missing-IP alerts.</p>}
-          {(dashboard?.alerts || []).map((alert, index) => <div className={`alert ${alert.type}`} key={`${alert.message}-${index}`}><AlertTriangle size={17} />{cyberAlertMessage(alert)}</div>)}
-        </div>
+      <div className="commandCenterLayout">
+        {layout.map((key) => (
+          <DraggableDashboardSection
+            key={key}
+            sectionKey={key}
+            title={sections[key].title}
+            canDrag={canCustomizeLayout}
+            draggingKey={draggingKey}
+            dragOverKey={dragOverKey}
+            onDragStart={setDraggingKey}
+            onDragOver={setDragOverKey}
+            onDragEnd={() => { setDraggingKey(''); setDragOverKey(''); }}
+            onDrop={moveSection}
+          >
+            {sections[key].content}
+          </DraggableDashboardSection>
+        ))}
       </div>
     </section>
   );
 }
 
-function BriefTable({ title, rows, columns, moneyKey, moneyInrKey }) {
+function DraggableDashboardSection({ sectionKey, title, canDrag, draggingKey, dragOverKey, onDragStart, onDragOver, onDragEnd, onDrop, children }) {
+  const isDragging = draggingKey === sectionKey;
+  const isDragOver = dragOverKey === sectionKey && draggingKey !== sectionKey;
+  return (
+    <div
+      className={`dashboardLayoutItem ${isDragging ? 'isDragging' : ''} ${isDragOver ? 'isDragOver' : ''}`}
+      onDragOver={(event) => {
+        if (!canDrag || !draggingKey) return;
+        event.preventDefault();
+        onDragOver(sectionKey);
+      }}
+      onDrop={(event) => {
+        if (!canDrag) return;
+        event.preventDefault();
+        onDrop(draggingKey || event.dataTransfer.getData('text/plain'), sectionKey);
+        onDragEnd();
+      }}
+    >
+      <div className="dashboardSectionHeader">
+        <h2>{title}</h2>
+        {canDrag && (
+          <button
+            className="dragHandle"
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', sectionKey);
+              onDragStart(sectionKey);
+            }}
+            onDragEnd={onDragEnd}
+            title={`Drag ${title}`}
+          >
+            <span aria-hidden="true">⋮⋮</span> Drag
+          </button>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CommandCenterAlerts({ alerts }) {
+  return (
+    <div className="panel commandAlertsPanel">
+      <div className="alertList">
+        {alerts.length === 0 && <p className="muted">No duplicate or missing-IP alerts.</p>}
+        {alerts.map((alert, index) => (
+          <div className={`alert ${alert.type}`} key={`${alert.message}-${index}`}>
+            <AlertTriangle size={17} />{cyberAlertMessage(alert)}
+          </div>
+        ))}
+        </div>
+    </div>
+  );
+}
+
+function MissingValue({ value }) {
+  return value ? value : <span className="missing">Missing</span>;
+}
+
+function RdpBriefTable({ rows, user, onDashboardUpdate, hideTitle = false }) {
+  const columns = [
+    ['rdp_name', 'RDP Name'],
+    ['ip', 'IP'],
+    ['status', 'Status'],
+    ['assigned_cluster', 'Assigned Cluster'],
+    ['client', 'Client'],
+    ['used_in_routing', 'Used In Routing'],
+    ['usage_status', 'Usage Status'],
+  ];
+
+  return (
+    <div className="managementSection rdpBriefSection">
+      {!hideTitle && <div className="sectionTitleRow">
+        <h2>RDP Brief View</h2>
+      </div>}
+      <div className="tableWrap"><table className="rdpBriefTable"><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => (
+        <RdpBriefRow key={row.id || row.rdp_name || index} row={row} columns={columns} />
+      ))}</tbody></table></div>
+    </div>
+  );
+}
+
+function RdpBriefRow({ row, columns }) {
+  return (
+    <tr>
+      {columns.map(([key]) => {
+        return <td key={key} className={key.includes('status') ? '' : undefined}>{key.includes('status') ? <StatusPill value={row[key]} /> : (row[key] || '-')}</td>;
+      })}
+    </tr>
+  );
+}
+
+function SystemRoutingPlacementTable({ data, user, hideTitle = false }) {
+  const [dateValue, setDateValue] = useState(todayDate());
+  const [rows, setRows] = useState([]);
+  const [filters, setFilters] = useState({ client_scope: '', cluster_id: '', status: '', assignment_status: '' });
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [saving, setSaving] = useState('');
+  const canEdit = user?.role !== 'customer' && canDo(user, 'dashboard', 'can_edit');
+
+  const loadRows = async () => {
+    setLoadingRows(true);
+    try {
+      setRows(await request(`/system-routing-placements?date=${dateValue}`));
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setLoadingRows(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRows();
+  }, [dateValue]);
+
+  const filteredRows = rows.filter((row) => {
+    const clientName = String(row.client_name || row.client || '').trim();
+    const hasAssignedClient = Boolean(row.client_id) && Boolean(clientName) && clientName !== '-' && clientName !== 'Missing';
+    if (filters.client_scope === 'assigned' && !hasAssignedClient) return false;
+    if (filters.client_scope === 'unassigned' && hasAssignedClient) return false;
+    if (filters.cluster_id && String(row.cluster_id || '') !== filters.cluster_id) return false;
+    if (filters.status && String(row.status || '') !== filters.status) return false;
+    const assigned = Boolean(row.routing_gateway_id) && (Boolean(row.media_1_id) || Boolean(row.media_2_id));
+    if (filters.assignment_status === 'assigned' && !assigned) return false;
+    if (filters.assignment_status === 'unassigned' && assigned) return false;
+    return true;
+  });
+
+  const saveRow = async (row, form) => {
+    const duplicate = rows.find((item) => (
+      item.cluster_id !== row.cluster_id
+      && String(item.status || 'Active') === 'Active'
+      && String(row.status || 'Active') === 'Active'
+      && form.did_patch
+      && String(item.did_patch || '').trim().toLowerCase() === String(form.did_patch || '').trim().toLowerCase()
+    ));
+    if (duplicate && !window.confirm(`DID Patch ${form.did_patch} is already assigned to ${duplicate.cluster}. Save anyway?`)) return;
+    setSaving(`placement-${row.cluster_id}`);
+    try {
+      const payload = {
+        inbound_id: form.inbound_id || null,
+        did_patch: form.did_patch || null,
+        placement_date: dateValue,
+      };
+      await request(`/system-routing-placements/${row.cluster_id}/inbound-did`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      await loadRows();
+    } catch (err) {
+      window.alert(err.message);
+    } finally {
+      setSaving('');
+    }
+  };
+
+  return (
+    <div className="managementSection systemPlacementSection">
+      {!hideTitle && <div className="sectionTitleRow">
+        <h2>System Routing Placement</h2>
+        {loadingRows && <span className="dailyEditable">Loading</span>}
+      </div>}
+      {hideTitle && loadingRows && <div className="sectionTitleRow"><span className="dailyEditable">Loading</span></div>}
+      <div className="toolbar placementFilters">
+        <label>Date<input type="date" value={dateValue} onChange={(event) => setDateValue(event.target.value || todayDate())} /></label>
+        <label>Client<select value={filters.client_scope} onChange={(event) => setFilters({ ...filters, client_scope: event.target.value })}>
+          <option value="">All</option>
+          <option value="assigned">Assigned</option>
+          <option value="unassigned">Unassigned</option>
+        </select></label>
+        <label>Cluster<select value={filters.cluster_id} onChange={(event) => setFilters({ ...filters, cluster_id: event.target.value })}>
+          <option value="">All Clusters</option>
+          {rows.map((row) => <option key={row.cluster_id} value={row.cluster_id}>{row.cluster}</option>)}
+        </select></label>
+        <label>Status<select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+          <option value="">All Status</option>
+          {['Active', 'Pending', 'Inactive', 'Missing'].map((status) => <option key={status}>{status}</option>)}
+        </select></label>
+        <label>Assignment Status<select value={filters.assignment_status} onChange={(event) => setFilters({ ...filters, assignment_status: event.target.value })}>
+          <option value="">All</option>
+          <option value="assigned">Assigned</option>
+          <option value="unassigned">Unassigned</option>
+        </select></label>
+      </div>
+      <div className="tableWrap">
+        <table className="systemPlacementTable">
+          <thead>
+            <tr><th>Cluster</th><th>Client</th><th>Routing Gateway</th><th>Gateway IP</th><th>RDP / Media 1</th><th>Media 1 IP</th><th>RDP / Media 2</th><th>Media 2 IP</th><th>Inbound ID</th><th>DID Patch</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {filteredRows.map((row) => (
+              <SystemRoutingPlacementRow key={row.cluster_id} row={row} canEdit={canEdit} saving={saving} onSave={saveRow} />
+            ))}
+            {!filteredRows.length && <tr><td colSpan="12" className="muted">No placement rows match the current filters.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SystemRoutingPlacementRow({ row, canEdit, saving, onSave }) {
+  const [form, setForm] = useState({
+    inbound_id: row.inbound_id || '',
+    did_patch: row.did_patch || '',
+  });
+
+  useEffect(() => {
+    setForm({
+      inbound_id: row.inbound_id || '',
+      did_patch: row.did_patch || '',
+    });
+  }, [row]);
+
+  const displayStatus = row.missing && !row.id ? 'Missing' : row.status;
+  const key = `placement-${row.cluster_id}`;
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  return (
+    <tr className={row.missing ? 'needsAttention' : ''}>
+      <td>{row.cluster || <span className="missing">Missing</span>}</td>
+      <td>{row.client || <span className="missing">Missing</span>}</td>
+      <td>{row.routing_gateway || <span className="missing">Missing</span>}</td>
+      <td>{row.gateway_ip || <span className="missing">Missing</span>}</td>
+      <td>{row.media_1 || <span className="missing">Missing</span>}</td>
+      <td>{row.media_1_ip || <span className="missing">Missing</span>}</td>
+      <td>{row.media_2 || <span className="missing">Missing</span>}</td>
+      <td>{row.media_2_ip || <span className="missing">Missing</span>}</td>
+      <td>{canEdit ? <input value={form.inbound_id} placeholder="Missing" onChange={(event) => setField('inbound_id', event.target.value)} /> : row.inbound_id || <span className="missing">Missing</span>}</td>
+      <td>{canEdit ? <input value={form.did_patch} placeholder="Missing" onChange={(event) => setField('did_patch', event.target.value)} /> : row.did_patch || <span className="missing">Missing</span>}</td>
+      <td><StatusPill value={displayStatus} /></td>
+      <td>{canEdit ? <button onClick={() => onSave(row, form)}>{saving === key ? 'Saving...' : 'Save'}</button> : '-'}</td>
+    </tr>
+  );
+}
+
+function BriefTable({ title, rows, columns, moneyKey, moneyInrKey, hideTitle = false }) {
   return (
     <div className="managementSection">
-      <h2>{title}</h2>
+      {!hideTitle && <h2>{title}</h2>}
       <div className="tableWrap"><table><thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => (
         <tr key={index}>{columns.map(([key]) => <td key={key} className={moneyKey === key && row[key] > 0 ? 'outstandingText' : ''}>{moneyKey === key ? (moneyInrKey ? dualMoney(row[key], row[moneyInrKey]) : money(row[key])) : (key.includes('status') ? <StatusPill value={row[key]} /> : row[key] || '-')}</td>)}</tr>
       ))}</tbody></table></div>

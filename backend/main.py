@@ -39,7 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
+from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
     ActivityLogOut,
     BillingChargeCreate,
@@ -289,6 +289,25 @@ class RoutingMediaAssignmentIn(BaseModel):
     vendor: str | None = None
     vendor_name: str | None = None
     status: str = "Active"
+
+
+class SystemRoutingPlacementIn(BaseModel):
+    cluster_id: int
+    client_id: int | None = None
+    routing_gateway_id: int | None = None
+    media_1_id: int | None = None
+    media_2_id: int | None = None
+    inbound_id: str | None = None
+    did_patch: str | None = None
+    placement_date: date | None = None
+    status: str = "Active"
+    notes: str | None = None
+
+
+class SystemRoutingInboundDIDIn(BaseModel):
+    placement_date: date | None = None
+    inbound_id: str | None = None
+    did_patch: str | None = None
 
 
 class ProfileUpdateIn(BaseModel):
@@ -1317,8 +1336,19 @@ def ensure_chat_rooms_for_clients(db: Session, clients: list[Client] | None = No
     return rooms
 
 
+def can_access_client(db: Session, user: User, client_id: int | None):
+    if user.role == "admin":
+        return True
+    allowed = user_client_ids(db, user)
+    if user.role == "customer":
+        return bool(client_id and client_id in allowed)
+    return not allowed or (client_id in allowed)
+
+
 def can_access_chat_room(db: Session, user: User, room: ChatRoom):
     if user.role in {"admin", "noc_user"} and has_page_permission(db, user, "chat_center"):
+        if not can_access_client(db, user, room.client_id):
+            return False
         return True
     if user.role == "customer" and has_page_permission(db, user, "my_chat"):
         return room.client_id in user_client_ids(db, user)
@@ -1411,13 +1441,16 @@ def next_ticket_no(db: Session):
 
 def ticket_query_for_user(db: Session, user: User):
     query = db.query(Ticket)
-    if user.role == "customer":
-        query = query.filter(Ticket.client_id.in_(user_client_ids(db, user) or [-1]))
+    ids = scoped_client_ids(db, user)
+    if ids:
+        query = query.filter(Ticket.client_id.in_(ids))
     return query
 
 
 def can_access_ticket(db: Session, user: User, ticket: Ticket):
     if user.role in {"admin", "noc_user"} and has_page_permission(db, user, "tickets"):
+        if not can_access_client(db, user, ticket.client_id):
+            return False
         return True
     if user.role == "customer" and has_page_permission(db, user, "my_tickets"):
         return ticket.client_id in user_client_ids(db, user)
@@ -1480,8 +1513,9 @@ def communication_summary(db: Session = Depends(get_db), user: User = Depends(cu
     open_tickets = 0
     if has_page_permission(db, user, "chat_center") or has_page_permission(db, user, "my_chat"):
         rooms = db.query(ChatRoom).all()
-        if user.role == "customer":
-            allowed = set(user_client_ids(db, user))
+        allowed_ids = scoped_client_ids(db, user)
+        if allowed_ids:
+            allowed = set(allowed_ids)
             rooms = [room for room in rooms if room.client_id in allowed]
         direct_unread = sum(db.query(ChatMessage).filter(ChatMessage.room_id == room.id, ChatMessage.sender_id != user.id, ChatMessage.is_read == False).count() for room in rooms)
     if has_page_permission(db, user, "group_chat") and user.role != "customer":
@@ -1508,8 +1542,9 @@ def get_chat_users(db: Session = Depends(get_db), user: User = Depends(require_p
 @app.get("/chat/rooms", response_model=list[ChatRoomOut])
 def get_chat_rooms(db: Session = Depends(get_db), user: User = Depends(require_any_page(("chat_center", "can_view"), ("my_chat", "can_view")))):
     client_query = db.query(Client)
-    if user.role == "customer":
-        client_query = client_query.filter(Client.id.in_(user_client_ids(db, user) or [-1]))
+    allowed_ids = scoped_client_ids(db, user)
+    if allowed_ids:
+        client_query = client_query.filter(Client.id.in_(allowed_ids))
     clients = client_query.order_by(Client.name.asc()).all()
     rooms = ensure_chat_rooms_for_clients(db, clients)
     return [chat_room_out(db, room, user) for room in rooms]
@@ -1624,8 +1659,8 @@ def get_tickets(
     if status:
         query = query.filter(Ticket.status == status)
     if client_id:
-        if user.role == "customer" and client_id not in user_client_ids(db, user):
-            raise HTTPException(status_code=403, detail="Cannot view another customer's tickets")
+        if not can_access_client(db, user, client_id):
+            raise HTTPException(status_code=403, detail="Client access denied")
         query = query.filter(Ticket.client_id == client_id)
     return [ticket_out(db, row, user) for row in query.order_by(Ticket.updated_at.desc(), Ticket.id.desc()).all()]
 
@@ -1639,8 +1674,8 @@ def create_ticket(payload: TicketCreate, request: Request, db: Session = Depends
         client_id = allowed[0] if allowed else user.client_id
     if not client_id or not db.get(Client, client_id):
         raise HTTPException(status_code=400, detail="Valid client is required")
-    if user.role == "customer" and client_id not in user_client_ids(db, user):
-        raise HTTPException(status_code=403, detail="Cannot create ticket for another customer")
+    if not can_access_client(db, user, client_id):
+        raise HTTPException(status_code=403, detail="Client access denied")
     title = normalize(payload.title)
     if not title:
         raise HTTPException(status_code=400, detail="Ticket title is required")
@@ -2895,13 +2930,18 @@ def scoped_client_id(requested_client_id: int | None, user: User):
 
 
 def scoped_client_ids(db: Session, user: User, requested_ids=None):
+    requested_ids = requested_ids or []
     if user.role == "admin":
-        return requested_ids or []
+        return requested_ids
     allowed = user_client_ids(db, user)
     if user.role == "customer":
-        return allowed
+        if requested_ids:
+            return [client_id for client_id in requested_ids if client_id in allowed] or [-1]
+        return allowed or [-1]
     if requested_ids:
-        return [client_id for client_id in requested_ids if client_id in allowed] if allowed else requested_ids
+        if not allowed:
+            return requested_ids
+        return [client_id for client_id in requested_ids if client_id in allowed] or [-1]
     return allowed
 
 
@@ -2965,9 +3005,9 @@ def client_out(db: Session, client: Client):
 
 def billing_query(db: Session, user: User, client_id=None, date_from=None, date_to=None, charge_type=None):
     query = db.query(BillingCharge)
-    client_scope = scoped_client_id(client_id, user)
+    client_scope = scoped_client_ids(db, user, [client_id] if client_id else [])
     if client_scope:
-        query = query.filter(BillingCharge.client_id == client_scope)
+        query = query.filter(BillingCharge.client_id.in_(client_scope))
     if date_from:
         query = query.filter(BillingCharge.billing_date >= date_from)
     if date_to:
@@ -2979,9 +3019,9 @@ def billing_query(db: Session, user: User, client_id=None, date_from=None, date_
 
 def cdr_query(db: Session, user: User, client_id=None, date_from=None, date_to=None, search=None, disposition=None):
     query = db.query(CDR)
-    client_scope = scoped_client_id(client_id, user)
+    client_scope = scoped_client_ids(db, user, [client_id] if client_id else [])
     if client_scope:
-        query = query.filter(CDR.client_id == client_scope)
+        query = query.filter(CDR.client_id.in_(client_scope))
     if date_from:
         query = query.filter(CDR.call_date >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
@@ -3032,9 +3072,9 @@ def billing_summary(rows):
 
 def ledger_query(db: Session, user: User, client_id=None, date_from=None, date_to=None, category=None, entry_type=None, search=None, created_by=None):
     query = db.query(ClientLedger)
-    client_scope = scoped_client_id(client_id, user)
+    client_scope = scoped_client_ids(db, user, [client_id] if client_id else [])
     if client_scope:
-        query = query.filter(ClientLedger.client_id == client_scope)
+        query = query.filter(ClientLedger.client_id.in_(client_scope))
     if date_from:
         query = query.filter(ClientLedger.entry_date >= date_from)
     if date_to:
@@ -3167,12 +3207,20 @@ def cdr_summary(rows):
     }
 
 
-def operational_dashboard(db: Session):
-    clients = db.query(Client).all()
-    clusters = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc()).all()
+def operational_dashboard(db: Session, user: User):
+    allowed_ids = scoped_client_ids(db, user)
+    client_query = db.query(Client)
+    cluster_query = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc())
+    ledger_query_rows = db.query(ClientLedger)
+    if allowed_ids:
+        client_query = client_query.filter(Client.id.in_(allowed_ids))
+        cluster_query = cluster_query.filter(DialerCluster.client_id.in_(allowed_ids))
+        ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id.in_(allowed_ids))
+    clients = client_query.all()
+    clusters = cluster_query.all()
     rdps = get_rdp_portals(db)
     gateways = db.query(RoutingGateway).all()
-    ledger_rows = db.query(ClientLedger).all()
+    ledger_rows = ledger_query_rows.all()
     outstanding = {}
     for row in ledger_rows:
         current = outstanding.get(row.client_id, {"usd": 0, "inr": 0})
@@ -3192,13 +3240,13 @@ def operational_dashboard(db: Session):
     duplicate_names = active_rdp_duplicate_names(clusters)
     alerts = []
     for cluster in clusters:
-        for field in ["inbound_ip", "assigned_rdp_ip"]:
-            value = cluster.live_rdp_ip if field == "assigned_rdp_ip" else getattr(cluster, field)
-            if is_missing(value):
-                alerts.append({"type": "missing", "message": f"Cluster {cluster.cluster_no} missing {field}"})
+        if is_missing(cluster.inbound_ip):
+            alerts.append({"type": "missing", "message": f"Cluster {cluster.cluster_no} missing inbound_ip"})
+        if not normalize(cluster.live_rdp_name):
+            alerts.append({"type": "missing", "message": f"Cluster {cluster.cluster_name} missing assigned RDP/media"})
     for gateway in gateways:
         sync_gateway_live_fields(gateway)
-        for field in ["live_gateway_ip", "live_media1_ip", "live_media2_ip", "carrier_ip"]:
+        for field in ["live_gateway_ip", "carrier_ip"]:
             if is_missing(getattr(gateway, field)):
                 alerts.append({"type": "missing", "message": f"{gateway.live_gateway_name} missing {field.replace('live_', '')}"})
     for name in duplicate_names:
@@ -3772,6 +3820,198 @@ def routing_media_assignment_out(gateway_name, gateway_ip, mapping=None):
     }
 
 
+def portal_summary(portal: VOSPortal | None):
+    if not portal:
+        return None, None
+    return portal.portal_type, portal.server_ip
+
+
+def is_development_env():
+    env_name = os.getenv("ENV") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or "production"
+    return env_name.lower() in {"dev", "development", "local"}
+
+
+def cluster_media_values(db: Session, cluster: DialerCluster):
+    media_1_id = getattr(cluster, "media_1_id", None) or getattr(cluster, "media1_id", None) or getattr(cluster, "assigned_rdp_id", None) or cluster.rdp_vos_id
+    media_2_id = getattr(cluster, "media_2_id", None) or getattr(cluster, "media2_id", None)
+    media_1_portal = db.get(VOSPortal, media_1_id) if media_1_id else None
+    media_2_portal = db.get(VOSPortal, media_2_id) if media_2_id else None
+    media_1_name, media_1_ip = portal_summary(media_1_portal)
+    media_2_name, media_2_ip = portal_summary(media_2_portal)
+    if not media_1_name and normalize(cluster.assigned_rdp):
+        media_1_name = cluster.assigned_rdp
+        media_1_ip = cluster.assigned_rdp_ip
+    return {
+        "media_1_id": media_1_id,
+        "media_1": media_1_name,
+        "media_1_ip": media_1_ip,
+        "media_2_id": media_2_id,
+        "media_2": media_2_name,
+        "media_2_ip": media_2_ip,
+    }
+
+
+def find_routing_for_cluster_media(db: Session, media_values: dict, gateways: list[RoutingGateway]):
+    media_ids = {value for value in [media_values.get("media_1_id"), media_values.get("media_2_id")] if value}
+    media_names = {normalize(value) for value in [media_values.get("media_1"), media_values.get("media_2")] if normalize(value)}
+    if not media_ids and not media_names:
+        return None
+    matches = []
+    for gateway in gateways:
+        if gateway.status == "Inactive":
+            continue
+        sync_gateway_live_fields(gateway)
+        gateway_media_ids = {media_id(gateway, 1), media_id(gateway, 2)}
+        gateway_media_names = {normalize(gateway.live_media1_name), normalize(gateway.live_media2_name)}
+        if media_ids.intersection(gateway_media_ids) or media_names.intersection(gateway_media_names):
+            matches.append(gateway)
+    return sorted(matches, key=lambda item: normalize(item.live_gateway_name) or "") or None
+
+
+def placement_snapshot(row):
+    return {
+        "cluster_id": row.get("cluster_id"),
+        "inbound_id": row.get("inbound_id"),
+        "did_patch": row.get("did_patch"),
+        "placement_date": row.get("placement_date"),
+    }
+
+
+def system_routing_placement_out(db: Session, cluster: DialerCluster, placement: SystemRoutingPlacement | None, placement_date: date, gateways: list[RoutingGateway]):
+    client_id_value = cluster.client_id
+    client = db.get(Client, client_id_value) if client_id_value else None
+    media_values = cluster_media_values(db, cluster)
+    source_used = "cluster_direct"
+    gateway_id_value = getattr(cluster, "routing_gateway_id", None) or getattr(cluster, "rtng_vos_id", None)
+    gateway_portal = get_portal_by_id(db, gateway_id_value, "RTNG")
+    gateway_name, gateway_ip = portal_summary(gateway_portal)
+    if not gateway_name:
+        routing_matches = find_routing_for_cluster_media(db, media_values, gateways)
+        if routing_matches:
+            source_used = "rdp_brief_used_in_routing"
+            gateway_id_value = gateway_id(routing_matches[0])
+            gateway_name = ", ".join([gateway.live_gateway_name for gateway in routing_matches if normalize(gateway.live_gateway_name)]) or None
+            gateway_ip = ", ".join([gateway.live_gateway_ip for gateway in routing_matches if normalize(gateway.live_gateway_ip)]) or None
+        else:
+            source_used = "cluster_media_only"
+    missing_media = not normalize(media_values["media_1"]) and not normalize(media_values["media_2"])
+    if is_development_env():
+        logger.info(
+            "System routing placement row cluster=%s client=%s media_1=%s media_1_ip=%s routing_gateway=%s gateway_ip=%s source_used=%s",
+            cluster.cluster_name,
+            client.name if client else None,
+            media_values["media_1"],
+            media_values["media_1_ip"],
+            gateway_name,
+            gateway_ip,
+            source_used,
+        )
+    return {
+        "id": placement.id if placement else None,
+        "cluster_id": cluster.id,
+        "cluster_no": cluster.cluster_no,
+        "cluster": cluster.cluster_name,
+        "cluster_name": cluster.cluster_name,
+        "client_id": client_id_value,
+        "client": client.name if client else None,
+        "client_name": client.name if client else None,
+        "routing_gateway_id": gateway_id_value,
+        "routing_gateway": gateway_name,
+        "gateway_ip": gateway_ip,
+        "media_1_id": media_values["media_1_id"],
+        "media_1": media_values["media_1"],
+        "media_1_ip": media_values["media_1_ip"],
+        "media_2_id": media_values["media_2_id"],
+        "media_2": media_values["media_2"],
+        "media_2_ip": media_values["media_2_ip"],
+        "inbound_id": placement.inbound_id if placement else None,
+        "did_patch": placement.did_patch if placement else None,
+        "placement_date": placement.placement_date if placement else placement_date,
+        "status": "Missing" if missing_media else cluster.status,
+        "notes": placement.notes if placement else None,
+        "is_virtual": placement is None,
+        "missing": missing_media,
+        "alert": f"Cluster {cluster.cluster_name} missing assigned RDP/media" if missing_media else None,
+        "source_used": source_used,
+    }
+
+
+def system_routing_placements(db: Session, placement_date: date, user: User | None = None):
+    cluster_query = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc())
+    if user:
+        allowed_ids = scoped_client_ids(db, user)
+        if allowed_ids:
+            cluster_query = cluster_query.filter(DialerCluster.client_id.in_(allowed_ids))
+    clusters = cluster_query.all()
+    gateways = db.query(RoutingGateway).all()
+    placements = {
+        row.cluster_id: row
+        for row in db.query(SystemRoutingPlacement).filter(SystemRoutingPlacement.placement_date == placement_date).all()
+    }
+    return [
+        system_routing_placement_out(db, cluster, placements.get(cluster.id), placement_date, gateways)
+        for cluster in clusters
+    ]
+
+
+def get_system_routing_cluster(db: Session, cluster_id: int):
+    cluster = db.get(DialerCluster, cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=400, detail="Cluster does not exist")
+    return cluster
+
+
+def save_system_routing_placement(db: Session, payload: SystemRoutingPlacementIn, user: User, request: Request, record: SystemRoutingPlacement | None = None):
+    return update_system_routing_inbound_did(db, payload.cluster_id, SystemRoutingInboundDIDIn(placement_date=payload.placement_date, inbound_id=payload.inbound_id, did_patch=payload.did_patch), user, request)
+
+
+def update_system_routing_inbound_did(db: Session, cluster_id: int, payload: SystemRoutingInboundDIDIn, user: User, request: Request):
+    cluster = get_system_routing_cluster(db, cluster_id)
+    if not can_access_client(db, user, cluster.client_id):
+        raise HTTPException(status_code=403, detail="Client access denied")
+    placement_date = payload.placement_date or date.today()
+    record = db.query(SystemRoutingPlacement).filter(
+        SystemRoutingPlacement.cluster_id == cluster_id,
+        SystemRoutingPlacement.placement_date == placement_date,
+    ).first()
+    old_value = {
+        "inbound_id": record.inbound_id if record else None,
+        "did_patch": record.did_patch if record else None,
+    }
+    if not record:
+        record = SystemRoutingPlacement(cluster_id=cluster_id, placement_date=placement_date)
+    record.inbound_id = normalize(payload.inbound_id)
+    record.did_patch = normalize(payload.did_patch)
+    record.placement_date = placement_date
+    record.updated_by = user.username
+    cluster.in_id = record.inbound_id
+    cluster.dids_patch = record.did_patch
+    db.add(cluster)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    db.refresh(cluster)
+    new_row = system_routing_placement_out(db, cluster, record, placement_date, db.query(RoutingGateway).all())
+    new_value = {
+        "inbound_id": record.inbound_id,
+        "did_patch": record.did_patch,
+    }
+    log_activity(
+        db,
+        user,
+        "update_inbound_did_patch",
+        "command_center",
+        "SystemRoutingPlacement",
+        record.id,
+        f"Cluster {cluster.cluster_name} inbound/DID patch updated",
+        old_value=old_value,
+        new_value=new_value,
+        request=request,
+        commit=True,
+    )
+    return new_row
+
+
 def management_summary(db: Session):
     clusters = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc()).all()
     clients = db.query(Client).all()
@@ -4194,9 +4434,9 @@ def delete_routing_gateway(record_id: int, db: Session = Depends(get_db), user: 
 @app.get("/api/clients", response_model=list[ClientOut])
 def get_clients(db: Session = Depends(get_db), user: User = Depends(current_user)):
     query = db.query(Client)
-    if user.role == "customer":
-        allowed = user_client_ids(db, user)
-        query = query.filter(Client.id.in_(allowed or [-1]))
+    allowed = scoped_client_ids(db, user)
+    if allowed:
+        query = query.filter(Client.id.in_(allowed))
     return [client_out(db, client) for client in query.order_by(Client.name.asc()).all()]
 
 
@@ -4370,8 +4610,7 @@ def save_user_client_access(record_id: int, payload: ClientAccessIn, request: Re
     db.query(ClientAccess).filter(ClientAccess.user_id == record_id).delete()
     for client_id in payload.client_ids:
         db.add(ClientAccess(user_id=record_id, client_id=client_id))
-    if record.role == "customer" and payload.client_ids:
-        record.client_id = payload.client_ids[0]
+    record.client_id = payload.client_ids[0] if payload.client_ids else None
     db.commit()
     log_activity(db, user, "update_client_access", "user_access", "User", record_id, f"Updated client access for {record.username}", old_value=old_value, new_value={"client_ids": payload.client_ids}, request=request, commit=True)
     return {"client_ids": payload.client_ids}
@@ -4382,12 +4621,8 @@ def save_user_client_access(record_id: int, payload: ClientAccessIn, request: Re
 @app.get("/api/clients/{record_id}/details")
 @app.get("/clients/{record_id}/details")
 def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User = Depends(current_user)):
-    if user.role == "customer" and user.client_id != record_id:
-        raise HTTPException(status_code=403, detail="Cannot view another customer")
-    if user.role != "admin" and user.role != "customer":
-        allowed = user_client_ids(db, user)
-        if allowed and record_id not in allowed:
-            raise HTTPException(status_code=403, detail="Client access denied")
+    if not can_access_client(db, user, record_id):
+        raise HTTPException(status_code=403, detail="Client access denied")
     client = get_record(db, Client, record_id)
     clusters = db.query(DialerCluster).filter(DialerCluster.client_id == record_id).all()
     rdps = sorted({cluster.live_rdp_name for cluster in clusters if normalize(cluster.live_rdp_name)})
@@ -4675,7 +4910,11 @@ def get_management_summary(db: Session = Depends(get_db), user: User = Depends(r
 @app.get("/api/management/cluster-client-assignments")
 @app.get("/management/cluster-client-assignments")
 def get_cluster_assignments(db: Session = Depends(get_db), user: User = Depends(require_page("management_portal"))):
-    clusters = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc()).all()
+    query = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc())
+    allowed_ids = scoped_client_ids(db, user)
+    if allowed_ids:
+        query = query.filter(DialerCluster.client_id.in_(allowed_ids))
+    clusters = query.all()
     return [cluster_assignment_out(cluster) for cluster in clusters]
 
 
@@ -4690,6 +4929,10 @@ def save_cluster_assignment(payload: ClusterAccountAssignmentIn, request: Reques
     old_value = sanitize_activity_value(cluster)
     if payload.client_id is not None and not db.get(Client, payload.client_id):
         raise HTTPException(status_code=400, detail="Client does not exist")
+    current_allowed = cluster.client_id is None or can_access_client(db, user, cluster.client_id)
+    target_allowed = payload.client_id is None or can_access_client(db, user, payload.client_id)
+    if not current_allowed or not target_allowed:
+        raise HTTPException(status_code=403, detail="Client access denied")
     cluster.client_id = payload.client_id
     saved = save_record(db, cluster)
     log_activity(db, user, "update_cluster_client_assignment", "management_portal", "DialerCluster", saved.id, f"Updated client assignment for {saved.cluster_name}", old_value=old_value, new_value=saved, request=request, commit=True)
@@ -4699,7 +4942,11 @@ def save_cluster_assignment(payload: ClusterAccountAssignmentIn, request: Reques
 @app.get("/api/management/rdp-cluster-assignments")
 @app.get("/management/rdp-cluster-assignments")
 def get_rdp_cluster_assignments(db: Session = Depends(get_db), user: User = Depends(require_page("management_portal"))):
-    clusters = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc()).all()
+    query = db.query(DialerCluster).order_by(DialerCluster.cluster_no.asc())
+    allowed_ids = scoped_client_ids(db, user)
+    if allowed_ids:
+        query = query.filter(DialerCluster.client_id.in_(allowed_ids))
+    clusters = query.all()
     duplicate_names = active_rdp_duplicate_names(clusters)
     return [rdp_cluster_assignment_out(cluster, duplicate_names) for cluster in clusters]
 
@@ -4711,6 +4958,8 @@ def get_rdp_cluster_assignments(db: Session = Depends(get_db), user: User = Depe
 def save_rdp_cluster_assignment(payload: RDPClusterAssignmentIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("management_portal", "can_edit"))):
     cluster = get_record(db, DialerCluster, payload.cluster_id)
     old_value = sanitize_activity_value(cluster)
+    if not can_access_client(db, user, cluster.client_id):
+        raise HTTPException(status_code=403, detail="Client access denied")
     payload_data = DialerClusterUpdate(
         cluster_no=cluster.cluster_no,
         account_name=cluster.account_name,
@@ -4798,6 +5047,33 @@ def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, request: Re
     return routing_media_assignment_out(saved.gateway_name, saved.gateway_ip, saved)
 
 
+@app.get("/api/system-routing-placements")
+@app.get("/system-routing-placements")
+def get_system_routing_placements(date_value: date | None = Query(default=None, alias="date"), db: Session = Depends(get_db), user: User = Depends(require_page("dashboard"))):
+    return system_routing_placements(db, date_value or date.today(), user)
+
+
+@app.post("/api/system-routing-placements/save")
+@app.post("/system-routing-placements/save")
+def post_system_routing_placement(payload: SystemRoutingPlacementIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("dashboard", "can_edit"))):
+    return save_system_routing_placement(db, payload, user, request)
+
+
+@app.put("/api/system-routing-placements/{cluster_id}/inbound-did")
+@app.put("/system-routing-placements/{cluster_id}/inbound-did")
+def put_system_routing_inbound_did(cluster_id: int, payload: SystemRoutingInboundDIDIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("dashboard", "can_edit"))):
+    return update_system_routing_inbound_did(db, cluster_id, payload, user, request)
+
+
+@app.put("/api/system-routing-placements/{record_id}")
+@app.put("/system-routing-placements/{record_id}")
+def put_system_routing_placement(record_id: int, payload: SystemRoutingPlacementIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("dashboard", "can_edit"))):
+    record = get_record(db, SystemRoutingPlacement, record_id)
+    if record.cluster_id != payload.cluster_id:
+        raise HTTPException(status_code=400, detail="Placement cluster cannot be changed")
+    return save_system_routing_placement(db, payload, user, request, record)
+
+
 @app.get("/api/dashboard")
 @app.get("/dashboard")
 @app.get("/api/dashboard/summary")
@@ -4805,7 +5081,7 @@ def save_routing_media_assignment(payload: RoutingMediaAssignmentIn, request: Re
 @app.get("/api/dashboard/brief")
 @app.get("/dashboard/brief")
 def dashboard(db: Session = Depends(get_db), user: User = Depends(require_page("dashboard"))):
-    return operational_dashboard(db)
+    return operational_dashboard(db, user)
 
 
 @app.get("/api/system/audit")
