@@ -3139,8 +3139,7 @@ async def terminal_websocket(websocket: WebSocket, connection_id: int):
         except Exception:
             pass
     finally:
-        channel_closed = bool(getattr(channel, "closed", False)) if channel else False
-        if (intentional_close or channel_closed) and session_key:
+        if intentional_close and session_key:
             cleanup_terminal_live_sessions(force_key=session_key)
         elif session_key:
             with TERMINAL_LIVE_SESSIONS_LOCK:

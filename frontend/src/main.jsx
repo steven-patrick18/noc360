@@ -561,6 +561,13 @@ function App() {
         {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
         {loading && <div className="loading">Syncing NOC inventory...</div>}
 
+        {activeModules.terminal && (
+          <section className={`pageShell persistentTerminalShell ${activeKey === 'terminal' ? 'isActive' : ''}`} aria-hidden={activeKey !== 'terminal'}>
+            <TerminalCenterPage user={auth.user} visible={activeKey === 'terminal'} />
+          </section>
+        )}
+
+        {activeKey !== 'terminal' && (
         <section className="pageShell" key={activeKey || 'no-access'}>
           {auth.user.role === 'customer' && activeKey === 'myDashboard' ? (
             <CustomerDashboard billing={billing} user={auth.user} />
@@ -588,8 +595,6 @@ function App() {
             <TicketsPage user={auth.user} clients={data.clients} onSummaryRefresh={loadAll} />
           ) : activeKey === 'webphone' ? (
             <WebphonePage user={auth.user} />
-          ) : activeKey === 'terminal' ? (
-            <TerminalCenterPage user={auth.user} />
           ) : activeKey === 'asteriskSoundManager' ? (
             <AsteriskSoundManagerPage user={auth.user} />
           ) : activeKey === 'bareMetalOsInstaller' ? (
@@ -622,6 +627,7 @@ function App() {
             <div className="panel"><h2>No page access</h2><p className="muted">Ask an admin to assign page permissions.</p></div>
           )}
         </section>
+        )}
       </main>
       {themeOpen && <ThemeSettingsModal selected={theme} onSelect={updateTheme} onClose={() => setThemeOpen(false)} />}
       {profileOpen && <AccountSettingsModal user={auth.user} onClose={() => setProfileOpen(false)} onUpdated={updateStoredUser} onLogout={logout} />}
@@ -3068,7 +3074,7 @@ function loadStoredTerminalTabs() {
   }
 }
 
-function TerminalCenterPage({ user }) {
+function TerminalCenterPage({ user, visible = true }) {
   const canCreate = canDo(user, 'terminal', 'can_create');
   const canEdit = canDo(user, 'terminal', 'can_edit');
   const canDelete = canDo(user, 'terminal', 'can_delete');
@@ -3350,7 +3356,7 @@ function TerminalCenterPage({ user }) {
               <SSHTerminalPane
                 key={tab.id}
                 tab={tab}
-                active={tab.id === activeTabId}
+                active={visible && tab.id === activeTabId}
                 commandAction={terminalActions[tab.id]}
                 onStatus={(status) => updateTab(tab.id, { status })}
                 onHistorySaved={loadHistory}
