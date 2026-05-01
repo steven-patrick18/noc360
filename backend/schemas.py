@@ -601,6 +601,44 @@ class ClientLedgerPageOut(BaseModel):
     total_pages: int
 
 
+class WeeklyInvoiceItemOut(OrmModel):
+    id: int
+    item_type: str
+    label: str
+    amount: float
+    sort_order: int = 0
+
+
+class WeeklyInvoiceBase(BaseModel):
+    client_id: int
+    week_start_date: date
+    week_end_date: date
+    active_billing_days: int
+    daily_expected_billing: float = 800000
+    actual_usage_billing: float = 0
+    data_charges: float = 0
+    other_charges: float = 0
+    payment_adjustment: float = 0
+    notes: Optional[str] = None
+
+
+class WeeklyInvoiceCreate(WeeklyInvoiceBase):
+    pass
+
+
+class WeeklyInvoiceOut(WeeklyInvoiceBase, OrmModel):
+    id: int
+    expected_weekly_billing: float
+    difference: float
+    final_payable: float
+    status: str
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    client_name: Optional[str] = None
+    items: list[WeeklyInvoiceItemOut] = []
+
+
 class DataCostBase(BaseModel):
     client_id: int
     entry_date: date

@@ -43,7 +43,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
+from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile, WeeklyInvoice, WeeklyInvoiceItem
 from schemas import (
     ActivityLogOut,
     AsteriskSoundFileOut,
@@ -112,6 +112,8 @@ from schemas import (
     WebphoneProfileCreate,
     WebphoneProfileOut,
     WebphoneProfileUpdate,
+    WeeklyInvoiceCreate,
+    WeeklyInvoiceOut,
 )
 
 logger = logging.getLogger("noc360")
@@ -143,6 +145,7 @@ CHARGE_TYPES = {
     "Other Charges",
 }
 LEDGER_CATEGORIES = CHARGE_TYPES | {"Payment", "Adjustment"}
+DEFAULT_WEEKLY_DAILY_EXPECTED_INR = float(os.getenv("WEEKLY_INVOICE_DAILY_EXPECTED_INR", "800000"))
 TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
 TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
@@ -3760,6 +3763,112 @@ def ledger_summary(rows):
     }
 
 
+def weekly_invoice_status(actual_usage: float, expected: float):
+    if expected <= 0:
+        return "Green" if actual_usage >= 0 else "Red"
+    ratio = actual_usage / expected
+    if ratio >= 1:
+        return "Green"
+    if ratio >= 0.8:
+        return "Yellow"
+    return "Red"
+
+
+def weekly_invoice_values(payload: WeeklyInvoiceCreate):
+    active_days = int(payload.active_billing_days or 0)
+    daily_expected = float(payload.daily_expected_billing or DEFAULT_WEEKLY_DAILY_EXPECTED_INR)
+    actual_usage = float(payload.actual_usage_billing or 0)
+    data_charges = float(payload.data_charges or 0)
+    other_charges = float(payload.other_charges or 0)
+    payment_adjustment = float(payload.payment_adjustment or 0)
+    expected = round(active_days * daily_expected, 2)
+    difference = round(actual_usage - expected, 2)
+    final_payable = round(actual_usage + data_charges + other_charges - payment_adjustment, 2)
+    return {
+        "active_billing_days": active_days,
+        "daily_expected_billing": round(daily_expected, 2),
+        "expected_weekly_billing": expected,
+        "actual_usage_billing": round(actual_usage, 2),
+        "data_charges": round(data_charges, 2),
+        "other_charges": round(other_charges, 2),
+        "payment_adjustment": round(payment_adjustment, 2),
+        "difference": difference,
+        "final_payable": final_payable,
+        "status": weekly_invoice_status(actual_usage, expected),
+    }
+
+
+def weekly_invoice_items(invoice: WeeklyInvoice):
+    rows = [
+        ("expected", "Expected Weekly Billing", invoice.expected_weekly_billing),
+        ("usage", "Actual Usage Billing", invoice.actual_usage_billing),
+        ("cost", "Data Charges / Cost", invoice.data_charges),
+        ("charge", "Other Charges", invoice.other_charges),
+        ("credit", "Payment / Adjustment", -abs(invoice.payment_adjustment or 0)),
+        ("total", "Final Payable / Outstanding", invoice.final_payable),
+    ]
+    return [WeeklyInvoiceItem(item_type=item_type, label=label, amount=round(float(amount or 0), 2), sort_order=index + 1) for index, (item_type, label, amount) in enumerate(rows)]
+
+
+def weekly_invoice_query(db: Session, user: User, client_id=None, date_from=None, date_to=None):
+    query = db.query(WeeklyInvoice)
+    client_scope = scoped_client_ids(db, user, [client_id] if client_id else [])
+    if client_scope:
+        query = query.filter(WeeklyInvoice.client_id.in_(client_scope))
+    if date_from:
+        query = query.filter(WeeklyInvoice.week_end_date >= date_from)
+    if date_to:
+        query = query.filter(WeeklyInvoice.week_start_date <= date_to)
+    return query
+
+
+def get_weekly_invoice_for_user(db: Session, invoice_id: int, user: User):
+    invoice = db.get(WeeklyInvoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Weekly invoice not found")
+    if not can_access_client(db, user, invoice.client_id):
+        raise HTTPException(status_code=403, detail="Client access denied")
+    return invoice
+
+
+def pdf_escape(value):
+    return str(value or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def build_simple_invoice_pdf(lines: list[str]):
+    y = 780
+    content = ["BT", "/F1 13 Tf"]
+    for index, line in enumerate(lines):
+        font_size = 16 if index == 0 else 11
+        content.append(f"/F1 {font_size} Tf")
+        content.append(f"1 0 0 1 50 {y} Tm ({pdf_escape(line)}) Tj")
+        y_step = 24 if index == 0 else 18
+        y -= y_step
+    content.append("ET")
+    stream = "\n".join(content).encode("latin-1", errors="replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{index} 0 obj\n".encode())
+        pdf.extend(obj)
+        pdf.extend(b"\nendobj\n")
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode())
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode())
+    return bytes(pdf)
+
+
 def cdr_summary(rows):
     total_calls = len(rows)
     answered = len([row for row in rows if row.disposition == "ANSWERED"])
@@ -5201,6 +5310,7 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
             used_gateways.append(gateway.live_gateway_name)
     ledger = db.query(ClientLedger).filter(ClientLedger.client_id == record_id).order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all()
     data_costs = db.query(DataCost).filter(DataCost.client_id == record_id).order_by(DataCost.entry_date.desc(), DataCost.id.desc()).all()
+    weekly_invoices = db.query(WeeklyInvoice).filter(WeeklyInvoice.client_id == record_id).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
     total_charges = sum(row.debit_usd or row.debit_amount or 0 for row in ledger)
     total_payments = sum(row.credit_usd or row.credit_amount or 0 for row in ledger)
     total_charges_inr = sum(row.debit_inr or 0 for row in ledger)
@@ -5218,7 +5328,73 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         "total_outstanding_inr": round(total_charges_inr - total_payments_inr, 2),
         "ledger": ledger,
         "data_costs": data_costs,
+        "weekly_invoices": weekly_invoices,
     }
+
+
+@app.get("/api/billing/weekly-invoices", response_model=list[WeeklyInvoiceOut])
+@app.get("/billing/weekly-invoices", response_model=list[WeeklyInvoiceOut])
+def get_weekly_invoices(
+    client_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view"))),
+):
+    return weekly_invoice_query(db, user, client_id, date_from, date_to).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
+
+
+@app.post("/api/billing/weekly-invoices", response_model=WeeklyInvoiceOut)
+@app.post("/billing/weekly-invoices", response_model=WeeklyInvoiceOut)
+def create_weekly_invoice(payload: WeeklyInvoiceCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_create"))):
+    client = db.get(Client, payload.client_id)
+    if not client:
+        raise HTTPException(status_code=400, detail="Client does not exist")
+    if payload.week_end_date < payload.week_start_date:
+        raise HTTPException(status_code=400, detail="Week end date must be after week start date")
+    if payload.active_billing_days < 1 or payload.active_billing_days > 7:
+        raise HTTPException(status_code=400, detail="Active billing days must be between 1 and 7")
+    values = weekly_invoice_values(payload)
+    invoice = WeeklyInvoice(
+        client_id=payload.client_id,
+        week_start_date=payload.week_start_date,
+        week_end_date=payload.week_end_date,
+        notes=payload.notes,
+        created_by=user.username,
+        **values,
+    )
+    invoice.items = weekly_invoice_items(invoice)
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    log_activity(db, user, "create_weekly_invoice", "billing", "WeeklyInvoice", invoice.id, f"Generated weekly invoice for {client.name}", new_value=invoice, request=request, commit=True)
+    return invoice
+
+
+@app.get("/api/billing/weekly-invoices/{invoice_id}/pdf")
+@app.get("/billing/weekly-invoices/{invoice_id}/pdf")
+def download_weekly_invoice_pdf(invoice_id: int, db: Session = Depends(get_db), user: User = Depends(require_any_page(("billing", "can_export"), ("my_ledger", "can_export")))):
+    invoice = get_weekly_invoice_for_user(db, invoice_id, user)
+    lines = [
+        "NOC360 Weekly Invoice",
+        f"Client: {invoice.client_name or invoice.client_id}",
+        f"Week: {invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
+        f"Active Billing Days: {invoice.active_billing_days}",
+        f"Daily Expected Billing: INR {invoice.daily_expected_billing:,.2f}",
+        f"Expected Weekly Billing: INR {invoice.expected_weekly_billing:,.2f}",
+        f"Actual Usage Billing: INR {invoice.actual_usage_billing:,.2f}",
+        f"Data Charges / Cost: INR {invoice.data_charges:,.2f}",
+        f"Other Charges: INR {invoice.other_charges:,.2f}",
+        f"Payment / Adjustment: INR {invoice.payment_adjustment:,.2f}",
+        f"Difference: INR {invoice.difference:,.2f}",
+        f"Final Payable / Outstanding: INR {invoice.final_payable:,.2f}",
+        f"Status: {invoice.status}",
+    ]
+    if invoice.notes:
+        lines.extend(["", "Notes:", invoice.notes[:500]])
+    pdf = build_simple_invoice_pdf(lines)
+    filename = f"weekly-invoice-{invoice.id}.pdf"
+    return StreamingResponse(BytesIO(pdf), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/ledger", response_model=ClientLedgerPageOut)
@@ -5240,6 +5416,8 @@ def get_ledger(
     db: Session = Depends(get_db),
     user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view"))),
 ):
+    if user.role == "customer":
+        return {"items": [], "total": 0, "page": 1, "page_size": 0, "total_pages": 1}
     start_date = from_date or date_from
     end_date = to_date or date_to
     query = ledger_query(db, user, client_id, start_date, end_date, category, entry_type, search, created_by)
@@ -5339,6 +5517,8 @@ def delete_ledger(record_id: int, request: Request, db: Session = Depends(get_db
 @app.get("/api/billing/client-outstanding")
 @app.get("/billing/client-outstanding")
 def get_ledger_summary(client_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view")))):
+    if user.role == "customer":
+        return ledger_summary([])
     return ledger_summary(ledger_query(db, user, client_id).all())
 
 
@@ -5372,6 +5552,8 @@ def get_billing(
     db: Session = Depends(get_db),
     user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view"))),
 ):
+    if user.role == "customer":
+        return []
     return billing_query(db, user, client_id, date_from, date_to, charge_type).order_by(BillingCharge.billing_date.desc(), BillingCharge.id.desc()).all()
 
 
@@ -5410,6 +5592,8 @@ def get_billing_summary(
     db: Session = Depends(get_db),
     user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view"))),
 ):
+    if user.role == "customer":
+        return billing_summary([])
     rows = billing_query(db, user, client_id, date_from, date_to).all()
     return billing_summary(rows)
 

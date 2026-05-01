@@ -243,6 +243,18 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+async function requestBlob(path, options = {}) {
+  const token = localStorage.getItem('noc360_token');
+  const headers = { ...(options.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers, ...options });
+  if (!response.ok) {
+    const message = await response.text().catch(() => '') || `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return response.blob();
+}
+
 function websocketEndpoint(path) {
   const token = localStorage.getItem('noc360_token') || '';
   const base = API_BASE_URL.startsWith('http') ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
@@ -348,6 +360,12 @@ function App() {
     if (!canBilling) {
       setBilling({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
       return null;
+    }
+    if (auth.user.role === 'customer') {
+      const billingRate = await request('/settings/billing-rate');
+      setBilling({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
+      setSettings(billingRate);
+      return { total: 0, page: 1, page_size: 50, total_pages: 1 };
     }
     const query = ledgerQuery(ledgerFilters);
     console.log('[NOC360] refreshLedger filters', ledgerFilters, query);
@@ -4134,28 +4152,13 @@ function exportRows(filename, rows) {
 }
 
 function CustomerDashboard({ billing, user }) {
-  const summary = billing.ledgerSummary || {};
   return (
     <section>
       <div className="customerHeader">
-        <h2>{user.username.toUpperCase()} Billing Overview</h2>
+        <h2>{user.username.toUpperCase()} Weekly Invoice Overview</h2>
         <span className="rolePill">customer scoped</span>
       </div>
-      <BillingCards summary={summary} />
-      <div className="split">
-        <div className="panel">
-          <h2>Ledger Snapshot</h2>
-          <div className="breakdownRow"><span>Total Outstanding</span><strong className={summary.total_outstanding > 0 ? 'outstandingText' : ''}>{dualMoney(summary.total_outstanding, summary.total_outstanding_inr)}</strong></div>
-          <div className="breakdownRow"><span>Monthly Charges</span><strong>{dualMoney(summary.monthly_charges, summary.monthly_charges_inr)}</strong></div>
-          <div className="breakdownRow"><span>Monthly Payments</span><strong className="creditText">{dualMoney(summary.monthly_payments, summary.monthly_payments_inr)}</strong></div>
-        </div>
-        <div className="panel">
-          <h2>Billing Focus</h2>
-          <div className="breakdownRow"><span>Today Charges</span><strong>{dualMoney(summary.today_total_charges, summary.today_total_charges_inr)}</strong></div>
-          <div className="breakdownRow"><span>Today Payments</span><strong className="creditText">{dualMoney(summary.today_payments, summary.today_payments_inr)}</strong></div>
-          <div className="breakdownRow"><span>Outstanding</span><strong className={summary.total_outstanding > 0 ? 'outstandingText' : ''}>{dualMoney(summary.total_outstanding, summary.total_outstanding_inr)}</strong></div>
-        </div>
-      </div>
+      <WeeklyInvoicePanel user={user} clients={[]} canCreate={false} canExport={canDo(user, 'my_ledger', 'can_export')} />
     </section>
   );
 }
@@ -4194,6 +4197,229 @@ function OutstandingPage({ billing }) {
       <BillingCards summary={billing.ledgerSummary || {}} />
       <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} />
     </section>
+  );
+}
+
+const DEFAULT_DAILY_EXPECTED_BILLING_INR = 800000;
+
+function weeklyInvoiceStatus(actual, expected) {
+  const expectedValue = Number(expected || 0);
+  const actualValue = Number(actual || 0);
+  if (expectedValue <= 0) return actualValue >= 0 ? 'Green' : 'Red';
+  const ratio = actualValue / expectedValue;
+  if (ratio >= 1) return 'Green';
+  if (ratio >= 0.8) return 'Yellow';
+  return 'Red';
+}
+
+function weeklyStatusClass(status) {
+  return `weeklyStatus ${String(status || '').toLowerCase()}`;
+}
+
+function currentWeekDates() {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const end = new Date(start);
+  end.setDate(start.getDate() + 4);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+function weeklyInvoiceMath(form) {
+  const activeDays = Number(form.active_billing_days || 0);
+  const dailyExpected = Number(form.daily_expected_billing || DEFAULT_DAILY_EXPECTED_BILLING_INR);
+  const actual = Number(form.actual_usage_billing || 0);
+  const dataCharges = Number(form.data_charges || 0);
+  const otherCharges = Number(form.other_charges || 0);
+  const payment = Number(form.payment_adjustment || 0);
+  const expected = activeDays * dailyExpected;
+  return {
+    expected,
+    difference: actual - expected,
+    finalPayable: actual + dataCharges + otherCharges - payment,
+    status: weeklyInvoiceStatus(actual, expected),
+  };
+}
+
+async function downloadWeeklyInvoicePdf(invoice) {
+  const blob = await requestBlob(`/billing/weekly-invoices/${invoice.id}/pdf`);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `weekly-invoice-${invoice.id}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport = false }) {
+  const weekDates = useMemo(currentWeekDates, []);
+  const [invoices, setInvoices] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({
+    client_id: '',
+    week_start_date: weekDates.start,
+    week_end_date: weekDates.end,
+    active_billing_days: 5,
+    daily_expected_billing: DEFAULT_DAILY_EXPECTED_BILLING_INR,
+    actual_usage_billing: '',
+    data_charges: 0,
+    other_charges: 0,
+    payment_adjustment: 0,
+    notes: '',
+  });
+  const isCustomer = user.role === 'customer';
+  const math = weeklyInvoiceMath(form);
+  const invoiceTotals = invoices.reduce((total, invoice) => ({
+    expected: total.expected + Number(invoice.expected_weekly_billing || 0),
+    actual: total.actual + Number(invoice.actual_usage_billing || 0),
+    final: total.final + Number(invoice.final_payable || 0),
+  }), { expected: 0, actual: 0, final: 0 });
+
+  const loadInvoices = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setInvoices(await request('/billing/weekly-invoices'));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
+
+  const setInvoiceField = (field, value) => {
+    setError('');
+    setMessage('');
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const resetForm = () => {
+    setForm({
+      client_id: '',
+      week_start_date: weekDates.start,
+      week_end_date: weekDates.end,
+      active_billing_days: 5,
+      daily_expected_billing: DEFAULT_DAILY_EXPECTED_BILLING_INR,
+      actual_usage_billing: '',
+      data_charges: 0,
+      other_charges: 0,
+      payment_adjustment: 0,
+      notes: '',
+    });
+  };
+
+  const saveWeeklyInvoice = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    if (!form.client_id) {
+      setError('Select a client before generating the weekly invoice.');
+      return;
+    }
+    if (Number(form.active_billing_days || 0) < 1) {
+      setError('Active Billing Days must be at least 1.');
+      return;
+    }
+    try {
+      const saved = await request('/billing/weekly-invoices', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...form,
+          client_id: Number(form.client_id),
+          active_billing_days: Number(form.active_billing_days),
+          daily_expected_billing: Number(form.daily_expected_billing || DEFAULT_DAILY_EXPECTED_BILLING_INR),
+          actual_usage_billing: Number(form.actual_usage_billing || 0),
+          data_charges: Number(form.data_charges || 0),
+          other_charges: Number(form.other_charges || 0),
+          payment_adjustment: Number(form.payment_adjustment || 0),
+        }),
+      });
+      setMessage(`Weekly invoice saved for ${saved.client_name || 'client'}.`);
+      resetForm();
+      await loadInvoices();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="weeklyInvoicePanel">
+      <div className="sectionHeader">
+        <div>
+          <span className="eyebrow">{isCustomer ? 'Client Portal' : 'Weekly Invoice System'}</span>
+          <h2>Weekly Invoices</h2>
+        </div>
+        <button onClick={loadInvoices}><RefreshCcw size={16} /> Refresh</button>
+      </div>
+
+      <div className="cards weeklyInvoiceCards">
+        <div className="metric"><span>Saved Invoices</span><strong>{invoices.length}</strong></div>
+        <div className="metric revenue"><span>Expected Billing</span><strong>{inr(invoiceTotals.expected)}</strong></div>
+        <div className="metric payment"><span>Actual Usage Billing</span><strong>{inr(invoiceTotals.actual)}</strong></div>
+        <div className={`metric ${invoiceTotals.final > 0 ? 'metricAlert' : ''}`}><span>Final Payable</span><strong>{inr(invoiceTotals.final)}</strong></div>
+      </div>
+
+      {canCreate && !isCustomer && (
+        <form className="weeklyInvoiceForm" onSubmit={saveWeeklyInvoice}>
+          <ClientSelect value={form.client_id} clients={clients} onChange={(value) => setInvoiceField('client_id', value)} placeholder="Client / Group" />
+          <label><span>Week Start Date</span><input type="date" value={form.week_start_date} onChange={(event) => setInvoiceField('week_start_date', event.target.value)} /></label>
+          <label><span>Week End Date</span><input type="date" value={form.week_end_date} onChange={(event) => setInvoiceField('week_end_date', event.target.value)} /></label>
+          <label><span>Active Billing Days</span><input type="number" min="1" max="7" value={form.active_billing_days} onChange={(event) => setInvoiceField('active_billing_days', event.target.value)} /></label>
+          <label><span>Daily Expected Billing</span><input type="number" min="0" step="0.01" value={form.daily_expected_billing} onChange={(event) => setInvoiceField('daily_expected_billing', event.target.value)} /></label>
+          <label><span>Actual Usage Charges</span><input type="number" min="0" step="0.01" value={form.actual_usage_billing} onChange={(event) => setInvoiceField('actual_usage_billing', event.target.value)} /></label>
+          <label><span>Data Charges / Cost</span><input type="number" min="0" step="0.01" value={form.data_charges} onChange={(event) => setInvoiceField('data_charges', event.target.value)} /></label>
+          <label><span>Other Charges</span><input type="number" min="0" step="0.01" value={form.other_charges} onChange={(event) => setInvoiceField('other_charges', event.target.value)} /></label>
+          <label><span>Payment / Adjustment</span><input type="number" min="0" step="0.01" value={form.payment_adjustment} onChange={(event) => setInvoiceField('payment_adjustment', event.target.value)} /></label>
+          <label className="weeklyNotes"><span>Notes</span><textarea value={form.notes} onChange={(event) => setInvoiceField('notes', event.target.value)} placeholder="Invoice note" /></label>
+          <div className="weeklyInvoicePreview">
+            <span>Expected Weekly Billing</span><strong>{inr(math.expected)}</strong>
+            <span>Actual Usage Billing</span><strong>{inr(Number(form.actual_usage_billing || 0))}</strong>
+            <span>Difference</span><strong className={math.difference >= 0 ? 'okText' : 'outstandingText'}>{inr(math.difference)}</strong>
+            <span>Final Payable</span><strong>{inr(math.finalPayable)}</strong>
+            <span>Status</span><b className={weeklyStatusClass(math.status)}>{math.status}</b>
+          </div>
+          {error && <span className="formError">{error}</span>}
+          <button className="primary"><Plus size={16} /> Generate Weekly Invoice</button>
+        </form>
+      )}
+
+      {message && <div className="toastSuccess">{message}</div>}
+      {error && (!canCreate || isCustomer) && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+      {isCustomer && <p className="muted">Only saved weekly invoices are visible in the client portal.</p>}
+
+      <div className="tableWrap weeklyInvoiceTable">
+        <table>
+          <thead><tr><th>Client / Group</th><th>Week</th><th>Active Days</th><th>Expected Billing</th><th>Actual Usage</th><th>Data Cost</th><th>Other</th><th>Payment</th><th>Final Payable</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody>
+            {invoices.map((invoice) => (
+              <tr key={invoice.id}>
+                <td>{invoice.client_name || '-'}</td>
+                <td>{invoice.week_start_date} to {invoice.week_end_date}</td>
+                <td>{invoice.active_billing_days}</td>
+                <td>{inr(invoice.expected_weekly_billing)}</td>
+                <td>{inr(invoice.actual_usage_billing)}</td>
+                <td>{inr(invoice.data_charges)}</td>
+                <td>{inr(invoice.other_charges)}</td>
+                <td className="creditText">{inr(invoice.payment_adjustment)}</td>
+                <td className={invoice.final_payable > 0 ? 'outstandingText' : 'okText'}>{inr(invoice.final_payable)}</td>
+                <td><span className={weeklyStatusClass(invoice.status)}>{invoice.status}</span></td>
+                <td>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(invoice)}><Download size={15} /> PDF</button>}</td>
+              </tr>
+            ))}
+            {!loading && invoices.length === 0 && <tr><td colSpan="11" className="muted">No saved weekly invoices yet.</td></tr>}
+            {loading && <tr><td colSpan="11" className="muted">Loading weekly invoices...</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -4380,11 +4606,19 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       {editingLedger && <button type="button" onClick={cancelEdit}>Cancel Edit</button>}
     </form>
   );
+  if (user.role === 'customer') {
+    return (
+      <section>
+        <WeeklyInvoicePanel user={user} clients={[]} canCreate={false} canExport={canExport} />
+      </section>
+    );
+  }
   return (
     <section>
       <BillingCards summary={billing.ledgerSummary || {}} />
       {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">Payment follow-up required for outstanding balance.</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
+      <WeeklyInvoicePanel user={user} clients={data.clients} canCreate={canCreate} canExport={canExport} />
       {false && (
         <form className="inlineForm billingEntryForm" onSubmit={save}>
           <ClientSelect value={form.client_id} clients={data.clients} onChange={(value) => setForm({ ...form, client_id: value })} />
@@ -4662,6 +4896,12 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
           <div className={`metric ${detail.total_outstanding > 0 ? 'metricAlert' : ''}`}><span>Total Outstanding</span><strong>{dualMoney(detail.total_outstanding, detail.total_outstanding_inr)}</strong></div>
         </div>
         <div className="panel infraPanel"><h2>Assigned Infrastructure</h2><p><strong>Assigned RDPs:</strong> {detail.assigned_rdps.join(', ') || '-'}</p><p><strong>Routing Gateways:</strong> {detail.routing_gateways.join(', ') || '-'}</p></div>
+        <h2>Weekly Invoices</h2>
+        <div className="tableWrap weeklyInvoiceTable"><table><thead><tr><th>Week</th><th>Active Days</th><th>Expected Billing</th><th>Actual Usage</th><th>Final Payable</th><th>Status</th><th>Actions</th></tr></thead><tbody>{(detail.weekly_invoices || []).map((row) => (
+          <tr key={row.id}><td>{row.week_start_date} to {row.week_end_date}</td><td>{row.active_billing_days}</td><td>{inr(row.expected_weekly_billing)}</td><td>{inr(row.actual_usage_billing)}</td><td className={row.final_payable > 0 ? 'outstandingText' : 'okText'}>{inr(row.final_payable)}</td><td><span className={weeklyStatusClass(row.status)}>{row.status}</span></td><td>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(row)}><Download size={15} /> PDF</button>}</td></tr>
+        ))}
+          {(detail.weekly_invoices || []).length === 0 && <tr><td colSpan="7" className="muted">No saved weekly invoices.</td></tr>}
+        </tbody></table></div>
         <h2>Ledger</h2>
         <div className="tableWrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th></tr></thead><tbody>{detail.ledger.map((row) => (
           <tr key={row.id} className={row.entry_type === 'Credit' ? 'creditRow' : 'debitRow'}><td>{row.entry_date}</td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td className={row.balance_usd > 0 ? 'outstandingText' : ''}>{usd(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td className={row.balance_inr > 0 ? 'outstandingText' : ''}>{inr(row.balance_inr)}</td><td>{exchangeText(row.exchange_rate)}</td></tr>

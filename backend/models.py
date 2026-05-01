@@ -527,6 +527,47 @@ class ClientLedger(Base):
         return self.client.name if self.client else None
 
 
+class WeeklyInvoice(Base):
+    __tablename__ = "weekly_invoices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    week_start_date = Column(Date, nullable=False, index=True)
+    week_end_date = Column(Date, nullable=False, index=True)
+    active_billing_days = Column(Integer, nullable=False, default=5)
+    daily_expected_billing = Column(Float, nullable=False, default=800000)
+    expected_weekly_billing = Column(Float, nullable=False, default=0)
+    actual_usage_billing = Column(Float, nullable=False, default=0)
+    data_charges = Column(Float, nullable=False, default=0)
+    other_charges = Column(Float, nullable=False, default=0)
+    payment_adjustment = Column(Float, nullable=False, default=0)
+    difference = Column(Float, nullable=False, default=0)
+    final_payable = Column(Float, nullable=False, default=0)
+    status = Column(String, nullable=False, default="Red", index=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    client = relationship("Client")
+    items = relationship("WeeklyInvoiceItem", back_populates="invoice", cascade="all, delete-orphan", order_by="WeeklyInvoiceItem.sort_order")
+
+    @property
+    def client_name(self):
+        return self.client.name if self.client else None
+
+
+class WeeklyInvoiceItem(Base):
+    __tablename__ = "weekly_invoice_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    invoice_id = Column(Integer, ForeignKey("weekly_invoices.id"), nullable=False, index=True)
+    item_type = Column(String, nullable=False, index=True)
+    label = Column(String, nullable=False)
+    amount = Column(Float, nullable=False, default=0)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    invoice = relationship("WeeklyInvoice", back_populates="items")
+
 class DataCost(Base):
     __tablename__ = "data_costs"
 

@@ -5,10 +5,11 @@ import uuid
 from datetime import date, datetime, timedelta
 
 from database import Base, DB_PROTECTED_MARKER, SessionLocal, engine
-from models import BillingSetting, CDR, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RoutingGateway, User, VOSPortal
+from models import BillingSetting, CDR, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RoutingGateway, User, VOSPortal, WeeklyInvoice, WeeklyInvoiceItem
 
 
 USD_TO_INR = 83.0
+DAILY_EXPECTED_BILLING_INR = 800000
 PAGE_KEYS = [
     "dashboard", "my_dashboard", "business_ai", "reports", "my_reports", "management_portal",
     "billing", "my_ledger", "clients", "cdr", "my_cdr", "vos_portals", "dialer_clusters",
@@ -346,6 +347,76 @@ def create_data_costs(db, clients):
             )
 
 
+def weekly_invoice_status(actual_usage, expected):
+    if expected <= 0:
+        return "Green"
+    ratio = actual_usage / expected
+    if ratio >= 1:
+        return "Green"
+    if ratio >= 0.8:
+        return "Yellow"
+    return "Red"
+
+
+def weekly_invoice_items(invoice):
+    rows = [
+        ("expected", "Expected Weekly Billing", invoice.expected_weekly_billing),
+        ("usage", "Actual Usage Billing", invoice.actual_usage_billing),
+        ("cost", "Data Charges / Cost", invoice.data_charges),
+        ("charge", "Other Charges", invoice.other_charges),
+        ("credit", "Payment / Adjustment", -abs(invoice.payment_adjustment or 0)),
+        ("total", "Final Payable / Outstanding", invoice.final_payable),
+    ]
+    return [WeeklyInvoiceItem(item_type=item_type, label=label, amount=round(amount or 0, 2), sort_order=index + 1) for index, (item_type, label, amount) in enumerate(rows)]
+
+
+def create_weekly_invoice_demo_data(db, clients=None, commit=True):
+    if db.query(WeeklyInvoice).first():
+        return {"seeded": False, "reason": "weekly invoices already exist"}
+    if clients is None:
+        clients = {client.name: client for client in db.query(Client).filter(Client.name.in_(["IM1", "IM2", "ROLEX", "Apex Telecom", "BlueWave Connect"])).all()}
+    today = date.today()
+    week_start = today - timedelta(days=today.weekday() + 7)
+    week_end = week_start + timedelta(days=4)
+    samples = [
+        ("IM1", 5, 4000000, 85000, 25000, 100000, "Five active billing days, target achieved."),
+        ("IM2", 4, 3200000, 72000, 15000, 50000, "Four active billing days, target achieved."),
+        ("ROLEX", 3, 1800000, 64000, 18000, 25000, "Below threshold demo for red status."),
+        ("Apex Telecom", 4, 2600000, 90000, 22000, 40000, "Within 80 percent band demo for yellow status."),
+        ("BlueWave Connect", 5, 3700000, 78000, 18000, 75000, "Weekly billing below target but above warning floor."),
+    ]
+    created = 0
+    for name, active_days, actual_usage, data_cost, other_charges, payment, notes in samples:
+        client = clients.get(name)
+        if not client:
+            continue
+        expected = round(active_days * DAILY_EXPECTED_BILLING_INR, 2)
+        final_payable = round(actual_usage + data_cost + other_charges - payment, 2)
+        invoice = WeeklyInvoice(
+            client_id=client.id,
+            week_start_date=week_start,
+            week_end_date=week_end,
+            active_billing_days=active_days,
+            daily_expected_billing=DAILY_EXPECTED_BILLING_INR,
+            expected_weekly_billing=expected,
+            actual_usage_billing=actual_usage,
+            data_charges=data_cost,
+            other_charges=other_charges,
+            payment_adjustment=payment,
+            difference=round(actual_usage - expected, 2),
+            final_payable=final_payable,
+            status=weekly_invoice_status(actual_usage, expected),
+            notes=notes,
+            created_by="seed",
+        )
+        invoice.items = weekly_invoice_items(invoice)
+        db.add(invoice)
+        created += 1
+    if commit:
+        db.commit()
+    return {"seeded": True, "weekly_invoices": created}
+
+
 def create_cdr(db, clients):
     dispositions = ["ANSWERED", "NO ANSWER", "BUSY"]
     routes = ["INTL-A", "INTL-B"]
@@ -377,6 +448,7 @@ def seed_database(clear=False, db=None):
         create_routing(db, clients, rdp_portals, rtng_portals)
         create_ledger(db, clients)
         create_data_costs(db, clients)
+        create_weekly_invoice_demo_data(db, clients, commit=False)
         create_cdr(db, clients)
         db.commit()
         return {
@@ -397,6 +469,12 @@ def seed_database(clear=False, db=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Seed NOC360 demo data")
     parser.add_argument("--reset", action="store_true", help="Deprecated and blocked on protected databases")
+    parser.add_argument("--weekly-invoices", action="store_true", help="Add safe weekly invoice demo data to an existing database if none exists")
     args = parser.parse_args()
-    result = seed_database(clear=args.reset)
+    if args.weekly_invoices:
+        Base.metadata.create_all(bind=engine)
+        with SessionLocal() as db:
+            result = create_weekly_invoice_demo_data(db)
+    else:
+        result = seed_database(clear=args.reset)
     print(f"NOC360 seed complete: {result}")
