@@ -68,7 +68,7 @@ function resolveTheme(themeId) {
   return hour >= 7 && hour < 18 ? 'light' : 'executive';
 }
 
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager', 'bare_metal_os_installer'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -94,6 +94,7 @@ const modulePageKeys = {
   webphone: 'webphone',
   terminal: 'terminal',
   asteriskSoundManager: 'asterisk_sound_manager',
+  bareMetalOsInstaller: 'bare_metal_os_installer',
   dangerZone: 'danger_zone',
 };
 
@@ -109,6 +110,7 @@ const modules = {
   webphone: { label: 'Webphone', icon: Phone },
   terminal: { label: 'Terminal', icon: TerminalIcon },
   asteriskSoundManager: { label: 'Asterisk Sound Manager', icon: FileAudio },
+  bareMetalOsInstaller: { label: 'Bare Metal OS Installer', icon: Server },
   dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
@@ -466,6 +468,8 @@ function App() {
     }).catch(() => {});
     localStorage.removeItem('noc360_token');
     localStorage.removeItem('noc360_user');
+    localStorage.removeItem('noc360_terminal_tabs');
+    localStorage.removeItem('noc360_terminal_active_tab');
     setAuth(null);
     setProfileOpen(false);
     setActive('dashboard');
@@ -588,6 +592,8 @@ function App() {
             <TerminalCenterPage user={auth.user} />
           ) : activeKey === 'asteriskSoundManager' ? (
             <AsteriskSoundManagerPage user={auth.user} />
+          ) : activeKey === 'bareMetalOsInstaller' ? (
+            <BareMetalOsInstallerPage user={auth.user} />
           ) : activeKey === 'dangerZone' ? (
             <DangerZonePage user={auth.user} reload={loadAll} />
           ) : activeKey === 'vosDesktop' ? (
@@ -2594,6 +2600,100 @@ function WebphonePage({ user }) {
   );
 }
 
+const bareMetalStatuses = ['Pending', 'Connecting', 'Mounting ISO', 'Rebooting', 'Installing', 'Waiting for SSH', 'Completed'];
+
+function BareMetalOsInstallerPage({ user }) {
+  const canEdit = canDo(user, 'bare_metal_os_installer', 'can_edit');
+  const [form, setForm] = useState({ server_name: '', ipmi_ip: '', username: '', password: '', public_ip: '', os_name: 'ViciBox 12' });
+  const [status, setStatus] = useState('Pending');
+  const [steps, setSteps] = useState([]);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const payload = () => ({ ...form });
+
+  const testIpmi = async () => {
+    setError('');
+    setMessage('');
+    setStatus('Connecting');
+    setBusy('test');
+    try {
+      const result = await request('/ipmi/test', { method: 'POST', body: JSON.stringify(payload()) });
+      setStatus('Completed');
+      setMessage(result.message || 'IPMI connection successful');
+      setSteps([{ step: 'Connecting', status: 'Completed', message: result.method || 'IPMI reachable' }]);
+    } catch (err) {
+      setStatus('Pending');
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const startInstall = async () => {
+    if (!window.confirm('This will erase all data on server')) return;
+    setError('');
+    setMessage('');
+    setStatus('Mounting ISO');
+    setBusy('install');
+    try {
+      const result = await request('/ipmi/install', { method: 'POST', body: JSON.stringify(payload()) });
+      setSteps(result.steps || []);
+      setStatus(result.status || 'Installing');
+      setMessage(result.message || 'OS install started');
+    } catch (err) {
+      setStatus('Pending');
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="bareMetalPage">
+      <div className="cards managementCards">
+        <div className="metric"><span>Status</span><strong>{status}</strong></div>
+        <div className="metric payment"><span>Target OS</span><strong>{form.os_name}</strong></div>
+        <div className="metric revenue"><span>Server</span><strong>{form.server_name || '-'}</strong></div>
+      </div>
+      {message && <div className="toastSuccess">{message}</div>}
+      {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+      <div className="bareMetalLimit">Works only on dedicated servers with IPMI (iDRAC/iLO/Supermicro). Not supported on VPS.</div>
+
+      <div className="bareMetalLayout">
+        <div className="panel bareMetalFormPanel">
+          <div className="sectionHeader"><div><span className="eyebrow">Bare metal provisioning</span><h2>OS Installer</h2></div></div>
+          <div className="bareMetalForm">
+            <label><span>Server Name</span><input value={form.server_name} onChange={(event) => setField('server_name', event.target.value)} placeholder="BM-01" /></label>
+            <label><span>IPMI IP</span><input value={form.ipmi_ip} onChange={(event) => setField('ipmi_ip', event.target.value)} placeholder="192.0.2.10" /></label>
+            <label><span>Username</span><input value={form.username} onChange={(event) => setField('username', event.target.value)} placeholder="ADMIN" /></label>
+            <label><span>Password</span><input type="password" value={form.password} onChange={(event) => setField('password', event.target.value)} /></label>
+            <label><span>Public IP</span><input value={form.public_ip} onChange={(event) => setField('public_ip', event.target.value)} placeholder="203.0.113.10" /></label>
+            <label><span>OS Selection</span><select value={form.os_name} onChange={(event) => setField('os_name', event.target.value)}><option>ViciBox 12</option><option>AlmaLinux 9</option><option>Debian 12</option><option>Proxmox VE</option></select></label>
+          </div>
+          <div className="formActions">
+            <button type="button" onClick={testIpmi} disabled={busy === 'test'}><Server size={16} /> {busy === 'test' ? 'Testing...' : 'Test IPMI Connection'}</button>
+            <button type="button" className="primary" onClick={startInstall} disabled={!canEdit || busy === 'install'}><Play size={16} /> {busy === 'install' ? 'Starting...' : 'Start OS Install'}</button>
+          </div>
+        </div>
+
+        <aside className="panel bareMetalStatusPanel">
+          <div className="sectionHeader"><div><span className="eyebrow">Status panel</span><h2>Install Flow</h2></div></div>
+          <div className="bareMetalStatusList">
+            {bareMetalStatuses.map((item) => <div className={item === status ? 'active' : ''} key={item}><span>{item}</span><StatusPill value={item === status ? 'Running' : item === 'Completed' && status === 'Completed' ? 'Success' : 'Pending'} /></div>)}
+          </div>
+          <div className="bareMetalStepLog">
+            {steps.map((step, index) => <div key={`${step.step}-${index}`}><strong>{step.step}</strong><span>{step.status}</span><small>{step.message}</small></div>)}
+            {steps.length === 0 && <p className="muted">IPMI test and install progress will appear here.</p>}
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function AsteriskSoundManagerPage({ user }) {
   const canCreate = canDo(user, 'asterisk_sound_manager', 'can_create');
   const canEdit = canDo(user, 'asterisk_sound_manager', 'can_edit');
@@ -2934,6 +3034,40 @@ function AsteriskSoundManagerPage({ user }) {
   );
 }
 
+function loadStoredTerminalTabs() {
+  try {
+    const rows = JSON.parse(localStorage.getItem('noc360_terminal_tabs') || '[]');
+    if (!Array.isArray(rows)) {
+      localStorage.removeItem('noc360_terminal_tabs');
+      localStorage.removeItem('noc360_terminal_active_tab');
+      return [];
+    }
+    return rows
+      .filter((tab) => tab?.id && tab?.connection?.id && tab.connection.connection_name && tab.connection.host_ip)
+      .map((tab) => ({
+        id: String(tab.id),
+        name: String(tab.name || tab.connection.connection_name || 'SSH'),
+        connection: {
+          id: tab.connection.id,
+          connection_name: tab.connection.connection_name,
+          host_ip: tab.connection.host_ip,
+          ssh_port: tab.connection.ssh_port || 22,
+          username: tab.connection.username || '',
+          status: tab.connection.status || 'Active',
+        },
+        status: tab.status === 'Connected' ? 'Reconnecting' : tab.status || 'Reconnecting',
+        reconnectKey: Number(tab.reconnectKey || 0),
+        clearKey: Number(tab.clearKey || 0),
+        disconnectKey: 0,
+        fullscreen: false,
+      }));
+  } catch {
+    localStorage.removeItem('noc360_terminal_tabs');
+    localStorage.removeItem('noc360_terminal_active_tab');
+    return [];
+  }
+}
+
 function TerminalCenterPage({ user }) {
   const canCreate = canDo(user, 'terminal', 'can_create');
   const canEdit = canDo(user, 'terminal', 'can_edit');
@@ -2943,8 +3077,8 @@ function TerminalCenterPage({ user }) {
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
   const [editingId, setEditingId] = useState(null);
-  const [tabs, setTabs] = useState([]);
-  const [activeTabId, setActiveTabId] = useState(null);
+  const [tabs, setTabs] = useState(loadStoredTerminalTabs);
+  const [activeTabId, setActiveTabId] = useState(() => localStorage.getItem('noc360_terminal_active_tab') || null);
   const [revealed, setRevealed] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -2952,6 +3086,7 @@ function TerminalCenterPage({ user }) {
   const [history, setHistory] = useState([]);
   const [terminalActions, setTerminalActions] = useState({});
   const [commandForm, setCommandForm] = useState({ title: '', command: '', purpose: '', category: 'Custom', risk_level: 'Safe' });
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
 
   const loadConnections = async () => {
     setConnections(await request('/terminal/connections'));
@@ -2962,6 +3097,33 @@ function TerminalCenterPage({ user }) {
   useEffect(() => {
     Promise.all([loadConnections(), loadCommands(), loadHistory()]).catch((err) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    try {
+      const storedTabs = tabs.map((tab) => ({
+        id: tab.id,
+        name: tab.name,
+        connection: tab.connection,
+        status: tab.status,
+        reconnectKey: tab.reconnectKey || 0,
+        clearKey: tab.clearKey || 0,
+        fullscreen: false,
+      }));
+      localStorage.setItem('noc360_terminal_tabs', JSON.stringify(storedTabs));
+    } catch {
+      localStorage.removeItem('noc360_terminal_tabs');
+    }
+  }, [tabs]);
+
+  useEffect(() => {
+    if (activeTabId) localStorage.setItem('noc360_terminal_active_tab', activeTabId);
+    else localStorage.removeItem('noc360_terminal_active_tab');
+  }, [activeTabId]);
+
+  useEffect(() => {
+    if (!activeTabId && tabs[0]) setActiveTabId(tabs[0].id);
+    if (activeTabId && tabs.length && !tabs.some((tab) => tab.id === activeTabId)) setActiveTabId(tabs[tabs.length - 1]?.id || null);
+  }, [tabs, activeTabId]);
 
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const resetForm = () => {
@@ -3033,7 +3195,7 @@ function TerminalCenterPage({ user }) {
 
   const openTerminal = (connection) => {
     const tabId = `${connection.id}-${Date.now()}`;
-    const tab = { id: tabId, name: connection.connection_name, connection, status: 'Opening', reconnectKey: 0, clearKey: 0, fullscreen: false };
+    const tab = { id: tabId, name: connection.connection_name, connection, status: 'Opening', reconnectKey: 0, clearKey: 0, disconnectKey: 0, fullscreen: false };
     setTabs((current) => [...current, tab]);
     setActiveTabId(tabId);
   };
@@ -3043,11 +3205,18 @@ function TerminalCenterPage({ user }) {
   };
 
   const closeTab = (tabId) => {
-    setTabs((current) => current.filter((tab) => tab.id !== tabId));
-    if (activeTabId === tabId) {
-      const remaining = tabs.filter((tab) => tab.id !== tabId);
-      setActiveTabId(remaining[remaining.length - 1]?.id || null);
-    }
+    updateTab(tabId, { disconnectKey: Date.now(), status: 'Disconnected' });
+    window.setTimeout(() => {
+      setTabs((current) => {
+        const next = current.filter((tab) => tab.id !== tabId);
+        if (activeTabId === tabId) setActiveTabId(next[next.length - 1]?.id || null);
+        return next;
+      });
+    }, 80);
+  };
+
+  const disconnectTab = (tab) => {
+    updateTab(tab.id, { disconnectKey: Date.now(), status: 'Disconnected' });
   };
 
   const renameTab = (tab) => {
@@ -3092,8 +3261,6 @@ function TerminalCenterPage({ user }) {
   const duplicateNameCount = form.connection_name
     ? connections.filter((connection) => connection.connection_name?.trim().toLowerCase() === form.connection_name.trim().toLowerCase() && connection.id !== editingId).length
     : 0;
-  const activeTab = tabs.find((tab) => tab.id === activeTabId);
-
   return (
     <section className="terminalCenter">
       <div className="cards managementCards">
@@ -3172,6 +3339,7 @@ function TerminalCenterPage({ user }) {
               <strong>{activeTab.connection.username}@{activeTab.connection.host_ip}</strong>
               <button onClick={() => renameTab(activeTab)}>Rename</button>
               <button onClick={() => updateTab(activeTab.id, { reconnectKey: activeTab.reconnectKey + 1, status: 'Reconnecting' })}>Reconnect</button>
+              <button onClick={() => disconnectTab(activeTab)}>Disconnect</button>
               <button onClick={() => updateTab(activeTab.id, { clearKey: activeTab.clearKey + 1 })}>Clear</button>
               <button onClick={() => updateTab(activeTab.id, { fullscreen: !activeTab.fullscreen })}>{activeTab.fullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</button>
             </div>
@@ -3276,7 +3444,7 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
     terminal.writeln('NOC360 SSH Terminal Center');
     terminal.writeln(`Opening ${tab.connection.connection_name}...`);
 
-    const socket = new WebSocket(websocketEndpoint(`/terminal/ws/${tab.connection.id}`));
+    const socket = new WebSocket(websocketEndpoint(`/terminal/ws/${tab.connection.id}?tab_id=${encodeURIComponent(tab.id)}`));
     socketRef.current = socket;
 
     const fitAndResize = () => {
@@ -3298,9 +3466,10 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
       onStatus('Error');
       terminal.writeln('\r\n[connection error]');
     };
-    socket.onclose = () => {
-      onStatus('Closed');
-      terminal.writeln('\r\n[session closed]');
+    socket.onclose = (event) => {
+      const status = event.code === 4000 ? 'Disconnected' : event.code === 4001 ? 'Idle Timeout' : event.code === 4002 ? 'Reconnecting' : 'Disconnected';
+      onStatus(status);
+      terminal.writeln(`\r\n[${status.toLowerCase()}]`);
     };
     const disposable = terminal.onData((data) => {
       trackInput(data);
@@ -3312,10 +3481,21 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
     return () => {
       window.removeEventListener('resize', fitAndResize);
       disposable.dispose();
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(4002, 'Terminal pane detached');
       terminal.dispose();
     };
   }, [tab.connection.id, tab.reconnectKey]);
+
+  useEffect(() => {
+    if (!tab.disconnectKey) return;
+    try {
+      if (socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING) {
+        socketRef.current.close(4000, 'User disconnected');
+      }
+    } catch (error) {
+      // The socket may already be closed.
+    }
+  }, [tab.disconnectKey]);
 
   useEffect(() => {
     if (!active || !terminalRef.current || !fitRef.current) return;

@@ -12,6 +12,7 @@ import secrets
 import shlex
 import shutil
 import sqlite3
+import ssl
 import stat
 import subprocess
 import threading
@@ -149,6 +150,9 @@ DEFAULT_USD_TO_INR = 83.0
 TERMINAL_RISK_LEVELS = {"Safe", "Medium", "Dangerous"}
 TERMINAL_SECRET_WORDS = {"password", "passwd", "token", "secret", "key"}
 TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "iptables -f", "iptables flush", "ufw reset", "systemctl stop")
+TERMINAL_IDLE_TIMEOUT_SECONDS = int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "300"))
+TERMINAL_LIVE_SESSIONS: dict[str, dict] = {}
+TERMINAL_LIVE_SESSIONS_LOCK = threading.Lock()
 DEFAULT_TERMINAL_COMMANDS = [
     {"title": "Uptime", "command": "uptime", "purpose": "Shows how long the server has been running and load averages.", "category": "Linux", "risk_level": "Safe"},
     {"title": "Top Processes", "command": "top", "purpose": "Interactive process and resource monitor.", "category": "Linux", "risk_level": "Safe"},
@@ -204,6 +208,7 @@ PAGE_KEYS = [
     "webphone",
     "terminal",
     "asterisk_sound_manager",
+    "bare_metal_os_installer",
 ]
 PAGE_KEY_ALIASES = {
     "command_center": "dashboard",
@@ -239,6 +244,7 @@ DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
     "webphone",
     "terminal",
     "asterisk_sound_manager",
+    "bare_metal_os_installer",
     *PAGE_KEYS,
 ]))
 ALLOWED_PERMISSION_KEYS = sorted(set(PAGE_KEYS) | set(DEFAULT_PERMISSION_KEYS) | set(PAGE_KEY_ALIASES))
@@ -262,10 +268,11 @@ MODULE_PAGE_MAP = {
     "webphone": "webphone",
     "terminal": "terminal",
     "asteriskSoundManager": "asterisk_sound_manager",
+    "bareMetalOsInstaller": "bare_metal_os_installer",
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager", "bare_metal_os_installer"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
@@ -653,6 +660,19 @@ def require_asterisk_sound_manager(action: str = "can_view"):
         permission = permission_dict(db, user).get("asterisk_sound_manager")
         if not permission or not permission.get(action):
             raise HTTPException(status_code=403, detail="Asterisk Sound Manager permission denied")
+        return user
+    return checker
+
+
+def require_bare_metal_os_installer(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"admin", "noc_user"}:
+            raise HTTPException(status_code=403, detail="Bare Metal OS Installer is restricted to admin and NOC users")
+        if user.role == "admin":
+            return user
+        permission = permission_dict(db, user).get("bare_metal_os_installer")
+        if not permission or not permission.get(action):
+            raise HTTPException(status_code=403, detail="Bare Metal OS Installer permission denied")
         return user
     return checker
 
@@ -2307,6 +2327,39 @@ def read_ssh_channel(channel):
         time.sleep(0.05)
 
 
+def cleanup_terminal_live_sessions(force_key: str | None = None):
+    now = time.time()
+    expired = []
+    with TERMINAL_LIVE_SESSIONS_LOCK:
+        for key, item in list(TERMINAL_LIVE_SESSIONS.items()):
+            if force_key and key != force_key:
+                continue
+            if force_key or (not item.get("attached") and now - item.get("detached_at", now) > TERMINAL_IDLE_TIMEOUT_SECONDS):
+                expired.append((key, item))
+                TERMINAL_LIVE_SESSIONS.pop(key, None)
+    for key, item in expired:
+        try:
+            if item.get("channel"):
+                item["channel"].close()
+        except Exception:
+            pass
+        try:
+            if item.get("ssh_client"):
+                item["ssh_client"].close()
+        except Exception:
+            pass
+        session_id = item.get("session_id")
+        if session_id:
+            with SessionLocal() as db:
+                session = db.get(TerminalSession, session_id)
+                user = db.get(User, item.get("user_id")) if item.get("user_id") else None
+                if session and not session.ended_at:
+                    session.status = "Idle Timeout" if not force_key else "Closed"
+                    session.ended_at = datetime.utcnow()
+                    log_activity(db, user, "terminal_session_closed", "terminal", "TerminalSession", session.id, f"Terminal session closed for {item.get('connection_name') or 'SSH connection'}", commit=False)
+                    db.commit()
+
+
 def user_from_ws_token(db: Session, token: str | None):
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -2418,6 +2471,130 @@ def test_terminal_connection(record_id: int, request: Request, db: Session = Dep
         raise HTTPException(status_code=400, detail=f"SSH test failed: {exc}") from exc
     log_activity(db, user, "test_ssh_connection", "terminal", "SSHConnection", record.id, f"SSH test succeeded for {record.connection_name}", request=request, commit=True)
     return {"ok": True, "message": "SSH connection successful"}
+
+
+BARE_METAL_ISO_URLS = {
+    "ViciBox 12": "https://example.com/isos/vicibox-12.iso",
+    "AlmaLinux 9": "https://repo.almalinux.org/almalinux/9/isos/x86_64/AlmaLinux-9-latest-x86_64-dvd.iso",
+    "Debian 12": "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/debian-12-amd64-DVD-1.iso",
+    "Proxmox VE": "https://enterprise.proxmox.com/iso/proxmox-ve_8.iso",
+}
+
+
+class IPMIRequestIn(BaseModel):
+    server_name: str
+    ipmi_ip: str
+    username: str
+    password: str
+    public_ip: str
+    os_name: str
+
+
+def validate_ipmi_payload(payload: IPMIRequestIn):
+    if not normalize(payload.server_name):
+        raise HTTPException(status_code=400, detail="Server name is required")
+    if not normalize(payload.username) or not normalize(payload.password):
+        raise HTTPException(status_code=400, detail="IPMI username and password are required")
+    if payload.os_name not in BARE_METAL_ISO_URLS:
+        raise HTTPException(status_code=400, detail="Unsupported OS selection")
+    for label, value in [("IPMI IP", payload.ipmi_ip), ("Public IP", payload.public_ip)]:
+        try:
+            ipaddress.ip_address(normalize(value) or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{label} must be a valid IP address") from exc
+
+
+def ipmi_redfish_request(payload: IPMIRequestIn, path: str, method: str = "GET", body: dict | None = None, timeout: int = 12):
+    url = f"https://{payload.ipmi_ip}{path}"
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    request_obj = urllib.request.Request(url, data=data, method=method)
+    request_obj.add_header("Content-Type", "application/json")
+    token = base64.b64encode(f"{payload.username}:{payload.password}".encode()).decode()
+    request_obj.add_header("Authorization", f"Basic {token}")
+    context = ssl._create_unverified_context()
+    with urllib.request.urlopen(request_obj, timeout=timeout, context=context) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        return json.loads(raw) if raw else {}
+
+
+def run_ipmitool(payload: IPMIRequestIn, args: list[str], timeout: int = 20):
+    if not shutil.which("ipmitool"):
+        return {"ok": False, "output": "ipmitool is not installed on the NOC360 backend server"}
+    command = ["ipmitool", "-I", "lanplus", "-H", payload.ipmi_ip, "-U", payload.username, "-P", payload.password, *args]
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    output = "\n".join(part for part in [completed.stdout.strip(), completed.stderr.strip()] if part)
+    return {"ok": completed.returncode == 0, "output": output}
+
+
+def test_ipmi_connection(payload: IPMIRequestIn):
+    try:
+        data = ipmi_redfish_request(payload, "/redfish/v1/")
+        return {"ok": True, "method": "redfish", "message": "Redfish connection successful", "redfish": bool(data)}
+    except Exception as redfish_exc:
+        tool = run_ipmitool(payload, ["chassis", "status"])
+        if tool["ok"]:
+            return {"ok": True, "method": "ipmitool", "message": "IPMI connection successful", "output": tool["output"]}
+        raise HTTPException(status_code=400, detail=f"IPMI connection failed. Redfish: {redfish_exc}. ipmitool: {tool['output']}")
+
+
+def find_redfish_virtual_media(payload: IPMIRequestIn):
+    managers = ipmi_redfish_request(payload, "/redfish/v1/Managers/")
+    for member in managers.get("Members", []):
+        manager_path = member.get("@odata.id")
+        if not manager_path:
+            continue
+        manager = ipmi_redfish_request(payload, manager_path)
+        virtual_media_path = manager.get("VirtualMedia", {}).get("@odata.id") or f"{manager_path.rstrip('/')}/VirtualMedia"
+        try:
+            media = ipmi_redfish_request(payload, virtual_media_path)
+        except Exception:
+            continue
+        for item in media.get("Members", []):
+            media_path = item.get("@odata.id")
+            if media_path:
+                return media_path
+    raise RuntimeError("No Redfish virtual media endpoint found")
+
+
+def mount_redfish_iso(payload: IPMIRequestIn, iso_url: str):
+    media_path = find_redfish_virtual_media(payload)
+    action_path = f"{media_path.rstrip('/')}/Actions/VirtualMedia.InsertMedia"
+    ipmi_redfish_request(payload, action_path, method="POST", body={"Image": iso_url, "Inserted": True, "WriteProtected": True}, timeout=20)
+    return media_path
+
+
+@app.post("/api/ipmi/test")
+@app.post("/ipmi/test")
+def test_ipmi(payload: IPMIRequestIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_bare_metal_os_installer())):
+    validate_ipmi_payload(payload)
+    result = test_ipmi_connection(payload)
+    log_activity(db, user, "test_ipmi_connection", "bare_metal_os_installer", "IPMI", None, f"Tested IPMI for {payload.server_name}", new_value={"server_name": payload.server_name, "ipmi_ip": payload.ipmi_ip, "public_ip": payload.public_ip, "os_name": payload.os_name, "method": result.get("method")}, request=request, commit=True)
+    return {key: value for key, value in result.items() if key != "password"}
+
+
+@app.post("/api/ipmi/install")
+@app.post("/ipmi/install")
+def install_bare_metal_os(payload: IPMIRequestIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_bare_metal_os_installer("can_edit"))):
+    validate_ipmi_payload(payload)
+    iso_url = BARE_METAL_ISO_URLS[payload.os_name]
+    steps = [{"step": "Select ISO", "status": "Completed", "message": iso_url}]
+    test_ipmi_connection(payload)
+    try:
+        media_path = mount_redfish_iso(payload, iso_url)
+        steps.append({"step": "Mounting ISO", "status": "Completed", "message": f"Mounted through Redfish virtual media: {media_path}"})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to mount ISO using Redfish virtual media: {exc}") from exc
+    boot = run_ipmitool(payload, ["chassis", "bootdev", "cdrom", "options=persistent"], timeout=20)
+    if not boot["ok"]:
+        raise HTTPException(status_code=400, detail=f"Unable to set boot device to CD: {boot['output']}")
+    steps.append({"step": "Set boot device", "status": "Completed", "message": "Boot device set to CD/DVD"})
+    reset = run_ipmitool(payload, ["chassis", "power", "reset"], timeout=20)
+    if not reset["ok"]:
+        raise HTTPException(status_code=400, detail=f"Unable to reboot server: {reset['output']}")
+    steps.append({"step": "Rebooting", "status": "Completed", "message": reset["output"] or "Power reset sent"})
+    steps.append({"step": "Installing", "status": "Pending", "message": "Server is booting from mounted ISO. Continue installation from console or unattended ISO workflow."})
+    log_activity(db, user, "start_bare_metal_os_install", "bare_metal_os_installer", "IPMI", None, f"Started OS install for {payload.server_name}", new_value={"server_name": payload.server_name, "ipmi_ip": payload.ipmi_ip, "public_ip": payload.public_ip, "os_name": payload.os_name, "iso_url": iso_url}, request=request, commit=True)
+    return {"ok": True, "status": "Installing", "message": f"{payload.os_name} ISO mounted and server rebooted.", "server_name": payload.server_name, "public_ip": payload.public_ip, "os_name": payload.os_name, "steps": steps}
 
 
 ASTERISK_SOUND_DEFAULT_PATH = "/usr/share/asterisk/sounds/"
@@ -2853,12 +3030,16 @@ def create_terminal_command_history(payload: TerminalCommandHistoryCreate, db: S
 @app.websocket("/terminal/ws/{connection_id}")
 async def terminal_websocket(websocket: WebSocket, connection_id: int):
     token = websocket.query_params.get("token")
+    tab_id = normalize(websocket.query_params.get("tab_id")) or f"connection-{connection_id}"
     session_id = None
     user_id = None
     ssh_client = None
     channel = None
     connection_name = None
+    session_key = None
+    intentional_close = False
     try:
+        cleanup_terminal_live_sessions()
         with SessionLocal() as db:
             user = user_from_ws_token(db, token)
             assert_terminal_user(db, user)
@@ -2876,25 +3057,48 @@ async def terminal_websocket(websocket: WebSocket, connection_id: int):
                 "password": record.password,
             }
             connection_name = record.connection_name
-            session = TerminalSession(connection_id=record.id, user_id=user.id, status="Opening")
-            db.add(session)
-            db.flush()
-            session_id = session.id
             user_id = user.id
-            log_activity(db, user, "terminal_session_opened", "terminal", "TerminalSession", session.id, f"Terminal session opened for {record.connection_name}", new_value={"connection_id": record.id, "connection_name": record.connection_name}, request=websocket, commit=False)
-            db.commit()
+            session_key = f"{user.id}:{connection_id}:{tab_id}"
+            live = None
+            with TERMINAL_LIVE_SESSIONS_LOCK:
+                candidate = TERMINAL_LIVE_SESSIONS.get(session_key)
+                if candidate and not candidate.get("channel", None).closed:
+                    live = candidate
+                    live["attached"] = True
+            if live:
+                session_id = live.get("session_id")
+                ssh_client = live.get("ssh_client")
+                channel = live.get("channel")
+                connection_name = live.get("connection_name") or connection_name
+                session = db.get(TerminalSession, session_id) if session_id else None
+                if session:
+                    session.status = "Connected"
+                    db.commit()
+            else:
+                session = TerminalSession(connection_id=record.id, user_id=user.id, status="Opening")
+                db.add(session)
+                db.flush()
+                session_id = session.id
+                log_activity(db, user, "terminal_session_opened", "terminal", "TerminalSession", session.id, f"Terminal session opened for {record.connection_name}", new_value={"connection_id": record.id, "connection_name": record.connection_name}, request=websocket, commit=False)
+                db.commit()
 
         await websocket.accept()
-        await websocket.send_text(f"\r\nConnecting to {connection_name}...\r\n")
-        ssh_client = await asyncio.to_thread(open_ssh_client, connection)
-        channel = await asyncio.to_thread(ssh_client.invoke_shell, "xterm", 120, 36)
-        channel.settimeout(0.0)
-        await websocket.send_text("\r\nConnected.\r\n")
-        with SessionLocal() as db:
-            session = db.get(TerminalSession, session_id)
-            if session:
-                session.status = "Connected"
-                db.commit()
+        if channel and ssh_client:
+            await websocket.send_text(f"\r\nReconnected to {connection_name}.\r\n")
+        else:
+            await websocket.send_text(f"\r\nConnecting to {connection_name}...\r\n")
+            ssh_client = await asyncio.to_thread(open_ssh_client, connection)
+            channel = await asyncio.to_thread(ssh_client.invoke_shell, "xterm", 120, 36)
+            channel.settimeout(0.0)
+            if session_key:
+                with TERMINAL_LIVE_SESSIONS_LOCK:
+                    TERMINAL_LIVE_SESSIONS[session_key] = {"ssh_client": ssh_client, "channel": channel, "session_id": session_id, "user_id": user_id, "connection_id": connection_id, "connection_name": connection_name, "attached": True, "detached_at": None}
+            await websocket.send_text("\r\nConnected.\r\n")
+            with SessionLocal() as db:
+                session = db.get(TerminalSession, session_id)
+                if session:
+                    session.status = "Connected"
+                    db.commit()
 
         async def ssh_to_ws():
             while True:
@@ -2922,8 +3126,8 @@ async def terminal_websocket(websocket: WebSocket, connection_id: int):
             task.cancel()
         for task in done:
             task.result()
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        intentional_close = exc.code == 4000
     except HTTPException:
         if websocket.client_state.name != "DISCONNECTED":
             await websocket.close(code=1008)
@@ -2935,17 +3139,32 @@ async def terminal_websocket(websocket: WebSocket, connection_id: int):
         except Exception:
             pass
     finally:
-        try:
-            if channel:
-                channel.close()
-        except Exception:
-            pass
-        try:
-            if ssh_client:
-                ssh_client.close()
-        except Exception:
-            pass
-        if session_id:
+        channel_closed = bool(getattr(channel, "closed", False)) if channel else False
+        if (intentional_close or channel_closed) and session_key:
+            cleanup_terminal_live_sessions(force_key=session_key)
+        elif session_key:
+            with TERMINAL_LIVE_SESSIONS_LOCK:
+                live = TERMINAL_LIVE_SESSIONS.get(session_key)
+                if live:
+                    live["attached"] = False
+                    live["detached_at"] = time.time()
+            if session_id:
+                with SessionLocal() as db:
+                    session = db.get(TerminalSession, session_id)
+                    if session:
+                        session.status = "Disconnected"
+                        db.commit()
+        elif session_id:
+            try:
+                if channel:
+                    channel.close()
+            except Exception:
+                pass
+            try:
+                if ssh_client:
+                    ssh_client.close()
+            except Exception:
+                pass
             with SessionLocal() as db:
                 session = db.get(TerminalSession, session_id)
                 user = db.get(User, user_id) if user_id else None
