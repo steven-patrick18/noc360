@@ -407,6 +407,37 @@ class SSHConnectionPasswordOut(BaseModel):
     password: str
 
 
+class AsteriskSoundServerBase(BaseModel):
+    cluster_name: str
+    server_name: str
+    server_ip: str
+    ssh_port: int = 22
+    root_username: str = "root"
+    sounds_path: str = "/usr/share/asterisk/sounds/"
+    status: str = "Active"
+
+
+class AsteriskSoundServerCreate(AsteriskSoundServerBase):
+    root_password: str
+
+
+class AsteriskSoundServerUpdate(AsteriskSoundServerBase):
+    root_password: Optional[str] = None
+
+
+class AsteriskSoundServerOut(AsteriskSoundServerBase, OrmModel):
+    id: int
+    has_password: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class AsteriskSoundFileOut(BaseModel):
+    filename: str
+    size: int
+    modified_at: Optional[datetime] = None
+
+
 class TerminalSessionOut(OrmModel):
     id: int
     connection_id: Optional[int] = None

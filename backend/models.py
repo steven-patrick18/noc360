@@ -238,6 +238,22 @@ class SSHConnection(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
 
 
+class AsteriskSoundServer(Base):
+    __tablename__ = "asterisk_sound_servers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cluster_name = Column(String, nullable=False, index=True)
+    server_name = Column(String, nullable=False, index=True)
+    server_ip = Column(String, nullable=False, index=True)
+    ssh_port = Column(Integer, default=22, nullable=False)
+    root_username = Column(String, default="root", nullable=False, index=True)
+    root_password = Column(String, nullable=True)
+    sounds_path = Column(String, default="/usr/share/asterisk/sounds/", nullable=False)
+    status = Column(String, default="Active", index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+
+
 class TerminalSession(Base):
     __tablename__ = "terminal_sessions"
 

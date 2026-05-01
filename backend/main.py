@@ -6,10 +6,13 @@ import ipaddress
 import json
 import logging
 import os
+import posixpath
 import re
 import secrets
+import shlex
 import shutil
 import sqlite3
+import stat
 import subprocess
 import threading
 import time
@@ -30,7 +33,7 @@ try:
 except ImportError:  # Terminal APIs return a clear setup error until requirements are installed.
     paramiko = None
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
@@ -39,9 +42,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
+from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile
 from schemas import (
     ActivityLogOut,
+    AsteriskSoundFileOut,
+    AsteriskSoundServerCreate,
+    AsteriskSoundServerOut,
+    AsteriskSoundServerUpdate,
     BillingChargeCreate,
     BillingChargeOut,
     BillingChargeUpdate,
@@ -196,6 +203,7 @@ PAGE_KEYS = [
     "my_tickets",
     "webphone",
     "terminal",
+    "asterisk_sound_manager",
 ]
 PAGE_KEY_ALIASES = {
     "command_center": "dashboard",
@@ -230,6 +238,7 @@ DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
     "my_tickets",
     "webphone",
     "terminal",
+    "asterisk_sound_manager",
     *PAGE_KEYS,
 ]))
 ALLOWED_PERMISSION_KEYS = sorted(set(PAGE_KEYS) | set(DEFAULT_PERMISSION_KEYS) | set(PAGE_KEY_ALIASES))
@@ -252,10 +261,11 @@ MODULE_PAGE_MAP = {
     "myTickets": "my_tickets",
     "webphone": "webphone",
     "terminal": "terminal",
+    "asteriskSoundManager": "asterisk_sound_manager",
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone"],
+    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
@@ -634,6 +644,19 @@ def require_terminal(action: str = "can_view"):
     return checker
 
 
+def require_asterisk_sound_manager(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"admin", "noc_user"}:
+            raise HTTPException(status_code=403, detail="Asterisk Sound Manager is restricted to admin and NOC users")
+        if user.role == "admin":
+            return user
+        permission = permission_dict(db, user).get("asterisk_sound_manager")
+        if not permission or not permission.get(action):
+            raise HTTPException(status_code=403, detail="Asterisk Sound Manager permission denied")
+        return user
+    return checker
+
+
 def has_page_permission(db: Session, user: User, page_key: str, action: str = "can_view"):
     if user.role == "admin":
         return True
@@ -662,7 +685,7 @@ def normalize(value):
     return stripped or None
 
 
-SENSITIVE_LOG_KEYS = {"password", "password_hash", "login_password", "confirm_password", "new_password", "current_password", "anti_hack_password", "sip_password", "trunk_password", "trunk_pass"}
+SENSITIVE_LOG_KEYS = {"password", "password_hash", "login_password", "confirm_password", "new_password", "current_password", "anti_hack_password", "sip_password", "trunk_password", "trunk_pass", "root_password"}
 GEO_IP_CACHE: dict[str, dict[str, str | None]] = {}
 GEO_IP_PENDING: set[str] = set()
 LOCAL_GEO = {"country": "Local", "city": "Internal", "isp": "Local / Internal"}
@@ -2395,6 +2418,331 @@ def test_terminal_connection(record_id: int, request: Request, db: Session = Dep
         raise HTTPException(status_code=400, detail=f"SSH test failed: {exc}") from exc
     log_activity(db, user, "test_ssh_connection", "terminal", "SSHConnection", record.id, f"SSH test succeeded for {record.connection_name}", request=request, commit=True)
     return {"ok": True, "message": "SSH connection successful"}
+
+
+ASTERISK_SOUND_DEFAULT_PATH = "/usr/share/asterisk/sounds/"
+ASTERISK_WAV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,180}\.wav$", re.IGNORECASE)
+
+
+def validate_asterisk_sound_payload(payload: AsteriskSoundServerCreate | AsteriskSoundServerUpdate, require_password: bool = False):
+    if not normalize(payload.cluster_name):
+        raise HTTPException(status_code=400, detail="Cluster name is required")
+    if not normalize(payload.server_name):
+        raise HTTPException(status_code=400, detail="Server name is required")
+    if not normalize(payload.server_ip):
+        raise HTTPException(status_code=400, detail="Server IP is required")
+    if not normalize(payload.root_username):
+        raise HTTPException(status_code=400, detail="Root username is required")
+    if require_password and not normalize(getattr(payload, "root_password", None)):
+        raise HTTPException(status_code=400, detail="Root password is required")
+    port = int(payload.ssh_port or 22)
+    if port < 1 or port > 65535:
+        raise HTTPException(status_code=400, detail="SSH port must be between 1 and 65535")
+    validate_asterisk_sounds_path(payload.sounds_path)
+
+
+def validate_asterisk_sounds_path(path_value: str | None):
+    path = normalize(path_value) or ASTERISK_SOUND_DEFAULT_PATH
+    if not path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Sounds path must be an absolute Linux path")
+    if any(token in path for token in ["\x00", "\n", "\r"]):
+        raise HTTPException(status_code=400, detail="Sounds path contains unsafe characters")
+    return path.rstrip("/") + "/"
+
+
+def sanitize_wav_filename(filename: str | None):
+    base = posixpath.basename((filename or "").replace("\\", "/")).strip()
+    if not base or base in {".", ".."}:
+        raise HTTPException(status_code=400, detail="WAV filename is required")
+    if "/" in base or "\\" in base or not ASTERISK_WAV_NAME_RE.fullmatch(base):
+        raise HTTPException(status_code=400, detail="Only safe .wav filenames are allowed")
+    return base
+
+
+def asterisk_sound_server_out(record: AsteriskSoundServer):
+    return {
+        "id": record.id,
+        "cluster_name": record.cluster_name,
+        "server_name": record.server_name,
+        "server_ip": record.server_ip,
+        "ssh_port": record.ssh_port or 22,
+        "root_username": record.root_username or "root",
+        "sounds_path": record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
+        "status": record.status,
+        "has_password": bool(record.root_password),
+        "created_at": record.created_at,
+        "updated_at": record.updated_at,
+    }
+
+
+def asterisk_sound_connection(record: AsteriskSoundServer):
+    return {
+        "host_ip": record.server_ip,
+        "ssh_port": record.ssh_port or 22,
+        "username": record.root_username or "root",
+        "password": record.root_password or "",
+    }
+
+
+def open_asterisk_sftp(record: AsteriskSoundServer):
+    client = open_ssh_client(asterisk_sound_connection(record))
+    try:
+        return client, client.open_sftp()
+    except Exception:
+        client.close()
+        raise
+
+
+def run_fixed_ssh_check(client, command: str):
+    stdin, stdout, stderr = client.exec_command(command, timeout=12)
+    exit_code = stdout.channel.recv_exit_status()
+    output = stdout.read().decode("utf-8", errors="replace").strip()
+    error = stderr.read().decode("utf-8", errors="replace").strip()
+    return exit_code, output, error
+
+
+@app.get("/api/asterisk-sounds/servers", response_model=list[AsteriskSoundServerOut])
+@app.get("/asterisk-sounds/servers", response_model=list[AsteriskSoundServerOut])
+def get_asterisk_sound_servers(search: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager())):
+    query = db.query(AsteriskSoundServer)
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(AsteriskSoundServer.cluster_name.ilike(like), AsteriskSoundServer.server_name.ilike(like), AsteriskSoundServer.server_ip.ilike(like), AsteriskSoundServer.sounds_path.ilike(like)))
+    rows = query.order_by(AsteriskSoundServer.cluster_name.asc(), AsteriskSoundServer.server_name.asc(), AsteriskSoundServer.id.asc()).all()
+    return [asterisk_sound_server_out(row) for row in rows]
+
+
+@app.post("/api/asterisk-sounds/servers", response_model=AsteriskSoundServerOut)
+@app.post("/asterisk-sounds/servers", response_model=AsteriskSoundServerOut)
+def create_asterisk_sound_server(payload: AsteriskSoundServerCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_create"))):
+    validate_asterisk_sound_payload(payload, require_password=True)
+    record = AsteriskSoundServer(
+        cluster_name=normalize(payload.cluster_name),
+        server_name=normalize(payload.server_name),
+        server_ip=normalize(payload.server_ip),
+        ssh_port=int(payload.ssh_port or 22),
+        root_username=normalize(payload.root_username) or "root",
+        root_password=normalize(payload.root_password),
+        sounds_path=validate_asterisk_sounds_path(payload.sounds_path),
+        status=payload.status or "Active",
+    )
+    db.add(record)
+    db.flush()
+    log_activity(db, user, "create_asterisk_sound_server", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Created Asterisk sound server {record.server_name}", new_value=record, request=request)
+    db.commit()
+    db.refresh(record)
+    return asterisk_sound_server_out(record)
+
+
+@app.put("/api/asterisk-sounds/servers/{record_id}", response_model=AsteriskSoundServerOut)
+@app.put("/asterisk-sounds/servers/{record_id}", response_model=AsteriskSoundServerOut)
+def update_asterisk_sound_server(record_id: int, payload: AsteriskSoundServerUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_edit"))):
+    validate_asterisk_sound_payload(payload)
+    record = get_record(db, AsteriskSoundServer, record_id)
+    old_value = sanitize_activity_value(record)
+    record.cluster_name = normalize(payload.cluster_name)
+    record.server_name = normalize(payload.server_name)
+    record.server_ip = normalize(payload.server_ip)
+    record.ssh_port = int(payload.ssh_port or 22)
+    record.root_username = normalize(payload.root_username) or "root"
+    if normalize(payload.root_password):
+        record.root_password = normalize(payload.root_password)
+    record.sounds_path = validate_asterisk_sounds_path(payload.sounds_path)
+    record.status = payload.status or "Active"
+    record.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(record)
+    log_activity(db, user, "update_asterisk_sound_server", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Updated Asterisk sound server {record.server_name}", old_value=old_value, new_value=record, request=request, commit=True)
+    return asterisk_sound_server_out(record)
+
+
+@app.delete("/api/asterisk-sounds/servers/{record_id}")
+@app.delete("/asterisk-sounds/servers/{record_id}")
+def delete_asterisk_sound_server(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_delete"))):
+    record = get_record(db, AsteriskSoundServer, record_id)
+    old_value = sanitize_activity_value(record)
+    db.delete(record)
+    log_activity(db, user, "delete_asterisk_sound_server", "asterisk_sound_manager", "AsteriskSoundServer", record_id, f"Deleted Asterisk sound server {record.server_name}", old_value=old_value, request=request)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/api/asterisk-sounds/servers/{record_id}/test")
+@app.post("/asterisk-sounds/servers/{record_id}/test")
+def test_asterisk_sound_server(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager())):
+    require_paramiko()
+    record = get_record(db, AsteriskSoundServer, record_id)
+    path = validate_asterisk_sounds_path(record.sounds_path)
+    try:
+        client, sftp = open_asterisk_sftp(record)
+        try:
+            attrs = sftp.stat(path)
+            path_exists = stat.S_ISDIR(attrs.st_mode)
+            if not path_exists:
+                raise ValueError("Sounds path exists but is not a directory")
+            quoted_path = shlex.quote(path.rstrip("/"))
+            writable_code, _, writable_err = run_fixed_ssh_check(client, f"test -d {quoted_path} && test -w {quoted_path}")
+            writable = writable_code == 0
+        finally:
+            sftp.close()
+            client.close()
+    except Exception as exc:
+        log_activity(db, user, "test_asterisk_sound_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Asterisk sound test failed for {record.server_name}: {exc}", request=request, commit=True)
+        raise HTTPException(status_code=400, detail=f"SSH login/path check failed: {exc}") from exc
+    if not writable:
+        raise HTTPException(status_code=400, detail=f"SSH login succeeded and path exists, but {path} is not writable. {writable_err or ''}".strip())
+    log_activity(db, user, "test_asterisk_sound_server", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Asterisk sound test succeeded for {record.server_name}", request=request, commit=True)
+    return {"ok": True, "message": f"SSH login successful. {path} exists and is writable.", "path_exists": True, "path_writable": True}
+
+
+@app.get("/api/asterisk-sounds/servers/{record_id}/files", response_model=list[AsteriskSoundFileOut])
+@app.get("/asterisk-sounds/servers/{record_id}/files", response_model=list[AsteriskSoundFileOut])
+def list_asterisk_sound_files(record_id: int, search: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager())):
+    require_paramiko()
+    record = get_record(db, AsteriskSoundServer, record_id)
+    path = validate_asterisk_sounds_path(record.sounds_path)
+    try:
+        client, sftp = open_asterisk_sftp(record)
+        try:
+            files = []
+            for attrs in sftp.listdir_attr(path):
+                filename = attrs.filename
+                if not filename.lower().endswith(".wav") or not stat.S_ISREG(attrs.st_mode):
+                    continue
+                if search and search.lower() not in filename.lower():
+                    continue
+                files.append({"filename": filename, "size": int(attrs.st_size or 0), "modified_at": datetime.fromtimestamp(attrs.st_mtime) if attrs.st_mtime else None})
+        finally:
+            sftp.close()
+            client.close()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to list WAV files: {exc}") from exc
+    return sorted(files, key=lambda item: item["filename"].lower())
+
+
+def upload_asterisk_wav_to_server(record: AsteriskSoundServer, filename: str, content: bytes):
+    path = validate_asterisk_sounds_path(record.sounds_path)
+    final_path = posixpath.join(path.rstrip("/"), filename)
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_path = f"{final_path}.bak_{stamp}"
+    temp_path = posixpath.join(path.rstrip("/"), f".noc360_upload_{secrets.token_hex(8)}_{filename}")
+    backup_created = False
+    try:
+        client, sftp = open_asterisk_sftp(record)
+        try:
+            with sftp.file(temp_path, "wb") as remote_file:
+                remote_file.write(content)
+            try:
+                existing = sftp.stat(final_path)
+                if stat.S_ISREG(existing.st_mode):
+                    sftp.rename(final_path, backup_path)
+                    backup_created = True
+            except FileNotFoundError:
+                pass
+            except IOError as exc:
+                if getattr(exc, "errno", None) not in {2, None}:
+                    raise
+            sftp.rename(temp_path, final_path)
+            sftp.chmod(final_path, 0o644)
+            quoted_final = shlex.quote(final_path)
+            run_fixed_ssh_check(client, f"chown asterisk:asterisk {quoted_final}")
+        finally:
+            try:
+                sftp.close()
+            finally:
+                client.close()
+    except Exception:
+        try:
+            cleanup_client, cleanup_sftp = open_asterisk_sftp(record)
+            try:
+                cleanup_sftp.remove(temp_path)
+            finally:
+                cleanup_sftp.close()
+                cleanup_client.close()
+        except Exception:
+            pass
+        if backup_created:
+            try:
+                restore_client, restore_sftp = open_asterisk_sftp(record)
+                try:
+                    try:
+                        restore_sftp.stat(final_path)
+                    except Exception:
+                        restore_sftp.rename(backup_path, final_path)
+                finally:
+                    restore_sftp.close()
+                    restore_client.close()
+            except Exception:
+                pass
+        raise
+    return {
+        "server_id": record.id,
+        "server_name": record.server_name,
+        "server_ip": record.server_ip,
+        "status": "success",
+        "ok": True,
+        "message": f"Uploaded {filename} to {path}",
+        "filename": filename,
+        "size": len(content),
+        "backup_created": backup_created,
+        "backup_filename": posixpath.basename(backup_path) if backup_created else None,
+    }
+
+
+@app.post("/api/asterisk-sounds/upload")
+@app.post("/asterisk-sounds/upload")
+def upload_asterisk_sound_file_multi(request: Request, file: UploadFile = File(...), server_ids: list[int] = Form(default=[]), db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_edit"))):
+    require_paramiko()
+    filename = sanitize_wav_filename(file.filename)
+    if not server_ids:
+        raise HTTPException(status_code=400, detail="Select at least one target server")
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="WAV file is empty")
+    unique_ids = list(dict.fromkeys(int(server_id) for server_id in server_ids))
+    records = db.query(AsteriskSoundServer).filter(AsteriskSoundServer.id.in_(unique_ids)).all()
+    by_id = {record.id: record for record in records}
+    results = []
+    for server_id in unique_ids:
+        record = by_id.get(server_id)
+        if not record:
+            results.append({"server_id": server_id, "server_name": f"Server #{server_id}", "server_ip": "-", "status": "failed", "ok": False, "message": "Server record not found"})
+            continue
+        try:
+            result = upload_asterisk_wav_to_server(record, filename, content)
+            results.append(result)
+            log_activity(db, user, "upload_asterisk_sound", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Uploaded WAV {filename} to {record.server_name}", new_value={"filename": filename, "size": len(content), "backup_created": result["backup_created"], "backup_filename": result["backup_filename"]}, request=request, commit=True)
+        except Exception as exc:
+            results.append({"server_id": record.id, "server_name": record.server_name, "server_ip": record.server_ip, "status": "failed", "ok": False, "message": f"WAV upload failed: {exc}"})
+            log_activity(db, user, "upload_asterisk_sound_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"WAV upload failed for {record.server_name}: {exc}", new_value={"filename": filename}, request=request, commit=True)
+    success_count = sum(1 for item in results if item.get("ok"))
+    failed_count = len(results) - success_count
+    return {
+        "ok": failed_count == 0,
+        "message": f"Selected {len(results)} server(s). Uploaded successfully: {success_count}. Failed: {failed_count}.",
+        "total": len(results),
+        "success": success_count,
+        "failed": failed_count,
+        "results": results,
+    }
+
+
+@app.post("/api/asterisk-sounds/servers/{record_id}/upload")
+@app.post("/asterisk-sounds/servers/{record_id}/upload")
+def upload_asterisk_sound_file(record_id: int, request: Request, file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_edit"))):
+    require_paramiko()
+    record = get_record(db, AsteriskSoundServer, record_id)
+    filename = sanitize_wav_filename(file.filename)
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="WAV file is empty")
+    try:
+        result = upload_asterisk_wav_to_server(record, filename, content)
+    except Exception as exc:
+        log_activity(db, user, "upload_asterisk_sound_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"WAV upload failed for {record.server_name}: {exc}", new_value={"filename": filename}, request=request, commit=True)
+        raise HTTPException(status_code=400, detail=f"WAV upload failed: {exc}") from exc
+    log_activity(db, user, "upload_asterisk_sound", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Uploaded WAV {filename} to {record.server_name}", new_value={"filename": filename, "size": len(content), "backup_created": result["backup_created"], "backup_filename": result["backup_filename"]}, request=request, commit=True)
+    return result
 
 
 @app.get("/api/terminal/commands", response_model=list[TerminalCommandOut])

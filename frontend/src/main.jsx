@@ -9,6 +9,8 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileAudio,
+  FolderOpen,
   Globe2,
   LayoutDashboard,
   LogOut,
@@ -33,6 +35,7 @@ import {
   Terminal as TerminalIcon,
   Ticket,
   Trash2,
+  Upload,
   Users,
   X,
 } from 'lucide-react';
@@ -65,7 +68,7 @@ function resolveTheme(themeId) {
   return hour >= 7 && hour < 18 ? 'light' : 'executive';
 }
 
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -90,6 +93,7 @@ const modulePageKeys = {
   myTickets: 'my_tickets',
   webphone: 'webphone',
   terminal: 'terminal',
+  asteriskSoundManager: 'asterisk_sound_manager',
   dangerZone: 'danger_zone',
 };
 
@@ -104,6 +108,7 @@ const modules = {
   tickets: { label: 'Tickets', icon: Ticket },
   webphone: { label: 'Webphone', icon: Phone },
   terminal: { label: 'Terminal', icon: TerminalIcon },
+  asteriskSoundManager: { label: 'Asterisk Sound Manager', icon: FileAudio },
   dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
@@ -214,7 +219,8 @@ function emptyRecord(fields) {
 
 async function request(path, options = {}) {
   const token = localStorage.getItem('noc360_token');
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  const isFormData = options.body instanceof FormData;
+  const headers = { ...(isFormData ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers,
@@ -580,6 +586,8 @@ function App() {
             <WebphonePage user={auth.user} />
           ) : activeKey === 'terminal' ? (
             <TerminalCenterPage user={auth.user} />
+          ) : activeKey === 'asteriskSoundManager' ? (
+            <AsteriskSoundManagerPage user={auth.user} />
           ) : activeKey === 'dangerZone' ? (
             <DangerZonePage user={auth.user} reload={loadAll} />
           ) : activeKey === 'vosDesktop' ? (
@@ -2582,6 +2590,346 @@ function WebphonePage({ user }) {
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+function AsteriskSoundManagerPage({ user }) {
+  const canCreate = canDo(user, 'asterisk_sound_manager', 'can_create');
+  const canEdit = canDo(user, 'asterisk_sound_manager', 'can_edit');
+  const canDelete = canDo(user, 'asterisk_sound_manager', 'can_delete');
+  const [servers, setServers] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [viewServerId, setViewServerId] = useState('');
+  const [search, setSearch] = useState('');
+  const [fileSearch, setFileSearch] = useState('');
+  const [files, setFiles] = useState([]);
+  const [form, setForm] = useState({ cluster_name: '', server_name: '', server_ip: '', ssh_port: 22, root_username: 'root', root_password: '', sounds_path: '/usr/share/asterisk/sounds/', status: 'Active' });
+  const [editingId, setEditingId] = useState(null);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const [deploymentResults, setDeploymentResults] = useState([]);
+
+  const loadServers = async () => {
+    const rows = await request('/asterisk-sounds/servers');
+    setServers(rows);
+    if (selectedIds.length === 0 && rows[0]) {
+      setSelectedIds([String(rows[0].id)]);
+      setViewServerId(String(rows[0].id));
+    }
+  };
+
+  useEffect(() => {
+    loadServers().catch((err) => setError(err.message));
+  }, []);
+
+  const selectedServers = servers.filter((server) => selectedIds.includes(String(server.id)));
+  const selectedServer = selectedServers.length === 1 ? selectedServers[0] : null;
+  const activeViewServer = servers.find((server) => String(server.id) === String(viewServerId)) || selectedServer || selectedServers[0] || null;
+  const filteredServers = servers.filter((server) => `${server.cluster_name} ${server.server_name} ${server.server_ip} ${server.sounds_path}`.toLowerCase().includes(search.toLowerCase()));
+  const filteredFiles = files.filter((item) => item.filename.toLowerCase().includes(fileSearch.toLowerCase()));
+  const uploadReady = selectedServers.length > 0 && uploadFile && uploadFile.name.toLowerCase().endsWith('.wav');
+
+  const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const toggleServer = (serverId) => {
+    const id = String(serverId);
+    setSelectedIds((current) => {
+      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+      if (next.length === 1) setViewServerId(next[0]);
+      if (next.length === 0) setViewServerId('');
+      if (next.length > 1 && !next.includes(String(viewServerId))) setViewServerId(next[0]);
+      return next;
+    });
+  };
+  const selectAllServers = () => {
+    const ids = servers.map((server) => String(server.id));
+    setSelectedIds(ids);
+    setViewServerId(ids[0] || '');
+  };
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setViewServerId('');
+    setFiles([]);
+  };
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({ cluster_name: '', server_name: '', server_ip: '', ssh_port: 22, root_username: 'root', root_password: '', sounds_path: '/usr/share/asterisk/sounds/', status: 'Active' });
+  };
+
+  const saveServer = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    const isEditing = editingId !== null && editingId !== undefined;
+    const payload = { ...form, ssh_port: Number(form.ssh_port || 22) };
+    if (isEditing && !payload.root_password) delete payload.root_password;
+    try {
+      const saved = await request(isEditing ? `/asterisk-sounds/servers/${editingId}` : '/asterisk-sounds/servers', {
+        method: isEditing ? 'PUT' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      setMessage(isEditing ? `Server updated: ${saved.server_name}` : `Server added: ${saved.server_name}`);
+      setSelectedIds([String(saved.id)]);
+      setViewServerId(String(saved.id));
+      resetForm();
+      await loadServers();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const editServer = (server) => {
+    setEditingId(server.id);
+    setForm({
+      cluster_name: server.cluster_name || '',
+      server_name: server.server_name || '',
+      server_ip: server.server_ip || '',
+      ssh_port: server.ssh_port || 22,
+      root_username: server.root_username || 'root',
+      root_password: '',
+      sounds_path: server.sounds_path || '/usr/share/asterisk/sounds/',
+      status: server.status || 'Active',
+    });
+  };
+
+  const deleteServer = async (server) => {
+    if (!window.confirm(`Delete Asterisk sound server ${server.server_name}?`)) return;
+    await request(`/asterisk-sounds/servers/${server.id}`, { method: 'DELETE' });
+    setMessage('Server deleted');
+    setFiles([]);
+    setSelectedIds((current) => current.filter((id) => id !== String(server.id)));
+    if (String(viewServerId) === String(server.id)) setViewServerId('');
+    await loadServers();
+  };
+
+  const testServer = async (server) => {
+    setError('');
+    setMessage('');
+    setBusy(`test-${server.id}`);
+    try {
+      const result = await request(`/asterisk-sounds/servers/${server.id}/test`, { method: 'POST' });
+      setMessage(result.message || 'SSH login successful and sounds path is writable');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const viewFiles = async (server = activeViewServer) => {
+    if (!server) {
+      setError('Select a server library to view');
+      return;
+    }
+    setError('');
+    setBusy(`files-${server.id}`);
+    try {
+      const rows = await request(`/asterisk-sounds/servers/${server.id}/files`);
+      setViewServerId(String(server.id));
+      setFiles(rows);
+      setMessage(`Loaded ${rows.length} WAV file${rows.length === 1 ? '' : 's'} from ${server.server_name}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const uploadWav = async (event) => {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    setDeploymentResults([]);
+    if (selectedServers.length === 0) {
+      setError('Select at least one target server');
+      return;
+    }
+    if (!uploadFile) {
+      setError('Select one .wav file to upload');
+      return;
+    }
+    if (!uploadFile.name.toLowerCase().endsWith('.wav')) {
+      setError('Only .wav files are allowed');
+      return;
+    }
+    const body = new FormData();
+    body.append('file', uploadFile);
+    selectedServers.forEach((server) => body.append('server_ids', String(server.id)));
+    setBusy('upload');
+    try {
+      const result = await request('/asterisk-sounds/upload', { method: 'POST', body });
+      setDeploymentResults(result.results || []);
+      setUploadFile(null);
+      event.target.reset();
+      if (activeViewServer) setFiles(await request(`/asterisk-sounds/servers/${activeViewServer.id}/files`));
+      setMessage(result.message || `Selected ${selectedServers.length}. Uploaded successfully: ${result.success || 0}. Failed: ${result.failed || 0}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const formatBytes = (value) => {
+    const size = Number(value || 0);
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / 1024 / 1024).toFixed(2)} MB`;
+  };
+
+  return (
+    <section className="asteriskSoundPage">
+      <div className="cards managementCards">
+        <div className="metric"><span>Sound Servers</span><strong>{servers.length}</strong></div>
+        <div className="metric payment"><span>Active</span><strong>{servers.filter((item) => item.status === 'Active').length}</strong></div>
+        <div className="metric revenue"><span>Selected</span><strong>{selectedServers.length}</strong></div>
+        <div className="metric"><span>WAV Files</span><strong>{files.length}</strong></div>
+      </div>
+
+      <div className="asteriskSoundLayout">
+        <aside className="panel asteriskSoundSide">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Asterisk SSH Vault</span><h2>Sound Servers</h2></div>
+            <div className="actions">
+              {editingId && <button type="button" onClick={resetForm}><Plus size={16} /> New</button>}
+              <button type="button" onClick={loadServers}><RefreshCcw size={16} /></button>
+            </div>
+          </div>
+          {message && <div className="toastSuccess">{message}</div>}
+          {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+          <div className="asteriskExample"><span>Format example</span><code>Cluster1NameAST1, Cluster1NameAST2</code></div>
+          <div className="search terminalSearch"><Search size={16} /><input placeholder="Search servers" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+
+          {(canCreate || editingId) && (
+            <form className="terminalForm asteriskSoundForm" onSubmit={saveServer}>
+              <label><span>Cluster Name</span><input value={form.cluster_name} onChange={(event) => setField('cluster_name', event.target.value)} placeholder="Cluster1Name" /></label>
+              <label><span>Server Name</span><input value={form.server_name} onChange={(event) => setField('server_name', event.target.value)} placeholder="Cluster1NameAST1" /></label>
+              <label><span>Server IP</span><input value={form.server_ip} onChange={(event) => setField('server_ip', event.target.value)} placeholder="203.0.113.10" /></label>
+              <label><span>SSH Port</span><input type="number" min="1" max="65535" value={form.ssh_port} onChange={(event) => setField('ssh_port', event.target.value)} /></label>
+              <label><span>Root Username</span><input value={form.root_username} onChange={(event) => setField('root_username', event.target.value)} placeholder="root" /></label>
+              <label><span>Root Password</span><input type="password" value={form.root_password} onChange={(event) => setField('root_password', event.target.value)} placeholder={editingId ? 'Leave blank to keep saved password' : 'Root password'} /></label>
+              <label className="wide"><span>Sounds Path</span><input value={form.sounds_path} onChange={(event) => setField('sounds_path', event.target.value)} placeholder="/usr/share/asterisk/sounds/" /></label>
+              <label><span>Status</span><select value={form.status} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+              <div className="formActions wide">
+                <button className="primary"><Plus size={16} /> {editingId ? 'Update Server' : 'Add Server'}</button>
+                {editingId && <button type="button" onClick={resetForm}>Cancel</button>}
+              </div>
+            </form>
+          )}
+
+          <div className="asteriskServerList">
+            {filteredServers.map((server) => (
+              <div className={`asteriskServerCard ${selectedIds.includes(String(server.id)) ? 'selectedAsteriskServer' : ''}`} key={server.id} onClick={() => toggleServer(server.id)} role="button" tabIndex="0">
+                <div className="asteriskServerCardMain">
+                  <input type="checkbox" checked={selectedIds.includes(String(server.id))} onChange={() => toggleServer(server.id)} onClick={(event) => event.stopPropagation()} />
+                  <div>
+                    <strong>{server.server_name}</strong>
+                    <span>{server.server_ip}</span>
+                    <small>{server.cluster_name}</small>
+                  </div>
+                </div>
+                <StatusPill value={server.status} />
+                <div className="actions">
+                  <button type="button" onClick={(event) => { event.stopPropagation(); testServer(server); }} disabled={busy === `test-${server.id}`}>{busy === `test-${server.id}` ? 'Testing...' : 'Test'}</button>
+                  <button type="button" onClick={(event) => { event.stopPropagation(); viewFiles(server); }} disabled={busy === `files-${server.id}`}><FolderOpen size={15} /></button>
+                  {canEdit && <button type="button" onClick={(event) => { event.stopPropagation(); editServer(server); }}><Edit3 size={15} /></button>}
+                  {canDelete && <button type="button" className="danger" onClick={(event) => { event.stopPropagation(); deleteServer(server); }}><Trash2 size={15} /></button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className="panel asteriskSoundWorkspace">
+          <div className="sectionHeader">
+            <div>
+              <span className="eyebrow">WAV Deployment</span>
+              <h2>{selectedServers.length ? `${selectedServers.length} server${selectedServers.length === 1 ? '' : 's'} selected` : 'Select Target Servers'}</h2>
+              <p className="muted">{activeViewServer?.sounds_path || '/usr/share/asterisk/sounds/'}</p>
+            </div>
+            <div className="actions">
+              <button type="button" onClick={() => activeViewServer && testServer(activeViewServer)} disabled={!activeViewServer || busy === `test-${activeViewServer?.id}`}>Test Connection</button>
+              <button type="button" onClick={() => viewFiles()} disabled={!activeViewServer || busy === `files-${activeViewServer?.id}`}><FolderOpen size={16} /> View Files</button>
+            </div>
+          </div>
+
+          <form className="asteriskUploadBox" onSubmit={uploadWav}>
+            <div className="asteriskMultiSelect">
+              <div className="asteriskMultiHeader">
+                <span>Target Servers</span>
+                <strong>{selectedServers.length} server{selectedServers.length === 1 ? '' : 's'} selected</strong>
+              </div>
+              <div className="actions">
+                <button type="button" onClick={selectAllServers}>Select All</button>
+                <button type="button" onClick={clearSelection}>Clear Selection</button>
+              </div>
+              <div className="asteriskMultiOptions">
+                {servers.map((server) => (
+                  <label key={server.id}>
+                    <input type="checkbox" checked={selectedIds.includes(String(server.id))} onChange={() => toggleServer(server.id)} />
+                    <span>{server.server_name}</span>
+                    <small>{server.server_ip}</small>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <label>
+              <span>WAV File</span>
+              <input type="file" accept=".wav,audio/wav,audio/x-wav" onChange={(event) => setUploadFile(event.target.files?.[0] || null)} />
+            </label>
+            <button className="primary" disabled={!uploadReady || busy === 'upload'}><Upload size={16} /> {busy === 'upload' ? 'Uploading...' : 'Upload WAV'}</button>
+          </form>
+          {selectedServers.length === 0 && <div className="asteriskValidation">Select at least one target server.</div>}
+          {uploadFile && !uploadFile.name.toLowerCase().endsWith('.wav') && <div className="asteriskValidation">Only .wav files are allowed.</div>}
+
+          {deploymentResults.length > 0 && (
+            <div className="asteriskResultPanel">
+              <div className="sectionHeader">
+                <div><span className="eyebrow">Deployment Results</span><h2>Upload Status</h2></div>
+              </div>
+              <div className="asteriskResultRows">
+                {deploymentResults.map((result) => (
+                  <div className={`asteriskResultRow ${result.ok ? 'success' : 'failed'}`} key={`${result.server_id}-${result.status}`}>
+                    <strong>{result.server_name}</strong>
+                    <span>{result.server_ip}</span>
+                    <b>{result.ok ? 'Success' : 'Failed'}</b>
+                    <small>{result.message}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="sectionHeader asteriskFilesHeader">
+            <div><span className="eyebrow">Remote Files</span><h2>Sound Library</h2></div>
+            <div className="asteriskFileTools">
+              {selectedServers.length > 1 && (
+                <select value={viewServerId} onChange={(event) => setViewServerId(event.target.value)}>
+                  {selectedServers.map((server) => <option key={server.id} value={server.id}>{server.server_name}</option>)}
+                </select>
+              )}
+              <div className="search terminalSearch"><Search size={16} /><input placeholder="Filter WAV files" value={fileSearch} onChange={(event) => setFileSearch(event.target.value)} /></div>
+            </div>
+          </div>
+          <div className="tableWrap asteriskFilesTable">
+            <table>
+              <thead><tr><th>Filename</th><th>Size</th><th>Modified</th></tr></thead>
+              <tbody>
+                {filteredFiles.map((item) => (
+                  <tr key={item.filename}>
+                    <td><FileAudio size={15} /> {item.filename}</td>
+                    <td>{formatBytes(item.size)}</td>
+                    <td>{item.modified_at ? new Date(item.modified_at).toLocaleString() : '-'}</td>
+                  </tr>
+                ))}
+                {filteredFiles.length === 0 && <tr><td colSpan="3" className="muted">No WAV files loaded. Select a server and use View Files.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
