@@ -340,6 +340,7 @@ function App() {
   const [themeOpen, setThemeOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive');
   const [toast, setToast] = useState('');
+  const [terminalHasMounted, setTerminalHasMounted] = useState(false);
 
   const refreshBillingData = async (ledgerFilters = {}) => {
     if (!auth) return;
@@ -470,6 +471,7 @@ function App() {
     localStorage.removeItem('noc360_user');
     localStorage.removeItem('noc360_terminal_tabs');
     localStorage.removeItem('noc360_terminal_active_tab');
+    setTerminalHasMounted(false);
     setAuth(null);
     setProfileOpen(false);
     setActive('dashboard');
@@ -529,7 +531,15 @@ function App() {
           {Object.entries(activeModules).map(([key, item], index) => {
             const Icon = item.icon;
             return (
-              <button key={key} className={activeKey === key ? 'active' : ''} onClick={() => setActive(key)} style={{ '--nav-index': index }}>
+              <button
+                key={key}
+                className={activeKey === key ? 'active' : ''}
+                onClick={() => {
+                  if (key === 'terminal') setTerminalHasMounted(true);
+                  setActive(key);
+                }}
+                style={{ '--nav-index': index }}
+              >
                 <Icon size={18} />
                 <span>{item.label}</span>
                 {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
@@ -561,9 +571,9 @@ function App() {
         {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
         {loading && <div className="loading">Syncing NOC inventory...</div>}
 
-        {activeModules.terminal && (
+        {activeModules.terminal && (terminalHasMounted || activeKey === 'terminal') && (
           <section className={`pageShell persistentTerminalShell ${activeKey === 'terminal' ? 'isActive' : ''}`} aria-hidden={activeKey !== 'terminal'}>
-            <TerminalCenterPage user={auth.user} visible={activeKey === 'terminal'} />
+            <PersistentTerminalCenterPage user={auth.user} visible={activeKey === 'terminal'} />
           </section>
         )}
 
@@ -3040,37 +3050,70 @@ function AsteriskSoundManagerPage({ user }) {
   );
 }
 
+const TERMINAL_TABS_STORAGE_KEY = 'noc360_terminal_tabs';
+const TERMINAL_ACTIVE_TAB_STORAGE_KEY = 'noc360_terminal_active_tab';
+const TERMINAL_TABS_MAX_BYTES = 50000;
+const TERMINAL_TABS_MAX_COUNT = 12;
+
+function clearStoredTerminalTabs() {
+  try {
+    localStorage.removeItem(TERMINAL_TABS_STORAGE_KEY);
+    localStorage.removeItem(TERMINAL_ACTIVE_TAB_STORAGE_KEY);
+  } catch {
+    // Ignore browser storage access failures.
+  }
+}
+
+function sanitizeStoredTerminalTab(tab) {
+  if (!tab?.id || !tab?.connection?.id || !tab.connection.connection_name || !tab.connection.host_ip) return null;
+  return {
+    id: String(tab.id).slice(0, 80),
+    name: String(tab.name || tab.connection.connection_name || 'SSH').slice(0, 80),
+    connection: {
+      id: tab.connection.id,
+      connection_name: String(tab.connection.connection_name).slice(0, 100),
+      host_ip: String(tab.connection.host_ip).slice(0, 100),
+      ssh_port: Number(tab.connection.ssh_port || 22),
+      username: String(tab.connection.username || '').slice(0, 80),
+      status: tab.connection.status || 'Active',
+    },
+    status: tab.status === 'Connected' ? 'Reconnecting' : String(tab.status || 'Reconnecting').slice(0, 30),
+    reconnectKey: Number(tab.reconnectKey || 0),
+    clearKey: Number(tab.clearKey || 0),
+    disconnectKey: 0,
+    fullscreen: Boolean(tab.fullscreen),
+  };
+}
+
 function loadStoredTerminalTabs() {
   try {
-    const rows = JSON.parse(localStorage.getItem('noc360_terminal_tabs') || '[]');
-    if (!Array.isArray(rows)) {
-      localStorage.removeItem('noc360_terminal_tabs');
-      localStorage.removeItem('noc360_terminal_active_tab');
+    const raw = localStorage.getItem(TERMINAL_TABS_STORAGE_KEY);
+    if (!raw) return [];
+    if (raw.length > TERMINAL_TABS_MAX_BYTES) {
+      clearStoredTerminalTabs();
       return [];
     }
-    return rows
-      .filter((tab) => tab?.id && tab?.connection?.id && tab.connection.connection_name && tab.connection.host_ip)
-      .map((tab) => ({
-        id: String(tab.id),
-        name: String(tab.name || tab.connection.connection_name || 'SSH'),
-        connection: {
-          id: tab.connection.id,
-          connection_name: tab.connection.connection_name,
-          host_ip: tab.connection.host_ip,
-          ssh_port: tab.connection.ssh_port || 22,
-          username: tab.connection.username || '',
-          status: tab.connection.status || 'Active',
-        },
-        status: tab.status === 'Connected' ? 'Reconnecting' : tab.status || 'Reconnecting',
-        reconnectKey: Number(tab.reconnectKey || 0),
-        clearKey: Number(tab.clearKey || 0),
-        disconnectKey: 0,
-        fullscreen: false,
-      }));
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows)) {
+      clearStoredTerminalTabs();
+      return [];
+    }
+    return rows.map(sanitizeStoredTerminalTab).filter(Boolean).slice(-TERMINAL_TABS_MAX_COUNT);
   } catch {
-    localStorage.removeItem('noc360_terminal_tabs');
-    localStorage.removeItem('noc360_terminal_active_tab');
+    clearStoredTerminalTabs();
     return [];
+  }
+}
+
+function loadStoredTerminalActiveTab(tabs) {
+  try {
+    const activeTabId = localStorage.getItem(TERMINAL_ACTIVE_TAB_STORAGE_KEY);
+    if (activeTabId && tabs.some((tab) => tab.id === activeTabId)) return activeTabId;
+    if (activeTabId) localStorage.removeItem(TERMINAL_ACTIVE_TAB_STORAGE_KEY);
+    return tabs[tabs.length - 1]?.id || null;
+  } catch {
+    clearStoredTerminalTabs();
+    return tabs[tabs.length - 1]?.id || null;
   }
 }
 
@@ -3079,12 +3122,18 @@ function TerminalCenterPage({ user, visible = true }) {
   const canEdit = canDo(user, 'terminal', 'can_edit');
   const canDelete = canDo(user, 'terminal', 'can_delete');
   const isAdmin = user?.role === 'admin';
+  const restoredTabsRef = useRef(null);
+  const tabsSaveTimerRef = useRef(null);
   const [connections, setConnections] = useState([]);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
   const [editingId, setEditingId] = useState(null);
-  const [tabs, setTabs] = useState(loadStoredTerminalTabs);
-  const [activeTabId, setActiveTabId] = useState(() => localStorage.getItem('noc360_terminal_active_tab') || null);
+  const [tabs, setTabs] = useState(() => {
+    const restored = loadStoredTerminalTabs();
+    restoredTabsRef.current = restored;
+    return restored;
+  });
+  const [activeTabId, setActiveTabId] = useState(() => loadStoredTerminalActiveTab(restoredTabsRef.current || []));
   const [revealed, setRevealed] = useState({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -3105,30 +3154,35 @@ function TerminalCenterPage({ user, visible = true }) {
   }, []);
 
   useEffect(() => {
-    try {
-      const storedTabs = tabs.map((tab) => ({
-        id: tab.id,
-        name: tab.name,
-        connection: tab.connection,
-        status: tab.status,
-        reconnectKey: tab.reconnectKey || 0,
-        clearKey: tab.clearKey || 0,
-        fullscreen: false,
-      }));
-      localStorage.setItem('noc360_terminal_tabs', JSON.stringify(storedTabs));
-    } catch {
-      localStorage.removeItem('noc360_terminal_tabs');
-    }
+    if (tabsSaveTimerRef.current) window.clearTimeout(tabsSaveTimerRef.current);
+    tabsSaveTimerRef.current = window.setTimeout(() => {
+      try {
+        const storedTabs = tabs
+          .map(sanitizeStoredTerminalTab)
+          .filter(Boolean)
+          .slice(-TERMINAL_TABS_MAX_COUNT);
+        localStorage.setItem(TERMINAL_TABS_STORAGE_KEY, JSON.stringify(storedTabs));
+      } catch {
+        clearStoredTerminalTabs();
+      }
+    }, 350);
+    return () => {
+      if (tabsSaveTimerRef.current) window.clearTimeout(tabsSaveTimerRef.current);
+    };
   }, [tabs]);
 
   useEffect(() => {
-    if (activeTabId) localStorage.setItem('noc360_terminal_active_tab', activeTabId);
-    else localStorage.removeItem('noc360_terminal_active_tab');
+    try {
+      if (activeTabId) localStorage.setItem(TERMINAL_ACTIVE_TAB_STORAGE_KEY, activeTabId);
+      else localStorage.removeItem(TERMINAL_ACTIVE_TAB_STORAGE_KEY);
+    } catch {
+      clearStoredTerminalTabs();
+    }
   }, [activeTabId]);
 
   useEffect(() => {
     if (!activeTabId && tabs[0]) setActiveTabId(tabs[0].id);
-    if (activeTabId && tabs.length && !tabs.some((tab) => tab.id === activeTabId)) setActiveTabId(tabs[tabs.length - 1]?.id || null);
+    if (activeTabId && !tabs.some((tab) => tab.id === activeTabId)) setActiveTabId(tabs[tabs.length - 1]?.id || null);
   }, [tabs, activeTabId]);
 
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
@@ -3387,6 +3441,8 @@ function TerminalCenterPage({ user, visible = true }) {
     </section>
   );
 }
+
+const PersistentTerminalCenterPage = React.memo(TerminalCenterPage);
 
 function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved }) {
   const containerRef = useRef(null);
