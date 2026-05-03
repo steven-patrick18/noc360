@@ -606,6 +606,13 @@ class WeeklyInvoiceItemOut(OrmModel):
     item_type: str
     label: str
     amount: float
+    source_ledger_id: Optional[int] = None
+    entry_date: Optional[date] = None
+    charge_type: Optional[str] = None
+    description: Optional[str] = None
+    amount_usd: float = 0
+    amount_inr: float = 0
+    profit_eligible: bool = False
     sort_order: int = 0
 
 
@@ -615,10 +622,7 @@ class WeeklyInvoiceBase(BaseModel):
     week_end_date: date
     active_billing_days: int
     daily_expected_billing: float = 800000
-    actual_usage_billing: float = 0
-    data_charges: float = 0
-    other_charges: float = 0
-    payment_adjustment: float = 0
+    profit_percent: float = 0
     notes: Optional[str] = None
 
 
@@ -629,6 +633,22 @@ class WeeklyInvoiceCreate(WeeklyInvoiceBase):
 class WeeklyInvoiceOut(WeeklyInvoiceBase, OrmModel):
     id: int
     expected_weekly_billing: float
+    billing_charges: float = 0
+    profit_amount: float = 0
+    actual_usage_billing: float
+    data_charges: float = 0
+    other_charges: float = 0
+    payment_adjustment: float = 0
+    payment_amount: float = 0
+    adjustment_amount: float = 0
+    opening_balance: float = 0
+    current_week_payable: float = 0
+    payments_this_week: float = 0
+    payments_after_week: float = 0
+    total_payments_till_today: float = 0
+    ledger_balance: float = 0
+    final_outstanding: float = 0
+    advance_remaining: float = 0
     difference: float
     final_payable: float
     status: str
@@ -637,6 +657,36 @@ class WeeklyInvoiceOut(WeeklyInvoiceBase, OrmModel):
     updated_at: Optional[datetime] = None
     client_name: Optional[str] = None
     items: list[WeeklyInvoiceItemOut] = []
+
+
+class WeeklyInvoicePreviewOut(BaseModel):
+    client_id: int
+    client_name: Optional[str] = None
+    week_start_date: date
+    week_end_date: date
+    active_billing_days: int
+    daily_expected_billing: float
+    profit_percent: float
+    billing_charges: float
+    data_charges: float
+    other_charges: float
+    payment_amount: float
+    adjustment_amount: float
+    opening_balance: float
+    current_week_payable: float
+    payments_this_week: float
+    payments_after_week: float
+    total_payments_till_today: float
+    ledger_balance: float
+    final_outstanding: float
+    advance_remaining: float
+    profit_amount: float
+    actual_usage_billing: float
+    final_payable: float
+    expected_weekly_billing: float
+    difference: float
+    status: str
+    lines: list[WeeklyInvoiceItemOut]
 
 
 class DataCostBase(BaseModel):

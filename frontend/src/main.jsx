@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import {
   Activity,
   AlertTriangle,
+  Bell,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Download,
   Edit3,
@@ -21,6 +24,8 @@ import {
   Phone,
   PhoneOff,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   ReceiptText,
@@ -61,11 +66,106 @@ const themeOptions = [
   { id: 'light', name: 'Light Professional', description: 'Clean daytime SaaS', colors: ['#f7fafc', '#0369a1', '#0f766e'] },
   { id: 'glass-ultra', name: 'Glass Ultra', description: 'Transparent premium glass', colors: ['#030712', '#7dd3fc', '#c084fc'] },
 ];
+const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
+const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
+const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
+const defaultCustomBackground = { image: '', opacity: 55, blur: 0, overlayColor: '#000000' };
 
 function resolveTheme(themeId) {
   if (themeId !== 'auto') return themeId || 'executive';
   const hour = new Date().getHours();
   return hour >= 7 && hour < 18 ? 'light' : 'executive';
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}
+
+function normalizeHexColor(value, fallback = '#000000') {
+  const text = String(value || '').trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback;
+}
+
+function hexToRgb(value) {
+  const hex = normalizeHexColor(value).slice(1);
+  return `${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)}`;
+}
+
+function normalizeCustomBackground(value = {}) {
+  return {
+    image: typeof value.image === 'string' ? value.image : '',
+    opacity: clampNumber(value.opacity, 0, 100, defaultCustomBackground.opacity),
+    blur: clampNumber(value.blur, 0, 20, defaultCustomBackground.blur),
+    overlayColor: normalizeHexColor(value.overlayColor, defaultCustomBackground.overlayColor),
+  };
+}
+
+function loadCustomBackground() {
+  try {
+    return normalizeCustomBackground(JSON.parse(localStorage.getItem(CUSTOM_BACKGROUND_KEY) || '{}'));
+  } catch {
+    localStorage.removeItem(CUSTOM_BACKGROUND_KEY);
+    return defaultCustomBackground;
+  }
+}
+
+function applyCustomBackground(settings) {
+  const next = normalizeCustomBackground(settings);
+  if (!next.image) {
+    document.body.removeAttribute('data-custom-bg');
+    document.body.style.removeProperty('--custom-bg-image');
+    document.body.style.removeProperty('--custom-bg-overlay-opacity');
+    document.body.style.removeProperty('--custom-bg-blur');
+    document.body.style.removeProperty('--custom-bg-overlay-rgb');
+    return;
+  }
+  document.body.setAttribute('data-custom-bg', '1');
+  document.body.style.setProperty('--custom-bg-image', `url("${next.image.replaceAll('"', '\\"')}")`);
+  document.body.style.setProperty('--custom-bg-overlay-opacity', String(next.opacity / 100));
+  document.body.style.setProperty('--custom-bg-blur', `${next.blur}px`);
+  document.body.style.setProperty('--custom-bg-overlay-rgb', hexToRgb(next.overlayColor));
+}
+
+function dataUrlBytes(dataUrl) {
+  const payload = String(dataUrl || '').split(',')[1] || '';
+  return Math.ceil((payload.length * 3) / 4);
+}
+
+function loadImageFromUrl(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Unable to read image file.'));
+    image.src = url;
+  });
+}
+
+async function optimizeCustomBackground(file) {
+  if (!file) throw new Error('Select an image first.');
+  if (!file.type.startsWith('image/')) throw new Error('Only image files are supported.');
+  if (file.size > MAX_CUSTOM_BACKGROUND_SOURCE_BYTES) throw new Error('Image is too large. Please choose an image under 10MB.');
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImageFromUrl(objectUrl);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const maxSide = file.size > MAX_CUSTOM_BACKGROUND_BYTES ? 1600 : 1920;
+    const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    let dataUrl = '';
+    for (const quality of [0.86, 0.76, 0.66, 0.56, 0.48]) {
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+      if (dataUrlBytes(dataUrl) <= MAX_CUSTOM_BACKGROUND_BYTES) return dataUrl;
+    }
+    if (dataUrlBytes(dataUrl) <= MAX_CUSTOM_BACKGROUND_BYTES) return dataUrl;
+    throw new Error('Compressed image is still above 2MB. Try a smaller background.');
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager', 'bare_metal_os_installer'];
@@ -215,6 +315,15 @@ const customerModules = {
   myReports: { label: 'My Reports', icon: Download },
 };
 
+const sidebarGroups = [
+  { id: 'core', label: 'Core', keys: ['dashboard', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
+  { id: 'operations', label: 'Operations', keys: ['management', 'clients', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways'] },
+  { id: 'finance', label: 'Finance', keys: ['billing', 'myBilling'] },
+  { id: 'communication', label: 'Communication', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
+  { id: 'voipTools', label: 'VoIP Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
+  { id: 'admin', label: 'Admin', keys: ['bareMetalOsInstaller', 'userAccess', 'activityLogs', 'dangerZone'] },
+];
+
 function emptyRecord(fields) {
   return Object.fromEntries(fields.map(([key, , type]) => [key, type === 'number' ? 0 : type === 'boolean' ? false : key === 'status' ? 'Active' : '']));
 }
@@ -351,8 +460,18 @@ function App() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive');
+  const [customBackground, setCustomBackground] = useState(loadCustomBackground);
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
+  const [isSidebarCompact, setIsSidebarCompact] = useState(() => localStorage.getItem('noc360_sidebar_compact') === '1');
+  const [collapsedSidebarGroups, setCollapsedSidebarGroups] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('noc360_sidebar_groups') || '{}') || {};
+    } catch {
+      localStorage.removeItem('noc360_sidebar_groups');
+      return {};
+    }
+  });
 
   const refreshBillingData = async (ledgerFilters = {}) => {
     if (!auth) return;
@@ -431,12 +550,13 @@ function App() {
     const applyTheme = () => {
       document.body.setAttribute('data-theme', resolveTheme(theme));
       document.body.setAttribute('data-theme-choice', theme);
+      applyCustomBackground(customBackground);
     };
     applyTheme();
     if (theme !== 'auto') return undefined;
     const timer = window.setInterval(applyTheme, 60000);
     return () => window.clearInterval(timer);
-  }, [theme]);
+  }, [theme, customBackground]);
 
   useEffect(() => {
     if (!auth?.token) return undefined;
@@ -469,6 +589,18 @@ function App() {
     localStorage.setItem('noc360_theme', themeId);
     setTheme(themeId);
     showToast(themeId === 'auto' ? 'Auto theme enabled' : `${themeOptions.find((item) => item.id === themeId)?.name || 'Theme'} applied`);
+  };
+
+  const updateCustomBackground = (settings) => {
+    const next = normalizeCustomBackground(settings);
+    try {
+      localStorage.setItem(CUSTOM_BACKGROUND_KEY, JSON.stringify(next));
+    } catch {
+      showToast('Custom background storage is full. Try a smaller image.');
+      return;
+    }
+    setCustomBackground(next);
+    applyCustomBackground(next);
   };
 
   const login = async (username, password) => {
@@ -515,15 +647,34 @@ function App() {
   };
   const activeKey = activeModules[active] ? active : Object.keys(activeModules)[0];
   const ActiveIcon = activeModules[activeKey]?.icon || Activity;
-  const shellStats = [
-    ['Sync', loading ? 'Live' : 'Ready'],
-    ['Alerts', dashboard?.summary?.alerts ?? management.summary?.duplicate_alerts ?? 0],
-    ['RDP', data.rdps?.length ?? 0],
-    ['Outstanding', billing.ledgerSummary?.total_outstanding ? usd(billing.ledgerSummary.total_outstanding) : '$0.00'],
-  ];
+  const alertCount = dashboard?.summary?.alerts ?? management.summary?.duplicate_alerts ?? 0;
+  const outstandingValue = billing.ledgerSummary?.total_outstanding ? usd(billing.ledgerSummary.total_outstanding) : '$0.00';
+  const groupedKeys = new Set(sidebarGroups.flatMap((group) => group.keys));
+  const visibleSidebarGroups = sidebarGroups
+    .map((group) => ({
+      ...group,
+      items: group.keys.filter((key) => activeModules[key]).map((key) => [key, activeModules[key]]),
+    }))
+    .filter((group) => group.items.length);
+  const ungroupedModules = Object.entries(activeModules).filter(([key]) => !groupedKeys.has(key));
+  if (ungroupedModules.length) visibleSidebarGroups.push({ id: 'other', label: 'Other', items: ungroupedModules });
+  const toggleSidebarCompact = () => {
+    setIsSidebarCompact((current) => {
+      const next = !current;
+      localStorage.setItem('noc360_sidebar_compact', next ? '1' : '0');
+      return next;
+    });
+  };
+  const toggleSidebarGroup = (groupId) => {
+    setCollapsedSidebarGroups((current) => {
+      const next = { ...current, [groupId]: !current[groupId] };
+      localStorage.setItem('noc360_sidebar_groups', JSON.stringify(next));
+      return next;
+    });
+  };
 
   return (
-    <div className={`app ${loading ? 'isSyncing' : ''}`}>
+    <div className={`app ${loading ? 'isSyncing' : ''} ${isSidebarCompact ? 'sidebarCompact' : ''}`}>
       <div className="sceneGlow" aria-hidden="true">
         <span className="earthCore" />
         <span className="orbitRing orbitOne" />
@@ -544,25 +695,48 @@ function App() {
             <strong>NOC360</strong>
             <span>Global VoIP Grid</span>
           </div>
+          <button type="button" className="sidebarToggle" onClick={toggleSidebarCompact} title={isSidebarCompact ? 'Expand sidebar' : 'Compact sidebar'}>
+            {isSidebarCompact ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+          </button>
         </div>
-        <nav>
-          {Object.entries(activeModules).map(([key, item], index) => {
-            const Icon = item.icon;
+        <nav className="sidebarNav">
+          {visibleSidebarGroups.map((group, groupIndex) => {
+            const hasActiveItem = group.items.some(([key]) => key === activeKey);
+            const isCollapsed = Boolean(collapsedSidebarGroups[group.id]) && !hasActiveItem && !isSidebarCompact;
+            const GroupIcon = isCollapsed ? ChevronRight : ChevronDown;
             return (
-              <button
-                key={key}
-                className={activeKey === key ? 'active' : ''}
-                onClick={() => {
-                  if (key === 'terminal') setTerminalHasMounted(true);
-                  setActive(key);
-                }}
-                style={{ '--nav-index': index }}
-              >
-                <Icon size={18} />
-                <span>{item.label}</span>
-                {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
-                <i className="navPulse" />
-              </button>
+              <section className="navGroup" key={group.id}>
+                <button type="button" className="navGroupToggle" onClick={() => toggleSidebarGroup(group.id)} title={group.label}>
+                  <GroupIcon size={14} />
+                  <span>{group.label}</span>
+                  <em>{group.items.length}</em>
+                </button>
+                {!isCollapsed && (
+                  <div className="navGroupItems">
+                    {group.items.map(([key, item], index) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          type="button"
+                          key={key}
+                          className={`navItem ${activeKey === key ? 'active' : ''}`}
+                          onClick={() => {
+                            if (key === 'terminal') setTerminalHasMounted(true);
+                            setActive(key);
+                          }}
+                          style={{ '--nav-index': (groupIndex * 10) + index }}
+                          title={item.label}
+                        >
+                          <Icon size={18} />
+                          <span>{item.label}</span>
+                          {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
+                          <i className="navPulse" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
             );
           })}
         </nav>
@@ -570,17 +744,19 @@ function App() {
 
       <main>
         <header className="topbar">
-          <div>
-            <span className="eyebrow">NOC360 – Global VoIP Command Grid</span>
+          <div className="topbarTitle">
+            <span className="eyebrow">NOC360 Global VoIP Grid</span>
             <h1><ActiveIcon size={28} /> {activeModules[activeKey]?.label || 'No Access'}</h1>
           </div>
-          <div className="hudGrid">
-            {shellStats.map(([label, value]) => <div className="hudCell" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+          <div className="topbarStatus">
+            <div className={`topStatusItem ${loading ? 'syncing' : 'ready'}`}><Activity size={16} /><span>Sync</span><strong>{loading ? 'Syncing' : 'Ready'}</strong></div>
+            <div className={alertCount > 0 ? 'topStatusItem warning' : 'topStatusItem'}><Bell size={16} /><span>Alerts</span><strong>{alertCount}</strong></div>
+            {auth.user.role !== 'customer' && <div className="topStatusItem"><ReceiptText size={16} /><span>Outstanding</span><strong>{outstandingValue}</strong></div>}
           </div>
           <div className="topActions">
-            <button className="themeTrigger" onClick={() => setThemeOpen(true)} title="Theme Settings"><Palette size={17} /> Theme</button>
+            <button className="themeTrigger" onClick={() => setThemeOpen(true)} title="Theme Settings"><Palette size={17} /></button>
             <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
-            <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh Data</button>
+            <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh</button>
             <button className="iconButton" onClick={logout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
@@ -608,7 +784,7 @@ function App() {
           ) : auth.user.role === 'customer' && activeKey === 'myCdr' ? (
             <CustomerCdrPage user={auth.user} />
           ) : auth.user.role === 'customer' && activeKey === 'myReports' ? (
-            <ReportsPage data={data} user={auth.user} />
+            <ClientInvoiceLedgerView user={auth.user} pageKey="my_reports" title="My Reports" />
           ) : activeKey === 'dashboard' ? (
           <Dashboard dashboard={dashboard} data={data} user={auth.user} onDashboardUpdate={setDashboard} />
           ) : activeKey === 'management' ? (
@@ -657,7 +833,7 @@ function App() {
         </section>
         )}
       </main>
-      {themeOpen && <ThemeSettingsModal selected={theme} onSelect={updateTheme} onClose={() => setThemeOpen(false)} />}
+      {themeOpen && <ThemeSettingsModal selected={theme} customBackground={customBackground} onSelect={updateTheme} onCustomBackgroundChange={updateCustomBackground} onClose={() => setThemeOpen(false)} />}
       {profileOpen && <AccountSettingsModal user={auth.user} onClose={() => setProfileOpen(false)} onUpdated={updateStoredUser} onLogout={logout} />}
     </div>
   );
@@ -694,10 +870,37 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function ThemeSettingsModal({ selected, onSelect, onClose }) {
+function ThemeSettingsModal({ selected, customBackground, onSelect, onCustomBackgroundChange, onClose }) {
   const activeTheme = resolveTheme(selected);
+  const backgroundInputRef = useRef(null);
+  const [backgroundError, setBackgroundError] = useState('');
+  const [isOptimizingBackground, setIsOptimizingBackground] = useState(false);
+  const backgroundSettings = normalizeCustomBackground(customBackground);
   const selectTheme = (themeId) => {
     onSelect(themeId);
+  };
+  const updateBackground = (patch) => {
+    setBackgroundError('');
+    onCustomBackgroundChange({ ...backgroundSettings, ...patch });
+  };
+  const uploadBackground = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setBackgroundError('');
+    setIsOptimizingBackground(true);
+    try {
+      const image = await optimizeCustomBackground(file);
+      onCustomBackgroundChange({ ...backgroundSettings, image });
+    } catch (err) {
+      setBackgroundError(err.message);
+    } finally {
+      setIsOptimizingBackground(false);
+    }
+  };
+  const removeBackground = () => {
+    setBackgroundError('');
+    onCustomBackgroundChange({ ...backgroundSettings, image: '' });
   };
 
   return (
@@ -737,6 +940,31 @@ function ThemeSettingsModal({ selected, onSelect, onClose }) {
             <strong>Auto Theme</strong>
             <small>Light by day, Executive NOC at night.</small>
           </button>
+        </div>
+        <div className="customBackgroundPanel">
+          <div>
+            <span className="eyebrow">Custom Background</span>
+            <h3>Custom Background</h3>
+            <p className="muted">Use a local image behind the app shell. Images are compressed and stored in this browser only.</p>
+          </div>
+          <div className={`customBackgroundPreview ${backgroundSettings.image ? 'hasImage' : ''}`} style={{ backgroundImage: backgroundSettings.image ? `url(${backgroundSettings.image})` : undefined }}>
+            {!backgroundSettings.image && <span>No custom image</span>}
+          </div>
+          <div className="customBackgroundControls">
+            <input ref={backgroundInputRef} type="file" accept="image/*" onChange={uploadBackground} hidden />
+            <button type="button" onClick={() => backgroundInputRef.current?.click()}><Upload size={16} /> {isOptimizingBackground ? 'Optimizing...' : 'Upload Image'}</button>
+            <button type="button" onClick={removeBackground} disabled={!backgroundSettings.image}><Trash2 size={16} /> Remove Image</button>
+            <label className="fieldLabel">Opacity {Math.round(backgroundSettings.opacity)}%
+              <input type="range" min="0" max="100" value={backgroundSettings.opacity} onChange={(event) => updateBackground({ opacity: Number(event.target.value) })} />
+            </label>
+            <label className="fieldLabel">Blur {Math.round(backgroundSettings.blur)}px
+              <input type="range" min="0" max="20" value={backgroundSettings.blur} onChange={(event) => updateBackground({ blur: Number(event.target.value) })} />
+            </label>
+            <label className="fieldLabel">Overlay Color
+              <input type="color" value={backgroundSettings.overlayColor} onChange={(event) => updateBackground({ overlayColor: event.target.value })} />
+            </label>
+          </div>
+          {backgroundError && <span className="formError">{backgroundError}</span>}
         </div>
         <div className="modalActions themeActions">
           <span className="muted">Active: {selected === 'auto' ? `Auto (${themeOptions.find((item) => item.id === activeTheme)?.name})` : themeOptions.find((item) => item.id === activeTheme)?.name}</span>
@@ -1644,6 +1872,7 @@ function makeQuery(filters) {
   if (filters.date_to) params.set('date_to', filters.date_to);
   if (filters.client_ids?.length) params.set('client_ids', filters.client_ids.join(','));
   if (filters.charge_type) params.set('charge_type', filters.charge_type);
+  if (filters.type) params.set('type', filters.type);
   return params.toString() ? `?${params}` : '';
 }
 
@@ -3768,6 +3997,88 @@ function reportValue(header, value) {
   return Number(value).toFixed(2);
 }
 
+function ledgerBalanceText(value) {
+  const amount = Number(value || 0);
+  return amount < 0 ? `Advance ${inr(Math.abs(amount))}` : inr(amount);
+}
+
+function clientLedgerCsvRows(rows) {
+  return rows.map((row) => ({
+    Date: row.date,
+    'Invoice No / Reference': row.reference,
+    Description: row.description,
+    'Debit (DR)': row.debit || '',
+    'Credit (CR)': row.credit || '',
+    Balance: row.balance,
+    'Download PDF': row.invoice_id ? `weekly-invoice-${row.invoice_id}.pdf` : '',
+  }));
+}
+
+function ClientInvoiceLedgerView({ user, pageKey = 'my_reports', title = 'Client Ledger' }) {
+  const canExport = canDo(user, pageKey, 'can_export');
+  const [filters, setFilters] = useState({ date_from: '', date_to: '', type: 'All' });
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const load = async (activeFilters = filters) => {
+    setLoading(true);
+    setError('');
+    try {
+      setRows(await request(`/reports/client-ledger${makeQuery(activeFilters)}`));
+    } catch (err) {
+      setError(err.message);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  const exportLedger = () => exportRows('client-invoice-ledger.csv', clientLedgerCsvRows(rows));
+  return (
+    <section>
+      <div className="sectionTitle">
+        <div>
+          <span className="eyebrow">Client Portal</span>
+          <h2>{title}</h2>
+        </div>
+      </div>
+      <div className="reportFilters">
+        <label className="fieldLabel">From Date<input type="date" value={filters.date_from} onChange={(event) => setFilters({ ...filters, date_from: event.target.value })} /></label>
+        <label className="fieldLabel">To Date<input type="date" value={filters.date_to} onChange={(event) => setFilters({ ...filters, date_to: event.target.value })} /></label>
+        <label className="fieldLabel">Type<select value={filters.type} onChange={(event) => setFilters({ ...filters, type: event.target.value })}>
+          <option>All</option>
+          <option>Invoice</option>
+          <option>Payment</option>
+          <option>Adjustment</option>
+        </select></label>
+        <button onClick={() => load(filters)}><RefreshCcw size={16} /> Run</button>
+        {canExport && <button onClick={exportLedger} disabled={!rows.length}><Download size={16} /> Export CSV</button>}
+      </div>
+      {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+      <div className="tableWrap weeklyInvoiceTable">
+        <table>
+          <thead><tr><th>Date</th><th>Invoice No / Reference</th><th>Description</th><th>Debit (DR)</th><th>Credit (CR)</th><th>Balance</th><th>Download PDF</th></tr></thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}>
+                <td>{row.date}</td>
+                <td>{row.reference}</td>
+                <td>{row.description}</td>
+                <td>{row.debit ? inr(row.debit) : '-'}</td>
+                <td className="creditText">{row.credit ? inr(row.credit) : '-'}</td>
+                <td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{ledgerBalanceText(row.balance)}</td>
+                <td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td>
+              </tr>
+            ))}
+            {!loading && rows.length === 0 && <tr><td colSpan="7" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
+            {loading && <tr><td colSpan="7" className="muted">Loading ledger...</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function ReportsPage({ data, user }) {
   const isCustomer = user?.role === 'customer';
   const reportsPageKey = isCustomer ? 'my_reports' : 'reports';
@@ -4228,17 +4539,118 @@ function currentWeekDates() {
 function weeklyInvoiceMath(form) {
   const activeDays = Number(form.active_billing_days || 0);
   const dailyExpected = Number(form.daily_expected_billing || DEFAULT_DAILY_EXPECTED_BILLING_INR);
-  const actual = Number(form.actual_usage_billing || 0);
+  const billingCharges = Number(form.billing_charges || 0);
   const dataCharges = Number(form.data_charges || 0);
   const otherCharges = Number(form.other_charges || 0);
-  const payment = Number(form.payment_adjustment || 0);
+  const payments = Number(form.payment_amount || 0);
+  const adjustments = Number(form.adjustment_amount || 0);
+  const openingBalance = Number(form.opening_balance || 0);
+  const paymentsAfterWeek = Number(form.payments_after_week || 0);
+  const profitPercent = Number(form.profit_percent || 0);
+  const profitAmount = billingCharges * profitPercent / 100;
+  const actual = billingCharges + profitAmount;
   const expected = activeDays * dailyExpected;
+  const currentWeekPayable = actual + dataCharges + otherCharges;
+  const currentWeekBilling = currentWeekPayable;
+  const totalPaymentsTillToday = Number(form.total_payments_till_today ?? payments + paymentsAfterWeek);
+  const ledgerBalance = Number(form.ledger_balance ?? openingBalance + currentWeekPayable - payments + adjustments);
+  const finalOutstanding = Number(form.final_outstanding ?? ledgerBalance);
   return {
     expected,
+    billingCharges,
+    dataCharges,
+    otherCharges,
+    payments,
+    adjustments,
+    openingBalance,
+    currentWeekBilling,
+    currentWeekPayable,
+    paymentsThisWeek: payments,
+    paymentsAfterWeek,
+    totalPaymentsTillToday,
+    ledgerBalance,
+    finalOutstanding,
+    advanceRemaining: Math.max(0, -finalOutstanding),
+    profitPercent,
+    profitAmount,
     difference: actual - expected,
-    finalPayable: actual + dataCharges + otherCharges - payment,
+    actualUsage: actual,
+    finalPayable: finalOutstanding,
     status: weeklyInvoiceStatus(actual, expected),
   };
+}
+
+function weeklyLineCategory(line) {
+  return String(line?.charge_type || line?.label || '').trim();
+}
+
+function isFinalAdjustmentLine(line) {
+  return ['Payment', 'Adjustment'].includes(weeklyLineCategory(line));
+}
+
+function weeklyProfitHandlingLabel(line) {
+  if (isFinalAdjustmentLine(line)) return 'Non-Profit Item';
+  return line?.profit_eligible ? 'YES' : 'NO';
+}
+
+function balanceLabel(value) {
+  return Number(value || 0) < 0 ? 'Advance Balance' : 'Ledger Balance / Outstanding';
+}
+
+function previousBalanceLabel(value) {
+  return Number(value || 0) < 0 ? 'Previous Advance Balance' : 'Previous Outstanding';
+}
+
+function finalPayableLabel(value) {
+  return Number(value || 0) < 0 ? 'Advance Balance' : 'Final Outstanding';
+}
+
+function balanceDisplay(value) {
+  return inr(Math.abs(Number(value || 0)));
+}
+
+function invoicePaymentsThisWeek(invoice) {
+  return Number(invoice?.payments_this_week ?? invoice?.payment_amount ?? 0);
+}
+
+function invoicePaymentsAfterWeek(invoice) {
+  return Number(invoice?.payments_after_week ?? 0);
+}
+
+function invoiceTotalPaymentsTillToday(invoice) {
+  return Number(invoice?.total_payments_till_today ?? invoicePaymentsThisWeek(invoice) + invoicePaymentsAfterWeek(invoice));
+}
+
+function invoiceFinalOutstanding(invoice) {
+  return Number(invoice?.final_outstanding ?? invoice?.ledger_balance ?? invoice?.final_payable ?? 0);
+}
+
+function invoiceLedgerBalance(invoice) {
+  return Number(invoice?.ledger_balance ?? invoiceFinalOutstanding(invoice));
+}
+
+function invoiceCurrentWeekPayable(invoice) {
+  return Number(invoice?.actual_usage_billing || 0) + Number(invoice?.data_charges || 0) + Number(invoice?.other_charges || 0);
+}
+
+function invoiceCurrentWeekBilling(invoice) {
+  return invoiceCurrentWeekPayable(invoice);
+}
+
+function invoicePreviousOutstanding(invoice) {
+  return Number(invoice?.opening_balance || 0);
+}
+
+function invoiceAdjustmentAmount(invoice) {
+  return Number(invoice?.adjustment_amount || 0);
+}
+
+function invoiceDisplayCurrentWeekPayable(invoice) {
+  return Number(invoice?.actual_usage_billing || 0) + Number(invoice?.data_charges || 0) + Number(invoice?.other_charges || 0);
+}
+
+function invoiceDisplayLedgerBalance(invoice) {
+  return invoicePreviousOutstanding(invoice) + invoiceDisplayCurrentWeekPayable(invoice);
 }
 
 async function downloadWeeklyInvoicePdf(invoice) {
@@ -4253,31 +4665,75 @@ async function downloadWeeklyInvoicePdf(invoice) {
   URL.revokeObjectURL(url);
 }
 
-function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport = false }) {
+function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport = false, canDelete = false }) {
   const weekDates = useMemo(currentWeekDates, []);
   const [invoices, setInvoices] = useState([]);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingCharges, setLoadingCharges] = useState(false);
+  const [chargePreview, setChargePreview] = useState(null);
+  const [viewInvoice, setViewInvoice] = useState(null);
   const [form, setForm] = useState({
     client_id: '',
     week_start_date: weekDates.start,
     week_end_date: weekDates.end,
     active_billing_days: 5,
     daily_expected_billing: DEFAULT_DAILY_EXPECTED_BILLING_INR,
-    actual_usage_billing: '',
-    data_charges: 0,
-    other_charges: 0,
-    payment_adjustment: 0,
+    profit_percent: 0,
     notes: '',
   });
   const isCustomer = user.role === 'customer';
-  const math = weeklyInvoiceMath(form);
+  const isAdmin = user.role === 'admin';
+  const math = weeklyInvoiceMath(chargePreview ? {
+    active_billing_days: chargePreview.active_billing_days,
+    daily_expected_billing: chargePreview.daily_expected_billing,
+    billing_charges: chargePreview.billing_charges,
+    data_charges: chargePreview.data_charges,
+    other_charges: chargePreview.other_charges,
+    payment_amount: chargePreview.payment_amount,
+    adjustment_amount: chargePreview.adjustment_amount,
+    opening_balance: chargePreview.opening_balance,
+    payments_after_week: chargePreview.payments_after_week,
+    total_payments_till_today: chargePreview.total_payments_till_today,
+    ledger_balance: chargePreview.ledger_balance,
+    final_outstanding: chargePreview.final_outstanding,
+    profit_percent: form.profit_percent,
+  } : form);
+  const summary = {
+    expected: math.expected_weekly_billing ?? math.expected ?? 0,
+    billingCharges: math.billing_charges ?? math.billingCharges ?? 0,
+    dataCharges: math.data_charges ?? math.dataCharges ?? 0,
+    otherCharges: math.other_charges ?? math.otherCharges ?? 0,
+    payments: math.payment_amount ?? math.payments ?? 0,
+    adjustments: math.adjustment_amount ?? math.adjustments ?? 0,
+    openingBalance: math.opening_balance ?? math.openingBalance ?? 0,
+    currentWeekBilling: math.current_week_billing ?? math.currentWeekBilling ?? (math.current_week_payable ?? math.currentWeekPayable ?? 0),
+    currentWeekPayable: math.current_week_payable ?? math.currentWeekPayable ?? 0,
+    paymentsThisWeek: math.payments_this_week ?? math.paymentsThisWeek ?? math.payment_amount ?? math.payments ?? 0,
+    paymentsAfterWeek: math.payments_after_week ?? math.paymentsAfterWeek ?? 0,
+    totalPaymentsTillToday: math.total_payments_till_today ?? math.totalPaymentsTillToday ?? ((math.payments_this_week ?? math.paymentsThisWeek ?? math.payment_amount ?? math.payments ?? 0) + (math.payments_after_week ?? math.paymentsAfterWeek ?? 0)),
+    ledgerBalance: math.ledger_balance ?? math.ledgerBalance ?? math.final_outstanding ?? math.finalOutstanding ?? math.final_payable ?? math.finalPayable ?? 0,
+    finalOutstanding: math.final_outstanding ?? math.finalOutstanding ?? math.ledger_balance ?? math.ledgerBalance ?? math.final_payable ?? math.finalPayable ?? 0,
+    advanceRemaining: math.advance_remaining ?? math.advanceRemaining ?? 0,
+    profitPercent: math.profit_percent ?? math.profitPercent ?? Number(form.profit_percent || 0),
+    profitAmount: math.profit_amount ?? math.profitAmount ?? 0,
+    actualUsage: math.actual_usage_billing ?? math.actualUsage ?? 0,
+    finalPayable: math.final_payable ?? math.finalPayable ?? 0,
+    difference: math.difference ?? 0,
+    status: math.status || 'Red',
+  };
   const invoiceTotals = invoices.reduce((total, invoice) => ({
     expected: total.expected + Number(invoice.expected_weekly_billing || 0),
     actual: total.actual + Number(invoice.actual_usage_billing || 0),
-    final: total.final + Number(invoice.final_payable || 0),
-  }), { expected: 0, actual: 0, final: 0 });
+    data: total.data + Number(invoice.data_charges || 0),
+    other: total.other + Number(invoice.other_charges || 0),
+    payments: total.payments + Number(invoice.payment_amount || 0),
+    adjustments: total.adjustments + Number(invoice.adjustment_amount || 0),
+    opening: total.opening + Number(invoice.opening_balance || 0),
+    currentWeek: total.currentWeek + Number(invoice.current_week_payable || 0),
+    final: total.final + invoiceFinalOutstanding(invoice),
+  }), { expected: 0, actual: 0, data: 0, other: 0, payments: 0, adjustments: 0, opening: 0, currentWeek: 0, final: 0 });
 
   const loadInvoices = async () => {
     setLoading(true);
@@ -4298,6 +4754,7 @@ function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport =
   const setInvoiceField = (field, value) => {
     setError('');
     setMessage('');
+    if (field !== 'notes' && field !== 'profit_percent') setChargePreview(null);
     setForm((current) => ({ ...current, [field]: value }));
   };
 
@@ -4308,42 +4765,107 @@ function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport =
       week_end_date: weekDates.end,
       active_billing_days: 5,
       daily_expected_billing: DEFAULT_DAILY_EXPECTED_BILLING_INR,
-      actual_usage_billing: '',
-      data_charges: 0,
-      other_charges: 0,
-      payment_adjustment: 0,
+      profit_percent: 0,
       notes: '',
     });
+    setChargePreview(null);
+  };
+
+  const validateWeeklyInputs = () => {
+    if (!form.client_id) return 'Select a client before loading charges.';
+    if (!form.week_start_date || !form.week_end_date) return 'Select week start and end dates.';
+    if (Number(form.active_billing_days || 0) < 1) return 'Active Billing Days must be at least 1.';
+    if (Number(form.daily_expected_billing || 0) <= 0) return 'Daily Expected Billing must be greater than zero.';
+    if (Number(form.profit_percent) < 0 || form.profit_percent === '') return 'Enter a valid Profit %.';
+    return '';
+  };
+
+  const weeklyPayload = () => ({
+    client_id: Number(form.client_id),
+    week_start_date: form.week_start_date,
+    week_end_date: form.week_end_date,
+    active_billing_days: Number(form.active_billing_days),
+    daily_expected_billing: Number(form.daily_expected_billing || DEFAULT_DAILY_EXPECTED_BILLING_INR),
+    profit_percent: Number(form.profit_percent || 0),
+    notes: form.notes,
+  });
+
+  const loadCharges = async () => {
+    setError('');
+    setMessage('');
+    const validation = validateWeeklyInputs();
+    if (validation) {
+      setError(validation);
+      return;
+    }
+    setLoadingCharges(true);
+    try {
+      const preview = await request('/billing/weekly-invoices/preview', { method: 'POST', body: JSON.stringify(weeklyPayload()) });
+      setChargePreview(preview);
+      setMessage(`Loaded ${preview.lines.length} Money Engine entries.`);
+    } catch (err) {
+      setChargePreview(null);
+      setError(err.message);
+    } finally {
+      setLoadingCharges(false);
+    }
   };
 
   const saveWeeklyInvoice = async (event) => {
     event.preventDefault();
     setError('');
     setMessage('');
-    if (!form.client_id) {
-      setError('Select a client before generating the weekly invoice.');
+    const validation = validateWeeklyInputs();
+    if (validation) {
+      setError(validation);
       return;
     }
-    if (Number(form.active_billing_days || 0) < 1) {
-      setError('Active Billing Days must be at least 1.');
+    if (!chargePreview?.lines?.length) {
+      setError('Click Load Charges before generating the weekly invoice.');
       return;
     }
     try {
       const saved = await request('/billing/weekly-invoices', {
         method: 'POST',
-        body: JSON.stringify({
-          ...form,
-          client_id: Number(form.client_id),
-          active_billing_days: Number(form.active_billing_days),
-          daily_expected_billing: Number(form.daily_expected_billing || DEFAULT_DAILY_EXPECTED_BILLING_INR),
-          actual_usage_billing: Number(form.actual_usage_billing || 0),
-          data_charges: Number(form.data_charges || 0),
-          other_charges: Number(form.other_charges || 0),
-          payment_adjustment: Number(form.payment_adjustment || 0),
-        }),
+        body: JSON.stringify(weeklyPayload()),
       });
       setMessage(`Weekly invoice saved for ${saved.client_name || 'client'}.`);
       resetForm();
+      await loadInvoices();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const createDemoWeeklyData = async () => {
+    setError('');
+    setMessage('');
+    const validation = validateWeeklyInputs();
+    if (validation) {
+      setError(validation);
+      return;
+    }
+    setLoadingCharges(true);
+    try {
+      const result = await request('/billing/weekly-invoices/demo-data', { method: 'POST', body: JSON.stringify(weeklyPayload()) });
+      setMessage(result.message || 'Demo weekly data ready.');
+      const preview = await request('/billing/weekly-invoices/preview', { method: 'POST', body: JSON.stringify(weeklyPayload()) });
+      setChargePreview(preview);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingCharges(false);
+    }
+  };
+
+  const deleteWeeklyInvoice = async (invoice) => {
+    if (!window.confirm('Delete this weekly invoice?')) return;
+    setError('');
+    setMessage('');
+    try {
+      await request(`/billing/weekly-invoices/${invoice.id}`, { method: 'DELETE' });
+      setMessage('Weekly invoice deleted. Daily Money Engine entries were not changed.');
+      setViewInvoice((current) => (current?.id === invoice.id ? null : current));
       await loadInvoices();
     } catch (err) {
       setError(err.message);
@@ -4362,8 +4884,17 @@ function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport =
 
       <div className="cards weeklyInvoiceCards">
         <div className="metric"><span>Saved Invoices</span><strong>{invoices.length}</strong></div>
-        <div className="metric revenue"><span>Expected Billing</span><strong>{inr(invoiceTotals.expected)}</strong></div>
-        <div className="metric payment"><span>Actual Usage Billing</span><strong>{inr(invoiceTotals.actual)}</strong></div>
+        {isCustomer ? (
+          <>
+            <div className="metric payment"><span>Usage Billing</span><strong>{inr(invoiceTotals.actual)}</strong></div>
+            <div className="metric"><span>Data Cost</span><strong>{inr(invoiceTotals.data)}</strong></div>
+          </>
+        ) : (
+          <>
+            <div className="metric revenue"><span>Expected Billing</span><strong>{inr(invoiceTotals.expected)}</strong></div>
+            <div className="metric payment"><span>Actual Usage Billing</span><strong>{inr(invoiceTotals.actual)}</strong></div>
+          </>
+        )}
         <div className={`metric ${invoiceTotals.final > 0 ? 'metricAlert' : ''}`}><span>Final Payable</span><strong>{inr(invoiceTotals.final)}</strong></div>
       </div>
 
@@ -4374,20 +4905,82 @@ function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport =
           <label><span>Week End Date</span><input type="date" value={form.week_end_date} onChange={(event) => setInvoiceField('week_end_date', event.target.value)} /></label>
           <label><span>Active Billing Days</span><input type="number" min="1" max="7" value={form.active_billing_days} onChange={(event) => setInvoiceField('active_billing_days', event.target.value)} /></label>
           <label><span>Daily Expected Billing</span><input type="number" min="0" step="0.01" value={form.daily_expected_billing} onChange={(event) => setInvoiceField('daily_expected_billing', event.target.value)} /></label>
-          <label><span>Actual Usage Charges</span><input type="number" min="0" step="0.01" value={form.actual_usage_billing} onChange={(event) => setInvoiceField('actual_usage_billing', event.target.value)} /></label>
-          <label><span>Data Charges / Cost</span><input type="number" min="0" step="0.01" value={form.data_charges} onChange={(event) => setInvoiceField('data_charges', event.target.value)} /></label>
-          <label><span>Other Charges</span><input type="number" min="0" step="0.01" value={form.other_charges} onChange={(event) => setInvoiceField('other_charges', event.target.value)} /></label>
-          <label><span>Payment / Adjustment</span><input type="number" min="0" step="0.01" value={form.payment_adjustment} onChange={(event) => setInvoiceField('payment_adjustment', event.target.value)} /></label>
+          <label><span>Profit %</span><input type="number" min="0" step="0.01" value={form.profit_percent} onChange={(event) => setInvoiceField('profit_percent', event.target.value)} /></label>
           <label className="weeklyNotes"><span>Notes</span><textarea value={form.notes} onChange={(event) => setInvoiceField('notes', event.target.value)} placeholder="Invoice note" /></label>
+          <div className="weeklyInvoiceActions">
+            <button type="button" onClick={loadCharges} disabled={loadingCharges}><RefreshCcw size={16} /> {loadingCharges ? 'Loading Charges' : 'Load Charges'}</button>
+            {isAdmin && <button type="button" onClick={createDemoWeeklyData} disabled={loadingCharges}><Plus size={16} /> Create Demo Weekly Data</button>}
+            <button className="primary" disabled={!chargePreview?.lines?.length}><Plus size={16} /> Generate Weekly Invoice</button>
+          </div>
           <div className="weeklyInvoicePreview">
-            <span>Expected Weekly Billing</span><strong>{inr(math.expected)}</strong>
-            <span>Actual Usage Billing</span><strong>{inr(Number(form.actual_usage_billing || 0))}</strong>
-            <span>Difference</span><strong className={math.difference >= 0 ? 'okText' : 'outstandingText'}>{inr(math.difference)}</strong>
-            <span>Final Payable</span><strong>{inr(math.finalPayable)}</strong>
-            <span>Status</span><b className={weeklyStatusClass(math.status)}>{math.status}</b>
+            <div className="weeklyCalcSection profitBase">
+              <div className="weeklyCalcHeader">
+                <span>Profit Base</span>
+                <small>Profit NOT applied on Data, Other Charges, Payments, or Adjustments</small>
+              </div>
+              <div className="weeklyCalcRows">
+                <span>Profit Eligible Billing</span><strong>{inr(summary.billingCharges)}</strong>
+                <span>Profit %</span><strong>{Number(summary.profitPercent || 0).toFixed(2)}%</strong>
+                <span>Profit Amount</span><strong>{inr(summary.profitAmount)}</strong>
+              </div>
+            </div>
+            <div className="weeklyCalcSection nonProfitItems">
+              <div className="weeklyCalcHeader">
+                <span>Non-Profit Items</span>
+                <small>Excluded from profit calculation</small>
+              </div>
+              <div className="weeklyCalcRows">
+                <span>Data Cost</span><strong>{inr(summary.dataCharges)}</strong>
+                <span>Other Charges</span><strong>{inr(summary.otherCharges)}</strong>
+              </div>
+            </div>
+            <div className="weeklyCalcSection finalAdjustments">
+              <div className="weeklyCalcHeader">
+                <span>Final Adjustments</span>
+                <small>Payments reduce payable; adjustments apply only at final total</small>
+              </div>
+              <div className="weeklyCalcRows">
+                <span>Payments</span><strong className="creditText">- {inr(summary.payments)}</strong>
+                <span>Adjustments</span><strong>{inr(summary.adjustments)}</strong>
+              </div>
+            </div>
+            <div className="weeklyCalcSection finalTotals">
+              <div className="weeklyCalcHeader">
+                <span>Ledger Balance</span>
+                <small>Week dates pull charges only; outstanding uses full ledger through today</small>
+              </div>
+              <div className="weeklyCalcRows">
+                <span>{previousBalanceLabel(summary.openingBalance)}</span><strong className={summary.openingBalance < 0 ? 'okText' : summary.openingBalance > 0 ? 'outstandingText' : ''}>{balanceDisplay(summary.openingBalance)}</strong>
+                <span>Current Week Payable</span><strong>{inr(summary.currentWeekPayable)}</strong>
+                <span>Payments This Week</span><strong className="creditText">- {inr(summary.paymentsThisWeek)}</strong>
+                <span>Payments After Week</span><strong className="creditText">- {inr(summary.paymentsAfterWeek)}</strong>
+                <span>Total Payments Till Today</span><strong className="creditText">{inr(summary.totalPaymentsTillToday)}</strong>
+                <span>{balanceLabel(summary.ledgerBalance)}</span><strong className={summary.ledgerBalance < 0 ? 'okText' : 'outstandingText'}>{balanceDisplay(summary.ledgerBalance)}</strong>
+                <span>{finalPayableLabel(summary.finalOutstanding)}</span><strong className={summary.finalOutstanding < 0 ? 'okText' : 'outstandingText'}>{balanceDisplay(summary.finalOutstanding)}</strong>
+              </div>
+            </div>
           </div>
           {error && <span className="formError">{error}</span>}
-          <button className="primary"><Plus size={16} /> Generate Weekly Invoice</button>
+          {chargePreview?.lines?.length > 0 && (
+            <div className="weeklyPulledEntries">
+              <h3>Charges Pulled From Daily Money Entries</h3>
+              <div className="tableWrap weeklyChargeTable">
+                <table>
+                  <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount USD</th><th>Amount INR</th><th>Profit Handling</th></tr></thead>
+                  <tbody>{chargePreview.lines.map((line) => (
+                    <tr key={line.source_ledger_id || line.id} className={isFinalAdjustmentLine(line) ? 'finalAdjustmentRow' : ''}>
+                      <td>{line.entry_date}</td>
+                      <td>{line.charge_type || line.label}</td>
+                      <td>{line.description || '-'}</td>
+                      <td>{usd(line.amount_usd)}</td>
+                      <td>{inr(line.amount_inr)}</td>
+                      <td><span className={`profitEligibleFlag ${line.profit_eligible ? 'yes' : isFinalAdjustmentLine(line) ? 'adjustment' : 'no'}`}>{weeklyProfitHandlingLabel(line)}</span></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </form>
       )}
 
@@ -4397,27 +4990,114 @@ function WeeklyInvoicePanel({ user, clients = [], canCreate = false, canExport =
 
       <div className="tableWrap weeklyInvoiceTable">
         <table>
-          <thead><tr><th>Client / Group</th><th>Week</th><th>Active Days</th><th>Expected Billing</th><th>Actual Usage</th><th>Data Cost</th><th>Other</th><th>Payment</th><th>Final Payable</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody>
-            {invoices.map((invoice) => (
-              <tr key={invoice.id}>
-                <td>{invoice.client_name || '-'}</td>
-                <td>{invoice.week_start_date} to {invoice.week_end_date}</td>
-                <td>{invoice.active_billing_days}</td>
-                <td>{inr(invoice.expected_weekly_billing)}</td>
-                <td>{inr(invoice.actual_usage_billing)}</td>
-                <td>{inr(invoice.data_charges)}</td>
-                <td>{inr(invoice.other_charges)}</td>
-                <td className="creditText">{inr(invoice.payment_adjustment)}</td>
-                <td className={invoice.final_payable > 0 ? 'outstandingText' : 'okText'}>{inr(invoice.final_payable)}</td>
-                <td><span className={weeklyStatusClass(invoice.status)}>{invoice.status}</span></td>
-                <td>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(invoice)}><Download size={15} /> PDF</button>}</td>
-              </tr>
-            ))}
-            {!loading && invoices.length === 0 && <tr><td colSpan="11" className="muted">No saved weekly invoices yet.</td></tr>}
-            {loading && <tr><td colSpan="11" className="muted">Loading weekly invoices...</td></tr>}
-          </tbody>
+          {isCustomer ? (
+            <>
+              <thead><tr><th>Client / Group</th><th>Week</th><th>Active Days</th><th>Current Week Payable</th><th>Payments This Week</th><th>Payments After Week</th><th>Total Payments</th><th>Final Outstanding</th><th>Actions</th></tr></thead>
+              <tbody>
+                {invoices.map((invoice) => (
+                  <tr key={invoice.id}>
+                    <td>{invoice.client_name || '-'}</td>
+                    <td>{invoice.week_start_date} to {invoice.week_end_date}</td>
+                    <td>{invoice.active_billing_days}</td>
+                    <td>{inr(invoiceCurrentWeekPayable(invoice))}</td>
+                    <td className="creditText">{inr(invoicePaymentsThisWeek(invoice))}</td>
+                    <td className="creditText">{inr(invoicePaymentsAfterWeek(invoice))}</td>
+                    <td className="creditText">{inr(invoiceTotalPaymentsTillToday(invoice))}</td>
+                    <td className={invoiceFinalOutstanding(invoice) > 0 ? 'outstandingText' : 'okText'}>{finalPayableLabel(invoiceFinalOutstanding(invoice))}: {balanceDisplay(invoiceFinalOutstanding(invoice))}</td>
+                    <td className="actions"><button onClick={() => setViewInvoice(invoice)}><Eye size={15} /> View</button>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(invoice)}><Download size={15} /> PDF</button>}</td>
+                  </tr>
+                ))}
+                {!loading && invoices.length === 0 && <tr><td colSpan="9" className="muted">No saved weekly invoices yet.</td></tr>}
+                {loading && <tr><td colSpan="9" className="muted">Loading weekly invoices...</td></tr>}
+              </tbody>
+            </>
+          ) : (
+            <>
+              <thead><tr><th>Client / Group</th><th>Week</th><th>Active Days</th><th>Expected Billing</th><th>Profit Eligible</th><th>Data Cost</th><th>Other</th><th>Profit</th><th>Actual Usage</th><th>Current Week</th><th>Pay After Week</th><th>Total Payments</th><th>Final Outstanding</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                {invoices.map((invoice) => (
+                  <tr key={invoice.id}>
+                    <td>{invoice.client_name || '-'}</td>
+                    <td>{invoice.week_start_date} to {invoice.week_end_date}</td>
+                    <td>{invoice.active_billing_days}</td>
+                    <td>{inr(invoice.expected_weekly_billing)}</td>
+                    <td>{inr(invoice.billing_charges)}</td>
+                    <td>{inr(invoice.data_charges)}</td>
+                    <td>{inr(invoice.other_charges)}</td>
+                    <td>{Number(invoice.profit_percent || 0).toFixed(2)}% / {inr(invoice.profit_amount)}</td>
+                    <td>{inr(invoice.actual_usage_billing)}</td>
+                    <td>{inr(invoiceCurrentWeekPayable(invoice))}</td>
+                    <td className="creditText">{inr(invoicePaymentsAfterWeek(invoice))}</td>
+                    <td className="creditText">{inr(invoiceTotalPaymentsTillToday(invoice))}</td>
+                    <td className={invoiceFinalOutstanding(invoice) > 0 ? 'outstandingText' : 'okText'}>{finalPayableLabel(invoiceFinalOutstanding(invoice))}: {balanceDisplay(invoiceFinalOutstanding(invoice))}</td>
+                    <td><span className={weeklyStatusClass(invoice.status)}>{invoice.status}</span></td>
+                    <td className="actions"><button onClick={() => setViewInvoice(invoice)}><Eye size={15} /> View</button>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(invoice)}><Download size={15} /> PDF</button>}{canDelete && <button className="danger" onClick={() => deleteWeeklyInvoice(invoice)}><Trash2 size={15} /> Delete</button>}</td>
+                  </tr>
+                ))}
+                {!loading && invoices.length === 0 && <tr><td colSpan="15" className="muted">No saved weekly invoices yet.</td></tr>}
+                {loading && <tr><td colSpan="15" className="muted">Loading weekly invoices...</td></tr>}
+              </tbody>
+            </>
+          )}
         </table>
+      </div>
+      {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
+    </div>
+  );
+}
+
+function WeeklyInvoiceViewModal({ invoice, canExport, onDownload, onClose }) {
+  const adjustmentAmount = invoiceAdjustmentAmount(invoice);
+  const currentWeekPayable = invoiceDisplayCurrentWeekPayable(invoice);
+  const ledgerBalance = invoiceDisplayLedgerBalance(invoice);
+  const finalOutstanding = invoiceFinalOutstanding(invoice);
+  return (
+    <div className="modalBackdrop modal-overlay">
+      <div className="modal modal-box weeklyInvoiceViewModal">
+        <div className="modalHeader weeklyInvoiceViewHeader">
+          <div>
+            <span className="eyebrow">Saved Weekly Invoice</span>
+            <h2>{invoice.client_name || 'Client'} | {invoice.week_start_date} to {invoice.week_end_date}</h2>
+          </div>
+          <div className="actions">
+            {canExport && <button onClick={() => onDownload(invoice)}><Download size={16} /> PDF</button>}
+            <button className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>
+          </div>
+        </div>
+
+        <div className="weeklyInvoiceSimple">
+          <section className="weeklyInvoiceSection">
+            <h3>Week Summary</h3>
+            <div className="weeklyInvoiceViewGrid">
+              <div><span>Client Name</span><strong>{invoice.client_name || 'Client'}</strong></div>
+              <div><span>Week Date Range</span><strong>{invoice.week_start_date} to {invoice.week_end_date}</strong></div>
+              <div><span>Active Billing Days</span><strong>{invoice.active_billing_days}</strong></div>
+            </div>
+          </section>
+
+          <section className="weeklyInvoiceSection">
+            <h3>Invoice Amount</h3>
+            <div className="weeklyInvoiceViewGrid">
+              <div><span>Usage Billing</span><strong>{inr(invoice.actual_usage_billing)}</strong></div>
+              <div><span>Data Cost</span><strong>{inr(invoice.data_charges)}</strong></div>
+              <div><span>Other Charges</span><strong>{inr(invoice.other_charges)}</strong></div>
+              {adjustmentAmount !== 0 && <div><span>Adjustments</span><strong>{inr(adjustmentAmount)}</strong></div>}
+              <div className="weeklyInvoiceTotal"><span>Current Week Payable</span><strong>{inr(currentWeekPayable)}</strong></div>
+            </div>
+          </section>
+
+          <section className="weeklyInvoiceSection">
+            <h3>Payment & Balance</h3>
+            <div className="weeklyInvoiceViewGrid">
+              <div><span>Previous Outstanding</span><strong>{inr(invoicePreviousOutstanding(invoice))}</strong></div>
+              <div><span>Current Week Payable</span><strong>{inr(currentWeekPayable)}</strong></div>
+              <div><span>Ledger Balance</span><strong>{inr(ledgerBalance)}</strong></div>
+              <div className="weeklyInvoiceTotal"><span>{finalPayableLabel(finalOutstanding)}</span><strong className={finalOutstanding > 0 ? 'outstandingText' : 'okText'}>{balanceDisplay(finalOutstanding)}</strong></div>
+            </div>
+          </section>
+        </div>
+
+        {invoice.notes && <div className="panel weeklyInvoiceNotes"><h2>Notes</h2><p>{invoice.notes}</p></div>}
       </div>
     </div>
   );
@@ -4608,9 +5288,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   );
   if (user.role === 'customer') {
     return (
-      <section>
-        <WeeklyInvoicePanel user={user} clients={[]} canCreate={false} canExport={canExport} />
-      </section>
+      <ClientInvoiceLedgerView user={user} pageKey="my_ledger" title="My Ledger" />
     );
   }
   return (
@@ -4618,7 +5296,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       <BillingCards summary={billing.ledgerSummary || {}} />
       {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">Payment follow-up required for outstanding balance.</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
-      <WeeklyInvoicePanel user={user} clients={data.clients} canCreate={canCreate} canExport={canExport} />
+      <WeeklyInvoicePanel user={user} clients={data.clients} canCreate={canCreate} canExport={canExport} canDelete={canDelete} />
       {false && (
         <form className="inlineForm billingEntryForm" onSubmit={save}>
           <ClientSelect value={form.client_id} clients={data.clients} onChange={(value) => setForm({ ...form, client_id: value })} />
@@ -4883,6 +5561,7 @@ function UserAccessPage({ users, clients, reload, user }) {
 }
 
 function ClientDetailModal({ detail, onClose, canExport = true }) {
+  const [viewInvoice, setViewInvoice] = useState(null);
   return (
     <div className="modalBackdrop modal-overlay">
       <div className="modal modal-box clientDetailModal">
@@ -4897,11 +5576,12 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
         </div>
         <div className="panel infraPanel"><h2>Assigned Infrastructure</h2><p><strong>Assigned RDPs:</strong> {detail.assigned_rdps.join(', ') || '-'}</p><p><strong>Routing Gateways:</strong> {detail.routing_gateways.join(', ') || '-'}</p></div>
         <h2>Weekly Invoices</h2>
-        <div className="tableWrap weeklyInvoiceTable"><table><thead><tr><th>Week</th><th>Active Days</th><th>Expected Billing</th><th>Actual Usage</th><th>Final Payable</th><th>Status</th><th>Actions</th></tr></thead><tbody>{(detail.weekly_invoices || []).map((row) => (
-          <tr key={row.id}><td>{row.week_start_date} to {row.week_end_date}</td><td>{row.active_billing_days}</td><td>{inr(row.expected_weekly_billing)}</td><td>{inr(row.actual_usage_billing)}</td><td className={row.final_payable > 0 ? 'outstandingText' : 'okText'}>{inr(row.final_payable)}</td><td><span className={weeklyStatusClass(row.status)}>{row.status}</span></td><td>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(row)}><Download size={15} /> PDF</button>}</td></tr>
+        <div className="tableWrap weeklyInvoiceTable"><table><thead><tr><th>Week</th><th>Active Days</th><th>Current Week Payable</th><th>Payments This Week</th><th>Payments After Week</th><th>Total Payments</th><th>Final Outstanding</th><th>Actions</th></tr></thead><tbody>{(detail.weekly_invoices || []).map((row) => (
+          <tr key={row.id}><td>{row.week_start_date} to {row.week_end_date}</td><td>{row.active_billing_days}</td><td>{inr(invoiceCurrentWeekPayable(row))}</td><td className="creditText">{inr(invoicePaymentsThisWeek(row))}</td><td className="creditText">{inr(invoicePaymentsAfterWeek(row))}</td><td className="creditText">{inr(invoiceTotalPaymentsTillToday(row))}</td><td className={invoiceFinalOutstanding(row) > 0 ? 'outstandingText' : 'okText'}>{finalPayableLabel(invoiceFinalOutstanding(row))}: {balanceDisplay(invoiceFinalOutstanding(row))}</td><td className="actions"><button onClick={() => setViewInvoice(row)}><Eye size={15} /> View</button>{canExport && <button onClick={() => downloadWeeklyInvoicePdf(row)}><Download size={15} /> PDF</button>}</td></tr>
         ))}
-          {(detail.weekly_invoices || []).length === 0 && <tr><td colSpan="7" className="muted">No saved weekly invoices.</td></tr>}
+          {(detail.weekly_invoices || []).length === 0 && <tr><td colSpan="8" className="muted">No saved weekly invoices.</td></tr>}
         </tbody></table></div>
+        {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
         <h2>Ledger</h2>
         <div className="tableWrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th></tr></thead><tbody>{detail.ledger.map((row) => (
           <tr key={row.id} className={row.entry_type === 'Credit' ? 'creditRow' : 'debitRow'}><td>{row.entry_date}</td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td className={row.balance_usd > 0 ? 'outstandingText' : ''}>{usd(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td className={row.balance_inr > 0 ? 'outstandingText' : ''}>{inr(row.balance_inr)}</td><td>{exchangeText(row.exchange_rate)}</td></tr>

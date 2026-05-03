@@ -391,7 +391,8 @@ def create_weekly_invoice_demo_data(db, clients=None, commit=True):
         if not client:
             continue
         expected = round(active_days * DAILY_EXPECTED_BILLING_INR, 2)
-        final_payable = round(actual_usage + data_cost + other_charges - payment, 2)
+        current_week_payable = round(actual_usage + data_cost + other_charges, 2)
+        final_payable = round(current_week_payable - payment, 2)
         invoice = WeeklyInvoice(
             client_id=client.id,
             week_start_date=week_start,
@@ -399,10 +400,23 @@ def create_weekly_invoice_demo_data(db, clients=None, commit=True):
             active_billing_days=active_days,
             daily_expected_billing=DAILY_EXPECTED_BILLING_INR,
             expected_weekly_billing=expected,
+            billing_charges=actual_usage,
+            profit_percent=0,
+            profit_amount=0,
             actual_usage_billing=actual_usage,
             data_charges=data_cost,
             other_charges=other_charges,
             payment_adjustment=payment,
+            payment_amount=payment,
+            adjustment_amount=0,
+            opening_balance=0,
+            current_week_payable=current_week_payable,
+            payments_this_week=payment,
+            payments_after_week=0,
+            total_payments_till_today=payment,
+            ledger_balance=final_payable,
+            final_outstanding=final_payable,
+            advance_remaining=max(0, -final_payable),
             difference=round(actual_usage - expected, 2),
             final_payable=final_payable,
             status=weekly_invoice_status(actual_usage, expected),

@@ -114,6 +114,7 @@ from schemas import (
     WebphoneProfileUpdate,
     WeeklyInvoiceCreate,
     WeeklyInvoiceOut,
+    WeeklyInvoicePreviewOut,
 )
 
 logger = logging.getLogger("noc360")
@@ -146,6 +147,7 @@ CHARGE_TYPES = {
 }
 LEDGER_CATEGORIES = CHARGE_TYPES | {"Payment", "Adjustment"}
 DEFAULT_WEEKLY_DAILY_EXPECTED_INR = float(os.getenv("WEEKLY_INVOICE_DAILY_EXPECTED_INR", "800000"))
+WEEKLY_PROFIT_ELIGIBLE_CATEGORIES = {"Usage Charges", "DID Charges", "Server Charges", "Port Charges", "Setup Charges"}
 TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
 TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
@@ -3774,40 +3776,201 @@ def weekly_invoice_status(actual_usage: float, expected: float):
     return "Red"
 
 
-def weekly_invoice_values(payload: WeeklyInvoiceCreate):
+def validate_weekly_invoice_request(db: Session, payload: WeeklyInvoiceCreate):
+    client = db.get(Client, payload.client_id)
+    if not client:
+        raise HTTPException(status_code=400, detail="Client does not exist")
+    if payload.week_end_date < payload.week_start_date:
+        raise HTTPException(status_code=400, detail="Week end date must be after week start date")
+    if payload.active_billing_days < 1 or payload.active_billing_days > 7:
+        raise HTTPException(status_code=400, detail="Active billing days must be between 1 and 7")
+    if float(payload.daily_expected_billing or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Daily expected billing must be greater than zero")
+    if float(payload.profit_percent or 0) < 0:
+        raise HTTPException(status_code=400, detail="Profit percent cannot be negative")
+    return client
+
+
+def weekly_opening_balance(db: Session, client_id: int, week_start_date: date):
+    latest_invoice = (
+        db.query(WeeklyInvoice)
+        .filter(WeeklyInvoice.client_id == client_id, WeeklyInvoice.week_end_date < week_start_date)
+        .order_by(WeeklyInvoice.week_end_date.desc(), WeeklyInvoice.id.desc())
+        .first()
+    )
+    opening = float(latest_invoice.final_payable or 0) if latest_invoice else 0.0
+    query = db.query(ClientLedger).filter(ClientLedger.client_id == client_id, ClientLedger.entry_date < week_start_date)
+    if latest_invoice:
+        query = query.filter(ClientLedger.entry_date > latest_invoice.week_end_date)
+    rows = query.all()
+    opening += sum(row_debit_inr(row) - row_credit_inr(row) for row in rows)
+    return round(opening, 2)
+
+
+def weekly_ledger_rows_between(db: Session, client_id: int, start_date: date | None = None, end_date: date | None = None):
+    query = db.query(ClientLedger).filter(ClientLedger.client_id == client_id)
+    if start_date:
+        query = query.filter(ClientLedger.entry_date >= start_date)
+    if end_date:
+        query = query.filter(ClientLedger.entry_date <= end_date)
+    return query.all()
+
+
+def weekly_ledger_movement_inr(rows):
+    return round(sum(row_debit_inr(row) - row_credit_inr(row) for row in rows), 2)
+
+
+def weekly_payment_rows_sum(rows):
+    return round(sum(row_credit_inr(row) for row in rows if row.entry_type == "Credit" and row.category == "Payment"), 2)
+
+
+def weekly_invoice_values(payload: WeeklyInvoiceCreate, billing_charges: float, data_charges: float, other_charges: float = 0, payment_amount: float = 0, adjustment_amount: float = 0, opening_balance: float = 0, payments_after_week: float = 0, total_payments_till_today: float = 0, ledger_balance: float | None = None):
     active_days = int(payload.active_billing_days or 0)
     daily_expected = float(payload.daily_expected_billing or DEFAULT_WEEKLY_DAILY_EXPECTED_INR)
-    actual_usage = float(payload.actual_usage_billing or 0)
-    data_charges = float(payload.data_charges or 0)
-    other_charges = float(payload.other_charges or 0)
-    payment_adjustment = float(payload.payment_adjustment or 0)
+    profit_percent = float(payload.profit_percent or 0)
+    billing_charges = float(billing_charges or 0)
+    data_charges = float(data_charges or 0)
+    other_charges = float(other_charges or 0)
+    payment_amount = float(payment_amount or 0)
+    adjustment_amount = float(adjustment_amount or 0)
+    opening_balance = float(opening_balance or 0)
+    payments_after_week = float(payments_after_week or 0)
+    total_payments_till_today = float(total_payments_till_today or 0)
+    profit_amount = round(billing_charges * profit_percent / 100, 2)
+    actual_usage = round(billing_charges + profit_amount, 2)
     expected = round(active_days * daily_expected, 2)
     difference = round(actual_usage - expected, 2)
-    final_payable = round(actual_usage + data_charges + other_charges - payment_adjustment, 2)
+    current_week_payable = round(actual_usage + data_charges + other_charges, 2)
+    ledger_balance = round(float(ledger_balance if ledger_balance is not None else opening_balance + current_week_payable - payment_amount + adjustment_amount), 2)
     return {
         "active_billing_days": active_days,
         "daily_expected_billing": round(daily_expected, 2),
         "expected_weekly_billing": expected,
+        "billing_charges": round(billing_charges, 2),
+        "profit_percent": round(profit_percent, 2),
+        "profit_amount": profit_amount,
         "actual_usage_billing": round(actual_usage, 2),
         "data_charges": round(data_charges, 2),
         "other_charges": round(other_charges, 2),
-        "payment_adjustment": round(payment_adjustment, 2),
+        "payment_adjustment": round(payment_amount - adjustment_amount, 2),
+        "payment_amount": round(payment_amount, 2),
+        "adjustment_amount": round(adjustment_amount, 2),
+        "opening_balance": round(opening_balance, 2),
+        "current_week_payable": current_week_payable,
+        "payments_this_week": round(payment_amount, 2),
+        "payments_after_week": round(payments_after_week, 2),
+        "total_payments_till_today": round(total_payments_till_today, 2),
+        "ledger_balance": ledger_balance,
+        "final_outstanding": ledger_balance,
+        "advance_remaining": round(max(0, -ledger_balance), 2),
         "difference": difference,
-        "final_payable": final_payable,
+        "final_payable": ledger_balance,
         "status": weekly_invoice_status(actual_usage, expected),
     }
 
 
-def weekly_invoice_items(invoice: WeeklyInvoice):
-    rows = [
-        ("expected", "Expected Weekly Billing", invoice.expected_weekly_billing),
-        ("usage", "Actual Usage Billing", invoice.actual_usage_billing),
-        ("cost", "Data Charges / Cost", invoice.data_charges),
-        ("charge", "Other Charges", invoice.other_charges),
-        ("credit", "Payment / Adjustment", -abs(invoice.payment_adjustment or 0)),
-        ("total", "Final Payable / Outstanding", invoice.final_payable),
-    ]
-    return [WeeklyInvoiceItem(item_type=item_type, label=label, amount=round(float(amount or 0), 2), sort_order=index + 1) for index, (item_type, label, amount) in enumerate(rows)]
+def weekly_invoice_charge_preview(db: Session, payload: WeeklyInvoiceCreate, client: Client | None = None):
+    client = client or validate_weekly_invoice_request(db, payload)
+    rows = (
+        db.query(ClientLedger)
+        .filter(ClientLedger.client_id == payload.client_id, ClientLedger.entry_date >= payload.week_start_date, ClientLedger.entry_date <= payload.week_end_date)
+        .order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc())
+        .all()
+    )
+    lines = []
+    billing_charges = 0.0
+    data_charges = 0.0
+    other_charges = 0.0
+    payment_amount = 0.0
+    adjustment_amount = 0.0
+    for row in rows:
+        is_credit = row.entry_type == "Credit"
+        amount_usd = round(row_credit_usd(row) if is_credit else row_debit_usd(row), 2)
+        amount_inr = round(row_credit_inr(row) if is_credit else row_debit_inr(row), 2)
+        if amount_usd <= 0 and amount_inr <= 0:
+            continue
+        is_profit_eligible = (not is_credit) and row.category in WEEKLY_PROFIT_ELIGIBLE_CATEGORIES
+        if is_profit_eligible:
+            billing_charges += amount_inr
+        elif (not is_credit) and row.category == "Data Charges":
+            data_charges += amount_inr
+        elif is_credit and row.category == "Payment":
+            payment_amount += amount_inr
+        elif row.category == "Adjustment":
+            adjustment_amount += -amount_inr if is_credit else amount_inr
+        else:
+            other_charges += amount_inr if not is_credit else -amount_inr
+        lines.append({
+            "id": row.id,
+            "item_type": row.entry_type.lower(),
+            "label": row.category,
+            "amount": amount_inr,
+            "source_ledger_id": row.id,
+            "entry_date": row.entry_date,
+            "charge_type": row.category,
+            "description": row.description,
+            "amount_usd": amount_usd,
+            "amount_inr": amount_inr,
+            "profit_eligible": is_profit_eligible,
+            "sort_order": len(lines) + 1,
+        })
+    today = date.today()
+    opening_balance = weekly_opening_balance(db, payload.client_id, payload.week_start_date)
+    first_values = weekly_invoice_values(payload, billing_charges, data_charges, other_charges, payment_amount, adjustment_amount, opening_balance)
+    after_week_rows = weekly_ledger_rows_between(db, payload.client_id, payload.week_end_date + timedelta(days=1), today)
+    all_payment_rows = weekly_ledger_rows_between(db, payload.client_id, None, today)
+    payments_after_week = weekly_payment_rows_sum(after_week_rows)
+    total_payments_till_today = weekly_payment_rows_sum(all_payment_rows)
+    ledger_balance = round(opening_balance + first_values["current_week_payable"] - payment_amount + adjustment_amount + weekly_ledger_movement_inr(after_week_rows), 2)
+    values = weekly_invoice_values(payload, billing_charges, data_charges, other_charges, payment_amount, adjustment_amount, opening_balance, payments_after_week, total_payments_till_today, ledger_balance)
+    return {
+        "client_id": client.id,
+        "client_name": client.name,
+        "week_start_date": payload.week_start_date,
+        "week_end_date": payload.week_end_date,
+        "active_billing_days": values["active_billing_days"],
+        "daily_expected_billing": values["daily_expected_billing"],
+        "profit_percent": values["profit_percent"],
+        "billing_charges": values["billing_charges"],
+        "data_charges": values["data_charges"],
+        "other_charges": values["other_charges"],
+        "payment_amount": values["payment_amount"],
+        "adjustment_amount": values["adjustment_amount"],
+        "opening_balance": values["opening_balance"],
+        "current_week_payable": values["current_week_payable"],
+        "payments_this_week": values["payments_this_week"],
+        "payments_after_week": values["payments_after_week"],
+        "total_payments_till_today": values["total_payments_till_today"],
+        "ledger_balance": values["ledger_balance"],
+        "final_outstanding": values["final_outstanding"],
+        "advance_remaining": values["advance_remaining"],
+        "profit_amount": values["profit_amount"],
+        "actual_usage_billing": values["actual_usage_billing"],
+        "final_payable": values["final_payable"],
+        "expected_weekly_billing": values["expected_weekly_billing"],
+        "difference": values["difference"],
+        "status": values["status"],
+        "lines": lines,
+    }
+
+
+def weekly_invoice_items_from_preview(preview: dict):
+    items = []
+    for line in preview["lines"]:
+        items.append(WeeklyInvoiceItem(
+            item_type=line["item_type"],
+            label=line["label"],
+            amount=round(float(line["amount_inr"] or 0), 2),
+            source_ledger_id=line["source_ledger_id"],
+            entry_date=line["entry_date"],
+            charge_type=line["charge_type"],
+            description=line.get("description"),
+            amount_usd=round(float(line["amount_usd"] or 0), 2),
+            amount_inr=round(float(line["amount_inr"] or 0), 2),
+            profit_eligible=bool(line.get("profit_eligible")),
+            sort_order=line["sort_order"],
+        ))
+    return items
 
 
 def weekly_invoice_query(db: Session, user: User, client_id=None, date_from=None, date_to=None):
@@ -3829,6 +3992,171 @@ def get_weekly_invoice_for_user(db: Session, invoice_id: int, user: User):
     if not can_access_client(db, user, invoice.client_id):
         raise HTTPException(status_code=403, detail="Client access denied")
     return invoice
+
+
+def weekly_invoice_item_response(item: WeeklyInvoiceItem, include_internal: bool = False):
+    data = {
+        "id": item.id,
+        "item_type": item.item_type,
+        "label": item.label,
+        "amount": item.amount,
+        "source_ledger_id": item.source_ledger_id,
+        "entry_date": item.entry_date,
+        "charge_type": item.charge_type,
+        "description": item.description,
+        "amount_usd": item.amount_usd,
+        "amount_inr": item.amount_inr,
+        "sort_order": item.sort_order,
+    }
+    if include_internal:
+        data["profit_eligible"] = bool(item.profit_eligible)
+    return data
+
+
+def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = True):
+    payments_this_week = weekly_invoice_payments_this_week(invoice)
+    current_week_payable = weekly_invoice_current_week_payable(invoice)
+    final_outstanding = weekly_invoice_final_outstanding(invoice)
+    data = {
+        "id": invoice.id,
+        "client_id": invoice.client_id,
+        "client_name": invoice.client_name,
+        "week_start_date": invoice.week_start_date,
+        "week_end_date": invoice.week_end_date,
+        "active_billing_days": invoice.active_billing_days,
+        "actual_usage_billing": invoice.actual_usage_billing,
+        "data_charges": invoice.data_charges,
+        "other_charges": invoice.other_charges,
+        "payment_amount": invoice.payment_amount,
+        "adjustment_amount": invoice.adjustment_amount,
+        "opening_balance": invoice.opening_balance,
+        "current_week_payable": current_week_payable,
+        "payments_this_week": payments_this_week,
+        "payments_after_week": invoice.payments_after_week,
+        "total_payments_till_today": invoice.total_payments_till_today,
+        "ledger_balance": invoice.ledger_balance or final_outstanding,
+        "final_outstanding": final_outstanding,
+        "advance_remaining": round(max(0, -final_outstanding), 2),
+        "final_payable": final_outstanding,
+        "notes": invoice.notes,
+        "created_by": invoice.created_by,
+        "created_at": invoice.created_at,
+        "updated_at": invoice.updated_at,
+        "items": [weekly_invoice_item_response(item, include_internal=include_internal) for item in invoice.items] if include_internal else [],
+    }
+    if include_internal:
+        data.update({
+            "daily_expected_billing": invoice.daily_expected_billing,
+            "profit_percent": invoice.profit_percent,
+            "expected_weekly_billing": invoice.expected_weekly_billing,
+            "billing_charges": invoice.billing_charges,
+            "profit_amount": invoice.profit_amount,
+            "payment_adjustment": invoice.payment_adjustment,
+            "difference": invoice.difference,
+            "status": invoice.status,
+        })
+    return data
+
+
+def weekly_invoice_payments_this_week(invoice: WeeklyInvoice):
+    value = invoice.payments_this_week
+    if value is not None and value != 0:
+        return value
+    return invoice.payment_amount or 0
+
+
+def weekly_invoice_current_week_payable(invoice: WeeklyInvoice):
+    return round(float(invoice.actual_usage_billing or 0) + float(invoice.data_charges or 0) + float(invoice.other_charges or 0), 2)
+
+
+def weekly_invoice_final_outstanding(invoice: WeeklyInvoice):
+    if invoice.final_outstanding is not None and invoice.final_outstanding != 0:
+        return float(invoice.final_outstanding)
+    if invoice.ledger_balance is not None and invoice.ledger_balance != 0:
+        return float(invoice.ledger_balance)
+    return float(invoice.final_payable or 0)
+
+
+def client_invoice_ledger_report(db: Session, user: User, date_from: date | None = None, date_to: date | None = None, row_type: str | None = None):
+    normalized_type = (row_type or "All").strip().lower()
+    if normalized_type not in {"", "all", "invoice", "payment", "adjustment"}:
+        raise HTTPException(status_code=400, detail="type must be All, Invoice, Payment, or Adjustment")
+    client_scope = scoped_client_ids(db, user)
+    events = []
+
+    invoice_query = db.query(WeeklyInvoice)
+    if client_scope:
+        invoice_query = invoice_query.filter(WeeklyInvoice.client_id.in_(client_scope))
+    if date_to:
+        invoice_query = invoice_query.filter(WeeklyInvoice.week_end_date <= date_to)
+    for invoice in invoice_query.order_by(WeeklyInvoice.week_end_date.asc(), WeeklyInvoice.id.asc()).all():
+        debit = weekly_invoice_current_week_payable(invoice)
+        if debit == 0:
+            continue
+        events.append({
+            "date": invoice.week_end_date,
+            "priority": 0,
+            "id": invoice.id,
+            "type": "Invoice",
+            "reference": f"WINV-{invoice.id:05d}",
+            "description": f"Weekly Invoice {invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
+            "debit": round(debit, 2),
+            "credit": 0.0,
+            "invoice_id": invoice.id,
+        })
+
+    ledger_query_rows = db.query(ClientLedger).filter(ClientLedger.category.in_(("Payment", "Adjustment")))
+    if client_scope:
+        ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id.in_(client_scope))
+    if date_to:
+        ledger_query_rows = ledger_query_rows.filter(ClientLedger.entry_date <= date_to)
+    for row in ledger_query_rows.order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc()).all():
+        debit = 0.0
+        credit = 0.0
+        event_type = "Payment" if row.category == "Payment" else "Adjustment"
+        if event_type == "Payment":
+            credit = row_credit_inr(row) or row_debit_inr(row) or abs(float(row.amount_inr or 0))
+        else:
+            net = row_debit_inr(row) - row_credit_inr(row)
+            if net == 0 and row.amount_inr:
+                net = float(row.amount_inr or 0) if row.entry_type == "Debit" else -float(row.amount_inr or 0)
+            if net >= 0:
+                debit = net
+            else:
+                credit = abs(net)
+        if debit == 0 and credit == 0:
+            continue
+        events.append({
+            "date": row.entry_date,
+            "priority": 1 if event_type == "Adjustment" else 2,
+            "id": row.id,
+            "type": event_type,
+            "reference": f"{'ADJ' if event_type == 'Adjustment' else 'PAY'}-{row.id:05d}",
+            "description": row.description or ("Account adjustment" if event_type == "Adjustment" else "Payment received"),
+            "debit": round(debit, 2),
+            "credit": round(credit, 2),
+            "invoice_id": None,
+        })
+
+    balance = 0.0
+    result = []
+    for event in sorted(events, key=lambda item: (item["date"], item["priority"], item["id"])):
+        balance = round(balance + event["debit"] - event["credit"], 2)
+        if date_from and event["date"] < date_from:
+            continue
+        if normalized_type and normalized_type != "all" and event["type"].lower() != normalized_type:
+            continue
+        result.append({
+            "date": event["date"].isoformat(),
+            "reference": event["reference"],
+            "description": event["description"],
+            "debit": event["debit"],
+            "credit": event["credit"],
+            "balance": balance,
+            "type": event["type"],
+            "invoice_id": event["invoice_id"],
+        })
+    return result
 
 
 def pdf_escape(value):
@@ -5328,12 +5656,12 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         "total_outstanding_inr": round(total_charges_inr - total_payments_inr, 2),
         "ledger": ledger,
         "data_costs": data_costs,
-        "weekly_invoices": weekly_invoices,
+        "weekly_invoices": [weekly_invoice_response(invoice, include_internal=False) for invoice in weekly_invoices],
     }
 
 
-@app.get("/api/billing/weekly-invoices", response_model=list[WeeklyInvoiceOut])
-@app.get("/billing/weekly-invoices", response_model=list[WeeklyInvoiceOut])
+@app.get("/api/billing/weekly-invoices")
+@app.get("/billing/weekly-invoices")
 def get_weekly_invoices(
     client_id: int | None = None,
     date_from: date | None = None,
@@ -5341,20 +5669,53 @@ def get_weekly_invoices(
     db: Session = Depends(get_db),
     user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view"))),
 ):
-    return weekly_invoice_query(db, user, client_id, date_from, date_to).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
+    include_internal = user.role != "customer"
+    invoices = weekly_invoice_query(db, user, client_id, date_from, date_to).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
+    return [weekly_invoice_response(invoice, include_internal=include_internal) for invoice in invoices]
+
+
+@app.post("/api/billing/weekly-invoices/preview", response_model=WeeklyInvoicePreviewOut)
+@app.post("/billing/weekly-invoices/preview", response_model=WeeklyInvoicePreviewOut)
+def preview_weekly_invoice(payload: WeeklyInvoiceCreate, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_view"))):
+    client = validate_weekly_invoice_request(db, payload)
+    preview = weekly_invoice_charge_preview(db, payload, client)
+    if not preview["lines"]:
+        raise HTTPException(status_code=404, detail="No Money Engine entries found for this client/date range.")
+    return preview
 
 
 @app.post("/api/billing/weekly-invoices", response_model=WeeklyInvoiceOut)
 @app.post("/billing/weekly-invoices", response_model=WeeklyInvoiceOut)
 def create_weekly_invoice(payload: WeeklyInvoiceCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_create"))):
-    client = db.get(Client, payload.client_id)
-    if not client:
-        raise HTTPException(status_code=400, detail="Client does not exist")
-    if payload.week_end_date < payload.week_start_date:
-        raise HTTPException(status_code=400, detail="Week end date must be after week start date")
-    if payload.active_billing_days < 1 or payload.active_billing_days > 7:
-        raise HTTPException(status_code=400, detail="Active billing days must be between 1 and 7")
-    values = weekly_invoice_values(payload)
+    client = validate_weekly_invoice_request(db, payload)
+    preview = weekly_invoice_charge_preview(db, payload, client)
+    if not preview["lines"]:
+        raise HTTPException(status_code=404, detail="No Money Engine entries found for this client/date range.")
+    values = {
+        "active_billing_days": preview["active_billing_days"],
+        "daily_expected_billing": preview["daily_expected_billing"],
+        "expected_weekly_billing": preview["expected_weekly_billing"],
+        "billing_charges": preview["billing_charges"],
+        "profit_percent": preview["profit_percent"],
+        "profit_amount": preview["profit_amount"],
+        "actual_usage_billing": preview["actual_usage_billing"],
+        "data_charges": preview["data_charges"],
+        "other_charges": preview["other_charges"],
+        "payment_adjustment": round(preview["payment_amount"] - preview["adjustment_amount"], 2),
+        "payment_amount": preview["payment_amount"],
+        "adjustment_amount": preview["adjustment_amount"],
+        "opening_balance": preview["opening_balance"],
+        "current_week_payable": preview["current_week_payable"],
+        "payments_this_week": preview["payments_this_week"],
+        "payments_after_week": preview["payments_after_week"],
+        "total_payments_till_today": preview["total_payments_till_today"],
+        "ledger_balance": preview["ledger_balance"],
+        "final_outstanding": preview["final_outstanding"],
+        "advance_remaining": preview["advance_remaining"],
+        "difference": preview["difference"],
+        "final_payable": preview["final_payable"],
+        "status": preview["status"],
+    }
     invoice = WeeklyInvoice(
         client_id=payload.client_id,
         week_start_date=payload.week_start_date,
@@ -5363,7 +5724,7 @@ def create_weekly_invoice(payload: WeeklyInvoiceCreate, request: Request, db: Se
         created_by=user.username,
         **values,
     )
-    invoice.items = weekly_invoice_items(invoice)
+    invoice.items = weekly_invoice_items_from_preview(preview)
     db.add(invoice)
     db.commit()
     db.refresh(invoice)
@@ -5375,26 +5736,113 @@ def create_weekly_invoice(payload: WeeklyInvoiceCreate, request: Request, db: Se
 @app.get("/billing/weekly-invoices/{invoice_id}/pdf")
 def download_weekly_invoice_pdf(invoice_id: int, db: Session = Depends(get_db), user: User = Depends(require_any_page(("billing", "can_export"), ("my_ledger", "can_export")))):
     invoice = get_weekly_invoice_for_user(db, invoice_id, user)
+    previous_outstanding = float(invoice.opening_balance or 0)
+    adjustment_amount = float(invoice.adjustment_amount or 0)
+    current_week_payable = round(float(invoice.actual_usage_billing or 0) + float(invoice.data_charges or 0) + float(invoice.other_charges or 0), 2)
+    ledger_balance = round(previous_outstanding + current_week_payable, 2)
+    final_outstanding = weekly_invoice_final_outstanding(invoice)
+    final_label = "Advance Balance" if final_outstanding < 0 else "Final Outstanding"
     lines = [
         "NOC360 Weekly Invoice",
+        "",
+        "Week Summary",
         f"Client: {invoice.client_name or invoice.client_id}",
         f"Week: {invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
         f"Active Billing Days: {invoice.active_billing_days}",
-        f"Daily Expected Billing: INR {invoice.daily_expected_billing:,.2f}",
-        f"Expected Weekly Billing: INR {invoice.expected_weekly_billing:,.2f}",
-        f"Actual Usage Billing: INR {invoice.actual_usage_billing:,.2f}",
-        f"Data Charges / Cost: INR {invoice.data_charges:,.2f}",
+        "",
+        "Invoice Amount",
+        f"Usage Billing: INR {invoice.actual_usage_billing:,.2f}",
+        f"Data Cost: INR {invoice.data_charges:,.2f}",
         f"Other Charges: INR {invoice.other_charges:,.2f}",
-        f"Payment / Adjustment: INR {invoice.payment_adjustment:,.2f}",
-        f"Difference: INR {invoice.difference:,.2f}",
-        f"Final Payable / Outstanding: INR {invoice.final_payable:,.2f}",
-        f"Status: {invoice.status}",
     ]
+    if adjustment_amount != 0:
+        lines.append(f"Adjustments: INR {adjustment_amount:,.2f}")
+    lines.extend([
+        f"Current Week Payable: INR {current_week_payable:,.2f}",
+        "",
+        "Payment & Balance",
+        f"Previous Outstanding: INR {previous_outstanding:,.2f}",
+        f"Current Week Payable: INR {current_week_payable:,.2f}",
+        f"Ledger Balance: INR {ledger_balance:,.2f}",
+        f"{final_label}: INR {abs(final_outstanding):,.2f}",
+    ])
     if invoice.notes:
         lines.extend(["", "Notes:", invoice.notes[:500]])
     pdf = build_simple_invoice_pdf(lines)
     filename = f"weekly-invoice-{invoice.id}.pdf"
     return StreamingResponse(BytesIO(pdf), media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.delete("/api/billing/weekly-invoices/{invoice_id}")
+@app.delete("/billing/weekly-invoices/{invoice_id}")
+def delete_weekly_invoice(invoice_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_delete"))):
+    invoice = db.get(WeeklyInvoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Weekly invoice not found")
+    old_value = sanitize_activity_value(invoice)
+    client_name = invoice.client_name or str(invoice.client_id)
+    db.delete(invoice)
+    db.commit()
+    log_activity(db, user, "delete_weekly_invoice", "billing", "WeeklyInvoice", invoice_id, f"Deleted weekly invoice for {client_name}", old_value=old_value, request=request, commit=True)
+    return {"success": True, "deleted_id": invoice_id}
+
+
+@app.post("/api/billing/weekly-invoices/demo-data")
+@app.post("/billing/weekly-invoices/demo-data")
+def create_weekly_invoice_demo_entries(payload: WeeklyInvoiceCreate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    client = validate_weekly_invoice_request(db, payload)
+    tag = f"DEMO_WEEKLY_INVOICE {payload.week_start_date.isoformat()} {payload.week_end_date.isoformat()}"
+    existing = (
+        db.query(ClientLedger)
+        .filter(
+            ClientLedger.client_id == payload.client_id,
+            ClientLedger.entry_date >= payload.week_start_date,
+            ClientLedger.entry_date <= payload.week_end_date,
+            ClientLedger.description.ilike(f"%{tag}%"),
+        )
+        .first()
+    )
+    if existing:
+        return {"created": False, "entries": 0, "message": "Demo weekly data already exists for this client/date range."}
+
+    rate = float(get_billing_setting(db).usd_to_inr_rate or DEFAULT_USD_TO_INR)
+    date_count = (payload.week_end_date - payload.week_start_date).days + 1
+    active_days = max(1, min(int(payload.active_billing_days or 1), date_count))
+    daily_expected = float(payload.daily_expected_billing or DEFAULT_WEEKLY_DAILY_EXPECTED_INR)
+    created = 0
+    eligible_total = 0.0
+
+    def add_entry(entry_date: date, entry_type: str, category: str, amount_inr: float, description: str):
+        nonlocal created
+        amount_inr = round(float(amount_inr or 0), 2)
+        amount_usd = round(amount_inr / rate, 2) if rate else 0
+        debit_usd = amount_usd if entry_type == "Debit" else 0
+        credit_usd = amount_usd if entry_type == "Credit" else 0
+        debit_inr = amount_inr if entry_type == "Debit" else 0
+        credit_inr = amount_inr if entry_type == "Credit" else 0
+        db.add(ClientLedger(client_id=client.id, entry_date=entry_date, entry_type=entry_type, category=category, description=f"{tag} - {description}", debit_amount=debit_usd, credit_amount=credit_usd, balance_after_entry=0, amount_usd=amount_usd, exchange_rate=rate, amount_inr=amount_inr, debit_usd=debit_usd, credit_usd=credit_usd, debit_inr=debit_inr, credit_inr=credit_inr, balance_usd=0, balance_inr=0, created_by=user.username))
+        created += 1
+
+    for index in range(active_days):
+        entry_date = payload.week_start_date + timedelta(days=index)
+        usage = round(daily_expected * 0.62, 2)
+        did = round(daily_expected * 0.06, 2)
+        server = round(daily_expected * 0.04, 2)
+        port = round(daily_expected * 0.025, 2)
+        data = round(daily_expected * 0.075, 2)
+        eligible_total += usage + did + server + port
+        add_entry(entry_date, "Debit", "Usage Charges", usage, "Usage Charges demo")
+        add_entry(entry_date, "Debit", "DID Charges", did, "DID Charges demo")
+        add_entry(entry_date, "Debit", "Server Charges", server, "Server Charges demo")
+        add_entry(entry_date, "Debit", "Port Charges", port, "Port Charges demo")
+        add_entry(entry_date, "Debit", "Data Charges", data, "Data Charges demo")
+
+    add_entry(payload.week_end_date, "Debit", "Other Charges", round(daily_expected * 0.05, 2), "Other Charges demo")
+    add_entry(payload.week_end_date, "Credit", "Payment", round(eligible_total * 0.12, 2), "Optional payment demo")
+    db.flush()
+    recalc_client_ledger(db, client.id)
+    db.commit()
+    return {"created": True, "entries": created, "message": f"Created {created} demo Money Engine entries for {client.name}."}
 
 
 @app.get("/api/ledger", response_model=ClientLedgerPageOut)
@@ -5842,7 +6290,9 @@ def get_system_audit(db: Session = Depends(get_db), user: User = Depends(require
 
 @app.get("/api/reports/ledger")
 @app.get("/reports/ledger")
-def report_ledger(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+def report_ledger(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+    if user.role == "customer":
+        return client_invoice_ledger_report(db, user, date_from, date_to, type)
     rows = scoped_ledger_rows(db, user, client_ids, date_from, date_to)
     result = []
     by_client = {}
@@ -5862,9 +6312,18 @@ def report_ledger(client_ids: str | None = None, date_from: date | None = None, 
     return result
 
 
+@app.get("/api/reports/client-ledger")
+@app.get("/reports/client-ledger")
+def report_client_invoice_ledger(date_from: date | None = None, date_to: date | None = None, type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("my_reports", "can_view"), ("my_ledger", "can_view")))):
+    return client_invoice_ledger_report(db, user, date_from, date_to, type)
+
+
 @app.get("/api/reports/daily-billing")
 @app.get("/reports/daily-billing")
 def report_daily_billing(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, charge_type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+    if user.role == "customer":
+        safe_type = charge_type if charge_type in {"Invoice", "Payment", "Adjustment", "All"} else None
+        return client_invoice_ledger_report(db, user, date_from, date_to, safe_type)
     rows = scoped_ledger_rows(db, user, client_ids, date_from, date_to)
     if charge_type:
         rows = [row for row in rows if row.category == charge_type]

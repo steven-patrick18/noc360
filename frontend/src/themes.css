@@ -553,3 +553,131 @@ body[data-theme="light"] .primary {
     grid-template-columns: 1fr;
   }
 }
+
+body[data-theme][data-custom-bg="1"] {
+  background: var(--custom-bg-image) center center / cover no-repeat fixed, var(--theme-bg-main) !important;
+}
+
+body[data-theme][data-custom-bg="1"]::before {
+  content: "" !important;
+  position: fixed !important;
+  inset: 0 !important;
+  display: block !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  opacity: 1 !important;
+  background: rgba(var(--custom-bg-overlay-rgb, 0, 0, 0), var(--custom-bg-overlay-opacity, 0.55)) !important;
+  backdrop-filter: blur(var(--custom-bg-blur, 0px)) !important;
+  -webkit-backdrop-filter: blur(var(--custom-bg-blur, 0px)) !important;
+}
+
+body[data-theme][data-custom-bg="1"] .app,
+body[data-theme][data-custom-bg="1"] .loginPage {
+  position: relative;
+  z-index: 1;
+}
+
+body[data-theme][data-custom-bg="1"] .sidebar,
+body[data-theme][data-custom-bg="1"] .topbar,
+body[data-theme][data-custom-bg="1"] .panel,
+body[data-theme][data-custom-bg="1"] .tableWrap,
+body[data-theme][data-custom-bg="1"] .metric,
+body[data-theme][data-custom-bg="1"] .modal,
+body[data-theme][data-custom-bg="1"] .modal-box,
+body[data-theme][data-custom-bg="1"] .loginBox {
+  background-color: rgba(5, 10, 19, 0.82) !important;
+  backdrop-filter: blur(18px) saturate(1.08) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(1.08) !important;
+}
+
+.customBackgroundPanel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(220px, 0.7fr) minmax(320px, 1.15fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--theme-border);
+  border-radius: var(--theme-radius);
+  background: var(--theme-card-texture), rgba(8, 14, 26, 0.76);
+}
+
+.customBackgroundPanel h3 {
+  margin: 0 0 8px;
+}
+
+.customBackgroundPanel p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.customBackgroundPreview {
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--theme-border);
+  border-radius: var(--theme-radius);
+  background:
+    linear-gradient(135deg, rgba(0, 229, 255, 0.12), rgba(0, 255, 156, 0.05)),
+    rgba(2, 7, 19, 0.72);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+
+.customBackgroundPreview.hasImage {
+  box-shadow: inset 0 0 0 999px rgba(0, 0, 0, 0.22);
+}
+
+.customBackgroundPreview span {
+  color: var(--theme-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.customBackgroundControls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.customBackgroundControls .fieldLabel {
+  display: grid;
+  gap: 7px;
+}
+
+.customBackgroundControls .fieldLabel:nth-of-type(1),
+.customBackgroundControls .fieldLabel:nth-of-type(2),
+.customBackgroundControls .fieldLabel:nth-of-type(3) {
+  grid-column: 1 / -1;
+}
+
+.customBackgroundControls input[type="range"] {
+  padding: 0 !important;
+  accent-color: var(--theme-accent);
+}
+
+.customBackgroundControls input[type="color"] {
+  width: 100%;
+  min-height: 40px !important;
+  padding: 4px !important;
+}
+
+.customBackgroundPanel .formError {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 980px) {
+  .customBackgroundPanel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .customBackgroundControls {
+    grid-template-columns: 1fr;
+  }
+}
