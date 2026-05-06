@@ -442,6 +442,7 @@ class AsteriskSoundGlobalSearchIn(BaseModel):
     file_name: str
     search_type: str = "contains"
     extension_filter: str = ".wav"
+    server_ids: Optional[list[int]] = None
 
 
 class TerminalSessionOut(OrmModel):

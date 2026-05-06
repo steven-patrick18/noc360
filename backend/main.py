@@ -2716,6 +2716,40 @@ def validate_asterisk_extension_filter(value: str | None):
     return normalized
 
 
+def build_asterisk_search_result(
+    record: AsteriskSoundServer,
+    *,
+    status: str,
+    message: str,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    file_name: str | None = None,
+    full_path: str | None = None,
+    size: int | None = None,
+    modified_at: str | None = None,
+    matches: list[dict] | None = None,
+):
+    started_value = started_at or datetime.utcnow()
+    finished_value = finished_at or datetime.utcnow()
+    normalized_matches = matches or []
+    return {
+        "server_id": record.id,
+        "server_name": record.server_name,
+        "server_ip": record.server_ip,
+        "file_name": file_name or "",
+        "full_path": full_path or record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
+        "size": int(size or 0),
+        "modified_at": modified_at,
+        "status": (status or "failed").lower(),
+        "message": message,
+        "match_count": len(normalized_matches),
+        "matches": normalized_matches,
+        "started_at": started_value.isoformat(),
+        "finished_at": finished_value.isoformat(),
+        "timestamp": finished_value.isoformat(),
+    }
+
+
 def walk_asterisk_sound_files(sftp, root_path: str, extension_filter: str):
     stack = [root_path.rstrip("/")]
     while stack:
@@ -2733,38 +2767,106 @@ def walk_asterisk_sound_files(sftp, root_path: str, extension_filter: str):
             yield full_path, attrs
 
 
+def open_asterisk_ssh_client(record: AsteriskSoundServer, timeout: int = 8):
+    if paramiko is None:
+        raise RuntimeError("Paramiko is not installed. Run pip install -r requirements.txt")
+    connection = asterisk_sound_connection(record)
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(
+        hostname=connection["host_ip"],
+        port=int(connection.get("ssh_port") or 22),
+        username=connection["username"],
+        password=connection.get("password") or "",
+        timeout=timeout,
+        banner_timeout=timeout,
+        auth_timeout=timeout,
+        look_for_keys=False,
+        allow_agent=False,
+    )
+    return client
+
+
+def run_asterisk_ssh_command(client, command: str, timeout: int = 10):
+    stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+    channel = stdout.channel
+    deadline = time.time() + max(timeout, 1)
+    while not channel.exit_status_ready():
+        if time.time() >= deadline:
+            channel.close()
+            raise TimeoutError(f"Command timed out after {timeout} seconds")
+        time.sleep(0.1)
+    exit_code = channel.recv_exit_status()
+    output = stdout.read().decode("utf-8", errors="replace").strip()
+    error = stderr.read().decode("utf-8", errors="replace").strip()
+    return exit_code, output, error
+
+
+def build_asterisk_find_pattern(file_name: str, search_type: str, extension_filter: str):
+    lowered_name = file_name.lower()
+    if search_type == "exact":
+        if extension_filter == ".wav" and not lowered_name.endswith(".wav"):
+            return f"{file_name}.wav"
+        return file_name
+    if extension_filter == ".wav":
+        if lowered_name.endswith(".wav"):
+            return f"*{file_name}*"
+        return f"*{file_name}*.wav"
+    return f"*{file_name}*"
+
+
 def search_asterisk_sound_server_files(record: AsteriskSoundServer, file_name: str, search_type: str, extension_filter: str):
     started_at = datetime.utcnow()
     path = validate_asterisk_sounds_path(record.sounds_path)
+    pattern = build_asterisk_find_pattern(file_name, search_type, extension_filter)
+    quoted_path = shlex.quote(path.rstrip("/"))
+    quoted_pattern = shlex.quote(pattern)
+    command = f"find {quoted_path} -maxdepth 1 -type f -iname {quoted_pattern} -printf '%f|%s|%TY-%Tm-%Td %TH:%TM|%p\\n'"
     matches = []
-    client, sftp = open_asterisk_sftp(record)
+    client = open_asterisk_ssh_client(record, timeout=8)
     try:
-        for full_path, attrs in walk_asterisk_sound_files(sftp, path, extension_filter):
-            candidate = attrs.filename
-            lowered = candidate.lower()
-            needle = file_name.lower()
-            matched = lowered == needle if search_type == "exact" else needle in lowered
-            if not matched:
+        exit_code, output, error = run_asterisk_ssh_command(client, command, timeout=10)
+        if exit_code != 0:
+            raise RuntimeError(error or f"Search command failed with exit code {exit_code}")
+        for line in output.splitlines():
+            if not line.strip():
                 continue
+            parts = line.split("|", 3)
+            if len(parts) != 4:
+                continue
+            candidate, raw_size, modified_at, full_path = parts
             matches.append({
-                "server_id": record.id,
-                "server_name": record.server_name,
-                "server_ip": record.server_ip,
                 "file_name": candidate,
                 "full_path": full_path,
-                "size": int(attrs.st_size or 0),
-                "modified_at": datetime.utcfromtimestamp(attrs.st_mtime).isoformat() if getattr(attrs, "st_mtime", None) else None,
-                "status": "success",
-                "message": "Match found",
-                "started_at": started_at.isoformat(),
-                "finished_at": datetime.utcnow().isoformat(),
+                "size": int(raw_size or 0),
+                "modified_at": modified_at or None,
             })
     finally:
-        try:
-            sftp.close()
-        finally:
-            client.close()
-    return matches
+        client.close()
+    finished_at = datetime.utcnow()
+    if matches:
+        preview_names = ", ".join(item["file_name"] for item in matches[:3])
+        if len(matches) > 3:
+            preview_names = f"{preview_names}, +{len(matches) - 3} more"
+        return build_asterisk_search_result(
+            record,
+            status="found",
+            message=f"Found {len(matches)} matching file(s): {preview_names}",
+            started_at=started_at,
+            finished_at=finished_at,
+            file_name=matches[0]["file_name"],
+            full_path=matches[0]["full_path"],
+            size=matches[0]["size"],
+            modified_at=matches[0]["modified_at"],
+            matches=matches,
+        )
+    return build_asterisk_search_result(
+        record,
+        status="not_found",
+        message="No matching files found",
+        started_at=started_at,
+        finished_at=finished_at,
+    )
 
 
 def asterisk_sound_server_out(record: AsteriskSoundServer):
@@ -2935,52 +3037,45 @@ def search_asterisk_sound_files_globally(payload: AsteriskSoundGlobalSearchIn, d
     file_name = sanitize_asterisk_search_term(payload.file_name)
     search_type = validate_asterisk_search_type(payload.search_type)
     extension_filter = validate_asterisk_extension_filter(payload.extension_filter)
-    servers = db.query(AsteriskSoundServer).filter(AsteriskSoundServer.status == "Active").order_by(AsteriskSoundServer.cluster_name.asc(), AsteriskSoundServer.server_name.asc(), AsteriskSoundServer.id.asc()).all()
+    query = db.query(AsteriskSoundServer).filter(AsteriskSoundServer.status == "Active")
+    if payload.server_ids:
+        valid_ids = [int(server_id) for server_id in payload.server_ids if str(server_id).isdigit()]
+        if not valid_ids:
+            raise HTTPException(status_code=400, detail="At least one valid server ID is required")
+        query = query.filter(AsteriskSoundServer.id.in_(valid_ids))
+    servers = query.order_by(AsteriskSoundServer.cluster_name.asc(), AsteriskSoundServer.server_name.asc(), AsteriskSoundServer.id.asc()).all()
     results = []
     success_servers = 0
     failed_servers = 0
+    timeout_servers = 0
     for record in servers:
-        started_at = datetime.utcnow()
         try:
-            server_matches = search_asterisk_sound_server_files(record, file_name, search_type, extension_filter)
+            server_result = search_asterisk_sound_server_files(record, file_name, search_type, extension_filter)
+            results.append(server_result)
             success_servers += 1
-            if server_matches:
-                results.extend(server_matches)
-            else:
-                results.append({
-                    "server_id": record.id,
-                    "server_name": record.server_name,
-                    "server_ip": record.server_ip,
-                    "file_name": "",
-                    "full_path": record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
-                    "size": 0,
-                    "modified_at": None,
-                    "status": "skipped",
-                    "message": "No matching files found",
-                    "started_at": started_at.isoformat(),
-                    "finished_at": datetime.utcnow().isoformat(),
-                })
         except Exception as exc:
+            started_at = datetime.utcnow()
             failed_servers += 1
-            label = classify_asterisk_sound_upload_error(exc)
-            results.append({
-                "server_id": record.id,
-                "server_name": record.server_name,
-                "server_ip": record.server_ip,
-                "file_name": "",
-                "full_path": record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
-                "size": 0,
-                "modified_at": None,
-                "status": "failed",
-                "message": f"{label}: {exc}",
-                "started_at": started_at.isoformat(),
-                "finished_at": datetime.utcnow().isoformat(),
-            })
-    files_found = sum(1 for item in results if item["status"] == "success")
+            status = "timeout" if "timeout" in str(exc).lower() or "timed out" in str(exc).lower() else "failed"
+            if status == "timeout":
+                timeout_servers += 1
+            label = "Search timeout" if status == "timeout" else classify_asterisk_sound_upload_error(exc)
+            results.append(
+                build_asterisk_search_result(
+                    record,
+                    status=status,
+                    message=f"{label}: {exc}",
+                    started_at=started_at,
+                    finished_at=datetime.utcnow(),
+                )
+            )
+    files_found = sum(item.get("match_count", 0) for item in results if item["status"] == "found")
     return {
         "total_servers": len(servers),
+        "completed": len(results),
         "servers_success": success_servers,
         "servers_failed": failed_servers,
+        "timeout_servers": timeout_servers,
         "files_found": files_found,
         "results": results,
     }

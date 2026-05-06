@@ -1027,44 +1027,54 @@ nav button.active {
 }
 
 .asteriskResultStatus.connecting,
-.asteriskResultStatus.uploading {
+.asteriskResultStatus.uploading,
+.asteriskResultStatus.searching,
+.asteriskResultStatus.pending {
   color: #7dd3fc;
   border-color: rgba(59, 130, 246, 0.34);
   background: rgba(59, 130, 246, 0.12);
 }
 
-.asteriskResultStatus.success {
+.asteriskResultStatus.success,
+.asteriskResultStatus.found {
   color: var(--accent-success, #00ff9c);
   border-color: rgba(52, 211, 153, 0.36);
   background: rgba(52, 211, 153, 0.1);
 }
 
-.asteriskResultStatus.failed {
+.asteriskResultStatus.failed,
+.asteriskResultStatus.timeout {
   color: var(--accent-danger, #ff4d4d);
   border-color: rgba(251, 113, 133, 0.4);
   background: rgba(251, 113, 133, 0.12);
 }
 
-.asteriskResultStatus.skipped {
+.asteriskResultStatus.skipped,
+.asteriskResultStatus.not_found {
   color: var(--accent-warning, #ffc857);
   border-color: rgba(251, 191, 36, 0.4);
   background: rgba(251, 191, 36, 0.12);
 }
 
 .asteriskResultRow.connecting,
-.asteriskResultRow.uploading {
+.asteriskResultRow.uploading,
+.asteriskResultRow.searching,
+.asteriskResultRow.pending {
   box-shadow: inset 3px 0 0 rgba(59, 130, 246, 0.72);
 }
 
-.asteriskResultRow.success {
+.asteriskResultRow.success,
+.asteriskResultRow.found {
   box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.75);
 }
 
-.asteriskResultRow.failed {
+.asteriskResultRow.failed,
+.asteriskResultRow.timeout {
   box-shadow: inset 3px 0 0 rgba(251, 113, 133, 0.78);
 }
 
-.asteriskResultRow.skipped {
+.asteriskResultRow.skipped,
+.asteriskResultRow.not_found {
   box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.78);
 }
 

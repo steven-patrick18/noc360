@@ -2977,7 +2977,8 @@ function AsteriskSoundManagerPage({ user }) {
   const deploymentStatusRef = useRef(null);
   const [globalSearch, setGlobalSearch] = useState({ file_name: '', search_type: 'contains', extension_filter: '.wav' });
   const [globalSearchResults, setGlobalSearchResults] = useState([]);
-  const [globalSearchSummary, setGlobalSearchSummary] = useState({ total_servers: 0, servers_success: 0, servers_failed: 0, files_found: 0 });
+  const [globalSearchSummary, setGlobalSearchSummary] = useState({ total_servers: 0, completed: 0, found: 0, failed: 0, timeout: 0 });
+  const globalSearchStatusRef = useRef(null);
 
   const loadServers = async () => {
     const rows = await request('/asterisk-sounds/servers');
@@ -2997,6 +2998,11 @@ function AsteriskSoundManagerPage({ user }) {
     deploymentStatusRef.current.scrollTop = deploymentStatusRef.current.scrollHeight;
   }, [deploymentResults]);
 
+  useEffect(() => {
+    if (!globalSearchStatusRef.current || globalSearchResults.length === 0) return;
+    globalSearchStatusRef.current.scrollTop = globalSearchStatusRef.current.scrollHeight;
+  }, [globalSearchResults]);
+
   const selectedServers = servers.filter((server) => selectedIds.includes(String(server.id)));
   const selectedServer = selectedServers.length === 1 ? selectedServers[0] : null;
   const activeViewServer = servers.find((server) => String(server.id) === String(viewServerId)) || selectedServer || selectedServers[0] || null;
@@ -3004,6 +3010,7 @@ function AsteriskSoundManagerPage({ user }) {
   const filteredFiles = files.filter((item) => item.filename.toLowerCase().includes(fileSearch.toLowerCase()));
   const uploadReady = selectedServers.length > 0 && uploadFile && uploadFile.name.toLowerCase().endsWith('.wav');
   const globalSearchReady = Boolean(globalSearch.file_name.trim());
+  const searchableServers = servers.filter((server) => String(server.status || '').toLowerCase() === 'active');
   const pendingCount = deploymentResults.filter((item) => item.status === 'pending').length;
   const uploadingCount = deploymentResults.filter((item) => item.status === 'connecting' || item.status === 'uploading').length;
   const successCount = deploymentResults.filter((item) => item.status === 'success').length;
@@ -3053,6 +3060,42 @@ function AsteriskSoundManagerPage({ user }) {
     }));
     exportRows(`asterisk-upload-log-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.csv`, rows);
   };
+  const updateGlobalSearchSummary = (rows, totalServers) => {
+    const normalizedRows = Array.isArray(rows) ? rows : [];
+    const completed = normalizedRows.filter((item) => ['found', 'not_found', 'failed', 'timeout', 'skipped'].includes(String(item.status || '').toLowerCase())).length;
+    const found = normalizedRows.reduce((sum, item) => sum + (String(item.status || '').toLowerCase() === 'found' ? Number(item.match_count || 0) || 0 : 0), 0);
+    const failed = normalizedRows.filter((item) => String(item.status || '').toLowerCase() === 'failed').length;
+    const timeout = normalizedRows.filter((item) => String(item.status || '').toLowerCase() === 'timeout').length;
+    setGlobalSearchSummary({ total_servers: totalServers, completed, found, failed, timeout });
+  };
+  const sanitizeSearchErrorMessage = (message) => {
+    const text = String(message || '').trim();
+    if (!text) return 'Search failed. Try again.';
+    if (/<\/?(html|body|head|title|div|span|p|h1)/i.test(text) || /gateway timeout|504/i.test(text)) {
+      return 'Search timed out. Try fewer servers or increase timeout.';
+    }
+    return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+  };
+  const mergeGlobalSearchRows = (currentRows, incomingRows, batchServerIds = []) => {
+    const incomingMap = new Map((incomingRows || []).map((row) => [String(row.server_id), row]));
+    const touched = new Set(batchServerIds.map((item) => String(item)));
+    return currentRows.map((row) => {
+      const key = String(row.server_id);
+      if (incomingMap.has(key)) {
+        return { ...row, ...incomingMap.get(key) };
+      }
+      if (touched.has(key) && ['pending', 'searching'].includes(String(row.status || '').toLowerCase())) {
+        return {
+          ...row,
+          status: 'failed',
+          message: 'Search failed before a server result was returned',
+          finished_at: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        };
+      }
+      return row;
+    });
+  };
   const runGlobalFileSearch = async (event) => {
     event?.preventDefault?.();
     setError('');
@@ -3061,22 +3104,57 @@ function AsteriskSoundManagerPage({ user }) {
       setError('Enter a file name to search');
       return;
     }
+    if (searchableServers.length === 0) {
+      setError('No active Asterisk sound servers are available for search.');
+      return;
+    }
+    const totalServers = searchableServers.length;
+    const initialRows = searchableServers.map((server) => ({
+      server_id: server.id,
+      server_name: server.server_name,
+      server_ip: server.server_ip,
+      status: 'pending',
+      message: 'Queued for search',
+      timestamp: new Date().toISOString(),
+      full_path: server.sounds_path || '/usr/share/asterisk/sounds/',
+      file_name: '',
+      size: 0,
+      modified_at: null,
+      match_count: 0,
+    }));
+    setGlobalSearchResults(initialRows);
+    updateGlobalSearchSummary(initialRows, totalServers);
     setBusy('global-search');
     try {
-      const result = await request('/asterisk-sounds/search', {
-        method: 'POST',
-        body: JSON.stringify(globalSearch),
-      });
-      setGlobalSearchSummary({
-        total_servers: result.total_servers || 0,
-        servers_success: result.servers_success || 0,
-        servers_failed: result.servers_failed || 0,
-        files_found: result.files_found || 0,
-      });
-      setGlobalSearchResults(result.results || []);
-      setMessage(`Searched ${result.total_servers || 0} server(s). Files found: ${result.files_found || 0}. Failed: ${result.servers_failed || 0}.`);
+      const batchSize = 5;
+      let finalRows = initialRows;
+      for (let index = 0; index < searchableServers.length; index += batchSize) {
+        const batchServers = searchableServers.slice(index, index + batchSize);
+        const batchIds = batchServers.map((server) => server.id);
+        const batchStartedAt = new Date().toISOString();
+        finalRows = finalRows.map((row) => batchIds.includes(row.server_id) ? { ...row, status: 'searching', message: 'Searching remote sounds path...', started_at: batchStartedAt, timestamp: batchStartedAt } : row);
+        setGlobalSearchResults(finalRows);
+        updateGlobalSearchSummary(finalRows, totalServers);
+        try {
+          const result = await request('/asterisk-sounds/search', {
+            method: 'POST',
+            body: JSON.stringify({ ...globalSearch, server_ids: batchIds }),
+          });
+          finalRows = mergeGlobalSearchRows(finalRows, result.results || [], batchIds);
+        } catch (err) {
+          const cleanMessage = sanitizeSearchErrorMessage(err.message);
+          const finishedAt = new Date().toISOString();
+          finalRows = finalRows.map((row) => batchIds.includes(row.server_id) ? { ...row, status: /timed out|timeout/i.test(cleanMessage) ? 'timeout' : 'failed', message: cleanMessage, finished_at: finishedAt, timestamp: finishedAt } : row);
+        }
+        setGlobalSearchResults(finalRows);
+        updateGlobalSearchSummary(finalRows, totalServers);
+      }
+      const completed = finalRows.filter((item) => ['found', 'not_found', 'failed', 'timeout', 'skipped'].includes(String(item.status || '').toLowerCase())).length;
+      const found = finalRows.reduce((sum, item) => sum + (String(item.status || '').toLowerCase() === 'found' ? Number(item.match_count || 0) || 0 : 0), 0);
+      const failed = finalRows.filter((item) => ['failed', 'timeout'].includes(String(item.status || '').toLowerCase())).length;
+      setMessage(`Search finished. Completed ${completed}/${totalServers} server(s). Found ${found} file(s). Failed ${failed}.`);
     } catch (err) {
-      setError(err.message);
+      setError(sanitizeSearchErrorMessage(err.message));
     } finally {
       setBusy('');
     }
@@ -3084,9 +3162,13 @@ function AsteriskSoundManagerPage({ user }) {
   const globalStatusLabel = (status) => {
     const normalized = String(status || '').toLowerCase();
     return ({
-      success: 'Found',
+      pending: 'Pending',
+      searching: 'Searching',
+      found: 'Found',
+      not_found: 'Not Found',
       failed: 'Failed',
-      skipped: 'No Match',
+      timeout: 'Timeout',
+      skipped: 'Skipped',
     })[normalized] || 'Pending';
   };
   const toggleServer = (serverId) => {
@@ -3469,40 +3551,37 @@ function AsteriskSoundManagerPage({ user }) {
                   <option value="all">All files</option>
                 </select>
               </label>
-              <button className="primary" disabled={!globalSearchReady || busy === 'global-search'}><Search size={16} /> {busy === 'global-search' ? 'Searching...' : 'Search All Servers'}</button>
+              <button className="primary" disabled={!globalSearchReady || busy === 'global-search' || searchableServers.length === 0}><Search size={16} /> {busy === 'global-search' ? 'Searching...' : 'Search All Servers'}</button>
             </form>
             {(globalSearchResults.length > 0 || globalSearchSummary.total_servers > 0) && (
               <>
                 <div className="asteriskDeploymentCounters asteriskSearchSummary">
-                  <div><span>Total Servers Searched</span><strong>{globalSearchSummary.total_servers}</strong></div>
-                  <div><span>Servers Success</span><strong>{globalSearchSummary.servers_success}</strong></div>
-                  <div><span>Servers Failed</span><strong>{globalSearchSummary.servers_failed}</strong></div>
-                  <div><span>Files Found</span><strong>{globalSearchSummary.files_found}</strong></div>
+                  <div><span>Total Servers</span><strong>{globalSearchSummary.total_servers}</strong></div>
+                  <div><span>Completed</span><strong>{globalSearchSummary.completed}</strong></div>
+                  <div><span>Found</span><strong>{globalSearchSummary.found}</strong></div>
+                  <div><span>Failed</span><strong>{globalSearchSummary.failed}</strong></div>
+                  <div><span>Timeout</span><strong>{globalSearchSummary.timeout}</strong></div>
                 </div>
-                <div className="tableWrap asteriskGlobalSearchTable">
+                <div className="tableWrap asteriskGlobalSearchTable" ref={globalSearchStatusRef}>
                   <table>
                     <thead>
                       <tr>
                         <th>Server</th>
                         <th>IP</th>
-                        <th>File Name</th>
-                        <th>Path</th>
-                        <th>Size</th>
-                        <th>Modified</th>
                         <th>Status</th>
+                        <th>Message</th>
+                        <th>Timestamp</th>
                         <th>Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {globalSearchResults.map((row, index) => (
-                        <tr key={`${row.server_id}-${row.file_name || 'none'}-${index}`}>
+                        <tr className={`asteriskResultRow ${row.status || 'pending'}`} key={`${row.server_id}-${index}`}>
                           <td>{row.server_name}</td>
                           <td>{row.server_ip}</td>
-                          <td>{row.file_name || '-'}</td>
-                          <td>{row.full_path || '-'}</td>
-                          <td>{row.size ? formatBytes(row.size) : '-'}</td>
-                          <td>{row.modified_at ? new Date(row.modified_at).toLocaleString() : '-'}</td>
                           <td><span className={`asteriskResultStatus ${row.status}`}>{globalStatusLabel(row.status)}</span></td>
+                          <td>{row.message || '-'}</td>
+                          <td>{formatDeploymentTime(row.finished_at || row.started_at || row.timestamp)}</td>
                           <td>{row.server_id ? <button type="button" onClick={() => {
                             const target = servers.find((server) => server.id === row.server_id);
                             if (target) {
@@ -3513,7 +3592,7 @@ function AsteriskSoundManagerPage({ user }) {
                           }}><FolderOpen size={15} /> View Server Files</button> : '-'}</td>
                         </tr>
                       ))}
-                      {globalSearchResults.length === 0 && <tr><td colSpan="8" className="muted">No search results yet.</td></tr>}
+                      {globalSearchResults.length === 0 && <tr><td colSpan="6" className="muted">No search results yet.</td></tr>}
                     </tbody>
                   </table>
                 </div>
