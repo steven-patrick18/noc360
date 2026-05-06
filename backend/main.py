@@ -47,6 +47,7 @@ from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetti
 from schemas import (
     ActivityLogOut,
     AsteriskSoundFileOut,
+    AsteriskSoundGlobalSearchIn,
     AsteriskSoundServerCreate,
     AsteriskSoundServerOut,
     AsteriskSoundServerUpdate,
@@ -2641,6 +2642,131 @@ def sanitize_wav_filename(filename: str | None):
     return base
 
 
+def classify_asterisk_sound_upload_error(exc: Exception):
+    message = str(exc or "").strip() or "Upload failed"
+    lowered = message.lower()
+    if "authentication" in lowered or "auth failed" in lowered:
+        return "Authentication failed"
+    if "permission denied" in lowered:
+        return "Permission denied"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "SSH connection failed"
+    if "no space left" in lowered or "disk full" in lowered:
+        return "Disk full"
+    if "no such file" in lowered or "path not found" in lowered or "not found" in lowered:
+        return "Path not found"
+    if "wav" in lowered and "invalid" in lowered:
+        return "Invalid WAV"
+    if "ssh" in lowered or "unable to connect" in lowered or "connection" in lowered:
+        return "SSH connection failed"
+    return "WAV upload failed"
+
+
+def build_asterisk_upload_result(record: AsteriskSoundServer | None, *, status: str, message: str, started_at: datetime | None = None, finished_at: datetime | None = None, filename: str | None = None, size: int | None = None, backup_created: bool = False, backup_filename: str | None = None, server_id: int | None = None):
+    target_id = record.id if record is not None else server_id
+    server_name = record.server_name if record is not None else (f"Server #{target_id}" if target_id is not None else "Unknown server")
+    server_ip = record.server_ip if record is not None else "-"
+    normalized_status = (status or "failed").lower()
+    ok = normalized_status == "success"
+    started_value = started_at or datetime.utcnow()
+    finished_value = finished_at or datetime.utcnow()
+    return {
+        "server_id": target_id,
+        "server": server_name,
+        "server_name": server_name,
+        "ip": server_ip,
+        "server_ip": server_ip,
+        "status": normalized_status,
+        "ok": ok,
+        "message": message,
+        "filename": filename,
+        "size": size or 0,
+        "backup_created": backup_created,
+        "backup_filename": backup_filename,
+        "started_at": started_value.isoformat(),
+        "finished_at": finished_value.isoformat(),
+        "timestamp": finished_value.isoformat(),
+    }
+
+
+def sanitize_asterisk_search_term(value: str | None):
+    text = normalize(value)
+    if not text:
+        raise HTTPException(status_code=400, detail="File name search is required")
+    if len(text) > 180:
+        raise HTTPException(status_code=400, detail="File name search is too long")
+    if any(token in text for token in ["/", "\\", "\x00", "\n", "\r"]):
+        raise HTTPException(status_code=400, detail="File name search contains unsafe characters")
+    if not re.fullmatch(r"[A-Za-z0-9._ -]+", text):
+        raise HTTPException(status_code=400, detail="File name search contains unsupported characters")
+    return text
+
+
+def validate_asterisk_search_type(value: str | None):
+    normalized = (normalize(value) or "contains").lower()
+    if normalized not in {"exact", "contains"}:
+        raise HTTPException(status_code=400, detail="Search type must be exact or contains")
+    return normalized
+
+
+def validate_asterisk_extension_filter(value: str | None):
+    normalized = (normalize(value) or ".wav").lower()
+    if normalized not in {".wav", "all"}:
+        raise HTTPException(status_code=400, detail="Extension filter must be .wav or all")
+    return normalized
+
+
+def walk_asterisk_sound_files(sftp, root_path: str, extension_filter: str):
+    stack = [root_path.rstrip("/")]
+    while stack:
+        current_path = stack.pop()
+        for attrs in sftp.listdir_attr(current_path):
+            name = attrs.filename
+            full_path = posixpath.join(current_path, name)
+            if stat.S_ISDIR(attrs.st_mode):
+                stack.append(full_path)
+                continue
+            if not stat.S_ISREG(attrs.st_mode):
+                continue
+            if extension_filter == ".wav" and not name.lower().endswith(".wav"):
+                continue
+            yield full_path, attrs
+
+
+def search_asterisk_sound_server_files(record: AsteriskSoundServer, file_name: str, search_type: str, extension_filter: str):
+    started_at = datetime.utcnow()
+    path = validate_asterisk_sounds_path(record.sounds_path)
+    matches = []
+    client, sftp = open_asterisk_sftp(record)
+    try:
+        for full_path, attrs in walk_asterisk_sound_files(sftp, path, extension_filter):
+            candidate = attrs.filename
+            lowered = candidate.lower()
+            needle = file_name.lower()
+            matched = lowered == needle if search_type == "exact" else needle in lowered
+            if not matched:
+                continue
+            matches.append({
+                "server_id": record.id,
+                "server_name": record.server_name,
+                "server_ip": record.server_ip,
+                "file_name": candidate,
+                "full_path": full_path,
+                "size": int(attrs.st_size or 0),
+                "modified_at": datetime.utcfromtimestamp(attrs.st_mtime).isoformat() if getattr(attrs, "st_mtime", None) else None,
+                "status": "success",
+                "message": "Match found",
+                "started_at": started_at.isoformat(),
+                "finished_at": datetime.utcnow().isoformat(),
+            })
+    finally:
+        try:
+            sftp.close()
+        finally:
+            client.close()
+    return matches
+
+
 def asterisk_sound_server_out(record: AsteriskSoundServer):
     return {
         "id": record.id,
@@ -2802,7 +2928,66 @@ def list_asterisk_sound_files(record_id: int, search: str | None = None, db: Ses
     return sorted(files, key=lambda item: item["filename"].lower())
 
 
+@app.post("/api/asterisk-sounds/search")
+@app.post("/asterisk-sounds/search")
+def search_asterisk_sound_files_globally(payload: AsteriskSoundGlobalSearchIn, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager())):
+    require_paramiko()
+    file_name = sanitize_asterisk_search_term(payload.file_name)
+    search_type = validate_asterisk_search_type(payload.search_type)
+    extension_filter = validate_asterisk_extension_filter(payload.extension_filter)
+    servers = db.query(AsteriskSoundServer).filter(AsteriskSoundServer.status == "Active").order_by(AsteriskSoundServer.cluster_name.asc(), AsteriskSoundServer.server_name.asc(), AsteriskSoundServer.id.asc()).all()
+    results = []
+    success_servers = 0
+    failed_servers = 0
+    for record in servers:
+        started_at = datetime.utcnow()
+        try:
+            server_matches = search_asterisk_sound_server_files(record, file_name, search_type, extension_filter)
+            success_servers += 1
+            if server_matches:
+                results.extend(server_matches)
+            else:
+                results.append({
+                    "server_id": record.id,
+                    "server_name": record.server_name,
+                    "server_ip": record.server_ip,
+                    "file_name": "",
+                    "full_path": record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
+                    "size": 0,
+                    "modified_at": None,
+                    "status": "skipped",
+                    "message": "No matching files found",
+                    "started_at": started_at.isoformat(),
+                    "finished_at": datetime.utcnow().isoformat(),
+                })
+        except Exception as exc:
+            failed_servers += 1
+            label = classify_asterisk_sound_upload_error(exc)
+            results.append({
+                "server_id": record.id,
+                "server_name": record.server_name,
+                "server_ip": record.server_ip,
+                "file_name": "",
+                "full_path": record.sounds_path or ASTERISK_SOUND_DEFAULT_PATH,
+                "size": 0,
+                "modified_at": None,
+                "status": "failed",
+                "message": f"{label}: {exc}",
+                "started_at": started_at.isoformat(),
+                "finished_at": datetime.utcnow().isoformat(),
+            })
+    files_found = sum(1 for item in results if item["status"] == "success")
+    return {
+        "total_servers": len(servers),
+        "servers_success": success_servers,
+        "servers_failed": failed_servers,
+        "files_found": files_found,
+        "results": results,
+    }
+
+
 def upload_asterisk_wav_to_server(record: AsteriskSoundServer, filename: str, content: bytes):
+    started_at = datetime.utcnow()
     path = validate_asterisk_sounds_path(record.sounds_path)
     final_path = posixpath.join(path.rstrip("/"), filename)
     stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -2857,18 +3042,17 @@ def upload_asterisk_wav_to_server(record: AsteriskSoundServer, filename: str, co
             except Exception:
                 pass
         raise
-    return {
-        "server_id": record.id,
-        "server_name": record.server_name,
-        "server_ip": record.server_ip,
-        "status": "success",
-        "ok": True,
-        "message": f"Uploaded {filename} to {path}",
-        "filename": filename,
-        "size": len(content),
-        "backup_created": backup_created,
-        "backup_filename": posixpath.basename(backup_path) if backup_created else None,
-    }
+    return build_asterisk_upload_result(
+        record,
+        status="success",
+        message=f"Uploaded {filename} to {path}",
+        started_at=started_at,
+        finished_at=datetime.utcnow(),
+        filename=filename,
+        size=len(content),
+        backup_created=backup_created,
+        backup_filename=posixpath.basename(backup_path) if backup_created else None,
+    )
 
 
 @app.post("/api/asterisk-sounds/upload")
@@ -2888,14 +3072,16 @@ def upload_asterisk_sound_file_multi(request: Request, file: UploadFile = File(.
     for server_id in unique_ids:
         record = by_id.get(server_id)
         if not record:
-            results.append({"server_id": server_id, "server_name": f"Server #{server_id}", "server_ip": "-", "status": "failed", "ok": False, "message": "Server record not found"})
+            now = datetime.utcnow()
+            results.append(build_asterisk_upload_result(None, server_id=server_id, status="failed", message="Server record not found", started_at=now, finished_at=now, filename=filename, size=len(content)))
             continue
         try:
             result = upload_asterisk_wav_to_server(record, filename, content)
             results.append(result)
             log_activity(db, user, "upload_asterisk_sound", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Uploaded WAV {filename} to {record.server_name}", new_value={"filename": filename, "size": len(content), "backup_created": result["backup_created"], "backup_filename": result["backup_filename"]}, request=request, commit=True)
         except Exception as exc:
-            results.append({"server_id": record.id, "server_name": record.server_name, "server_ip": record.server_ip, "status": "failed", "ok": False, "message": f"WAV upload failed: {exc}"})
+            label = classify_asterisk_sound_upload_error(exc)
+            results.append(build_asterisk_upload_result(record, status="failed", message=f"{label}: {exc}", started_at=datetime.utcnow(), finished_at=datetime.utcnow(), filename=filename, size=len(content)))
             log_activity(db, user, "upload_asterisk_sound_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"WAV upload failed for {record.server_name}: {exc}", new_value={"filename": filename}, request=request, commit=True)
     success_count = sum(1 for item in results if item.get("ok"))
     failed_count = len(results) - success_count
@@ -2918,11 +3104,13 @@ def upload_asterisk_sound_file(record_id: int, request: Request, file: UploadFil
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="WAV file is empty")
+    started_at = datetime.utcnow()
     try:
         result = upload_asterisk_wav_to_server(record, filename, content)
     except Exception as exc:
         log_activity(db, user, "upload_asterisk_sound_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"WAV upload failed for {record.server_name}: {exc}", new_value={"filename": filename}, request=request, commit=True)
-        raise HTTPException(status_code=400, detail=f"WAV upload failed: {exc}") from exc
+        label = classify_asterisk_sound_upload_error(exc)
+        raise HTTPException(status_code=400, detail=f"{label}: {exc}") from exc
     log_activity(db, user, "upload_asterisk_sound", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Uploaded WAV {filename} to {record.server_name}", new_value={"filename": filename, "size": len(content), "backup_created": result["backup_created"], "backup_filename": result["backup_filename"]}, request=request, commit=True)
     return result
 

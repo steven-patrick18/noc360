@@ -2974,6 +2974,10 @@ function AsteriskSoundManagerPage({ user }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [deploymentResults, setDeploymentResults] = useState([]);
+  const deploymentStatusRef = useRef(null);
+  const [globalSearch, setGlobalSearch] = useState({ file_name: '', search_type: 'contains', extension_filter: '.wav' });
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [globalSearchSummary, setGlobalSearchSummary] = useState({ total_servers: 0, servers_success: 0, servers_failed: 0, files_found: 0 });
 
   const loadServers = async () => {
     const rows = await request('/asterisk-sounds/servers');
@@ -2988,14 +2992,103 @@ function AsteriskSoundManagerPage({ user }) {
     loadServers().catch((err) => setError(err.message));
   }, []);
 
+  useEffect(() => {
+    if (!deploymentStatusRef.current || deploymentResults.length === 0) return;
+    deploymentStatusRef.current.scrollTop = deploymentStatusRef.current.scrollHeight;
+  }, [deploymentResults]);
+
   const selectedServers = servers.filter((server) => selectedIds.includes(String(server.id)));
   const selectedServer = selectedServers.length === 1 ? selectedServers[0] : null;
   const activeViewServer = servers.find((server) => String(server.id) === String(viewServerId)) || selectedServer || selectedServers[0] || null;
   const filteredServers = servers.filter((server) => `${server.cluster_name} ${server.server_name} ${server.server_ip} ${server.sounds_path}`.toLowerCase().includes(search.toLowerCase()));
   const filteredFiles = files.filter((item) => item.filename.toLowerCase().includes(fileSearch.toLowerCase()));
   const uploadReady = selectedServers.length > 0 && uploadFile && uploadFile.name.toLowerCase().endsWith('.wav');
+  const globalSearchReady = Boolean(globalSearch.file_name.trim());
+  const pendingCount = deploymentResults.filter((item) => item.status === 'pending').length;
+  const uploadingCount = deploymentResults.filter((item) => item.status === 'connecting' || item.status === 'uploading').length;
+  const successCount = deploymentResults.filter((item) => item.status === 'success').length;
+  const failedCount = deploymentResults.filter((item) => item.status === 'failed').length;
+  const skippedCount = deploymentResults.filter((item) => item.status === 'skipped').length;
+  const failedRows = deploymentResults.filter((item) => item.status === 'failed');
 
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const setGlobalSearchField = (field, value) => setGlobalSearch((current) => ({ ...current, [field]: value }));
+  const updateDeploymentRow = (serverId, patch) => {
+    setDeploymentResults((current) => current.map((item) => item.server_id === serverId ? { ...item, ...patch } : item));
+  };
+  const formatDeploymentTime = (value) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  };
+  const deploymentStatusLabel = (status) => {
+    const normalized = String(status || '').toLowerCase();
+    return ({
+      pending: 'Pending',
+      connecting: 'Connecting',
+      uploading: 'Uploading',
+      success: 'Success',
+      failed: 'Failed',
+      skipped: 'Skipped',
+    })[normalized] || 'Pending';
+  };
+  const downloadDeploymentLog = () => {
+    if (!deploymentResults.length) return;
+    const rows = deploymentResults.map((item) => ({
+      server: item.server_name,
+      ip: item.server_ip,
+      status: deploymentStatusLabel(item.status),
+      message: item.message || '',
+      started_at: item.started_at || '',
+      finished_at: item.finished_at || '',
+      timestamp: item.timestamp || '',
+    }));
+    exportRows(`asterisk-upload-log-${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.csv`, rows);
+  };
+  const runGlobalFileSearch = async (event) => {
+    event?.preventDefault?.();
+    setError('');
+    setMessage('');
+    if (!globalSearch.file_name.trim()) {
+      setError('Enter a file name to search');
+      return;
+    }
+    setBusy('global-search');
+    try {
+      const result = await request('/asterisk-sounds/search', {
+        method: 'POST',
+        body: JSON.stringify(globalSearch),
+      });
+      setGlobalSearchSummary({
+        total_servers: result.total_servers || 0,
+        servers_success: result.servers_success || 0,
+        servers_failed: result.servers_failed || 0,
+        files_found: result.files_found || 0,
+      });
+      setGlobalSearchResults(result.results || []);
+      setMessage(`Searched ${result.total_servers || 0} server(s). Files found: ${result.files_found || 0}. Failed: ${result.servers_failed || 0}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+  const globalStatusLabel = (status) => {
+    const normalized = String(status || '').toLowerCase();
+    return ({
+      success: 'Found',
+      failed: 'Failed',
+      skipped: 'No Match',
+    })[normalized] || 'Pending';
+  };
   const toggleServer = (serverId) => {
     const id = String(serverId);
     setSelectedIds((current) => {
@@ -3100,12 +3193,10 @@ function AsteriskSoundManagerPage({ user }) {
     }
   };
 
-  const uploadWav = async (event) => {
-    event.preventDefault();
+  const runWavDeployment = async (serversToUpload) => {
     setError('');
     setMessage('');
-    setDeploymentResults([]);
-    if (selectedServers.length === 0) {
+    if (serversToUpload.length === 0) {
       setError('Select at least one target server');
       return;
     }
@@ -3117,23 +3208,73 @@ function AsteriskSoundManagerPage({ user }) {
       setError('Only .wav files are allowed');
       return;
     }
-    const body = new FormData();
-    body.append('file', uploadFile);
-    selectedServers.forEach((server) => body.append('server_ids', String(server.id)));
+    const startedAt = new Date().toISOString();
+    setDeploymentResults(serversToUpload.map((server) => ({
+      server_id: server.id,
+      server: server.server_name,
+      server_name: server.server_name,
+      ip: server.server_ip,
+      server_ip: server.server_ip,
+      status: 'pending',
+      ok: false,
+      message: 'Queued for upload',
+      started_at: '',
+      finished_at: '',
+      timestamp: startedAt,
+    })));
     setBusy('upload');
     try {
-      const result = await request('/asterisk-sounds/upload', { method: 'POST', body });
-      setDeploymentResults(result.results || []);
-      setUploadFile(null);
-      event.target.reset();
+      for (const server of serversToUpload) {
+        const rowStart = new Date().toISOString();
+        updateDeploymentRow(server.id, { status: 'connecting', message: 'Opening SSH connection...', started_at: rowStart, finished_at: '', timestamp: rowStart });
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+        updateDeploymentRow(server.id, { status: 'uploading', message: 'Uploading WAV file...', timestamp: new Date().toISOString() });
+        const body = new FormData();
+        body.append('file', uploadFile);
+        body.append('server_ids', String(server.id));
+        try {
+          const result = await request('/asterisk-sounds/upload', { method: 'POST', body });
+          const serverResult = (result.results || [])[0] || {};
+          updateDeploymentRow(server.id, {
+            ...serverResult,
+            status: serverResult.status || 'success',
+            message: serverResult.message || 'Upload completed successfully',
+            started_at: serverResult.started_at || rowStart,
+            finished_at: serverResult.finished_at || new Date().toISOString(),
+            timestamp: serverResult.finished_at || new Date().toISOString(),
+          });
+        } catch (err) {
+          const finishedAt = new Date().toISOString();
+          updateDeploymentRow(server.id, {
+            status: 'failed',
+            ok: false,
+            message: err.message || 'WAV upload failed',
+            started_at: rowStart,
+            finished_at: finishedAt,
+            timestamp: finishedAt,
+          });
+        }
+      }
       if (activeViewServer) setFiles(await request(`/asterisk-sounds/servers/${activeViewServer.id}/files`));
-      setMessage(result.message || `Selected ${selectedServers.length}. Uploaded successfully: ${result.success || 0}. Failed: ${result.failed || 0}.`);
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy('');
     }
   };
+  const uploadWav = async (event) => {
+    event.preventDefault();
+    await runWavDeployment(selectedServers);
+  };
+  const retryFailedUploads = async () => {
+    await runWavDeployment(selectedServers.filter((server) => failedRows.some((item) => item.server_id === server.id)));
+  };
+
+  useEffect(() => {
+    if (!deploymentResults.length || busy === 'upload') return;
+    const selectedCount = deploymentResults.length;
+    setMessage(`Total Servers: ${selectedCount}. Successful: ${deploymentResults.filter((item) => item.status === 'success').length}. Failed: ${deploymentResults.filter((item) => item.status === 'failed').length}.`);
+  }, [deploymentResults, busy]);
 
   const formatBytes = (value) => {
     const size = Number(value || 0);
@@ -3250,20 +3391,135 @@ function AsteriskSoundManagerPage({ user }) {
           {deploymentResults.length > 0 && (
             <div className="asteriskResultPanel">
               <div className="sectionHeader">
-                <div><span className="eyebrow">Deployment Results</span><h2>Upload Status</h2></div>
+                <div><span className="eyebrow">Deployment Status</span><h2>Deployment Status</h2></div>
+                <div className="actions">
+                  {failedRows.length > 0 && <button type="button" onClick={retryFailedUploads} disabled={busy === 'upload' || !uploadFile}>Retry Failed</button>}
+                  <button type="button" onClick={downloadDeploymentLog} disabled={!deploymentResults.length}>Download Upload Log</button>
+                </div>
               </div>
-              <div className="asteriskResultRows">
-                {deploymentResults.map((result) => (
-                  <div className={`asteriskResultRow ${result.ok ? 'success' : 'failed'}`} key={`${result.server_id}-${result.status}`}>
-                    <strong>{result.server_name}</strong>
-                    <span>{result.server_ip}</span>
-                    <b>{result.ok ? 'Success' : 'Failed'}</b>
-                    <small>{result.message}</small>
+              <div className="asteriskDeploymentCounters">
+                <div><span>Total Selected</span><strong>{deploymentResults.length}</strong></div>
+                <div><span>Uploading</span><strong>{uploadingCount}</strong></div>
+                <div><span>Success</span><strong>{successCount}</strong></div>
+                <div><span>Failed</span><strong>{failedCount}</strong></div>
+                <div><span>Pending</span><strong>{pendingCount}</strong></div>
+              </div>
+              <div className="asteriskResultTableWrap" ref={deploymentStatusRef}>
+                <table className="asteriskResultTable">
+                  <thead>
+                    <tr>
+                      <th>Server Name</th>
+                      <th>IP</th>
+                      <th>Status</th>
+                      <th>Message</th>
+                      <th>Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deploymentResults.map((result) => (
+                      <tr className={`asteriskResultRow ${result.status || 'pending'}`} key={`${result.server_id}-${result.started_at || result.timestamp || result.server_name}`}>
+                        <td><strong>{result.server_name}</strong></td>
+                        <td>{result.server_ip}</td>
+                        <td><span className={`asteriskResultStatus ${result.status || 'pending'}`}>{deploymentStatusLabel(result.status)}</span></td>
+                        <td>{result.message}</td>
+                        <td>{formatDeploymentTime(result.finished_at || result.started_at || result.timestamp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="asteriskDeploymentSummary">
+                <div className="asteriskDeploymentSummaryCard">
+                  <h3>Final Summary</h3>
+                  <p>Total Servers: {deploymentResults.length}</p>
+                  <p>Successful: {successCount}</p>
+                  <p>Failed: {failedCount}</p>
+                  {skippedCount > 0 && <p>Skipped: {skippedCount}</p>}
+                </div>
+                {failedRows.length > 0 && (
+                  <div className="asteriskDeploymentSummaryCard failedList">
+                    <h3>Failed Servers</h3>
+                    {failedRows.map((item) => <p key={`failed-${item.server_id}`}>{item.server_name}{' -> '}{item.message}</p>)}
                   </div>
-                ))}
+                )}
               </div>
             </div>
           )}
+
+          <div className="asteriskSearchPanel">
+            <div className="sectionHeader">
+              <div><span className="eyebrow">Global File Search</span><h2>Global File Search</h2></div>
+            </div>
+            <form className="asteriskSearchForm" onSubmit={runGlobalFileSearch}>
+              <label>
+                <span>File Name Search</span>
+                <input value={globalSearch.file_name} onChange={(event) => setGlobalSearchField('file_name', event.target.value)} placeholder="welcome" />
+              </label>
+              <label>
+                <span>Search Type</span>
+                <select value={globalSearch.search_type} onChange={(event) => setGlobalSearchField('search_type', event.target.value)}>
+                  <option value="exact">Exact match</option>
+                  <option value="contains">Contains</option>
+                </select>
+              </label>
+              <label>
+                <span>File Extension</span>
+                <select value={globalSearch.extension_filter} onChange={(event) => setGlobalSearchField('extension_filter', event.target.value)}>
+                  <option value=".wav">.wav</option>
+                  <option value="all">All files</option>
+                </select>
+              </label>
+              <button className="primary" disabled={!globalSearchReady || busy === 'global-search'}><Search size={16} /> {busy === 'global-search' ? 'Searching...' : 'Search All Servers'}</button>
+            </form>
+            {(globalSearchResults.length > 0 || globalSearchSummary.total_servers > 0) && (
+              <>
+                <div className="asteriskDeploymentCounters asteriskSearchSummary">
+                  <div><span>Total Servers Searched</span><strong>{globalSearchSummary.total_servers}</strong></div>
+                  <div><span>Servers Success</span><strong>{globalSearchSummary.servers_success}</strong></div>
+                  <div><span>Servers Failed</span><strong>{globalSearchSummary.servers_failed}</strong></div>
+                  <div><span>Files Found</span><strong>{globalSearchSummary.files_found}</strong></div>
+                </div>
+                <div className="tableWrap asteriskGlobalSearchTable">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Server</th>
+                        <th>IP</th>
+                        <th>File Name</th>
+                        <th>Path</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {globalSearchResults.map((row, index) => (
+                        <tr key={`${row.server_id}-${row.file_name || 'none'}-${index}`}>
+                          <td>{row.server_name}</td>
+                          <td>{row.server_ip}</td>
+                          <td>{row.file_name || '-'}</td>
+                          <td>{row.full_path || '-'}</td>
+                          <td>{row.size ? formatBytes(row.size) : '-'}</td>
+                          <td>{row.modified_at ? new Date(row.modified_at).toLocaleString() : '-'}</td>
+                          <td><span className={`asteriskResultStatus ${row.status}`}>{globalStatusLabel(row.status)}</span></td>
+                          <td>{row.server_id ? <button type="button" onClick={() => {
+                            const target = servers.find((server) => server.id === row.server_id);
+                            if (target) {
+                              setViewServerId(String(target.id));
+                              setSelectedIds((current) => current.includes(String(target.id)) ? current : [...current, String(target.id)]);
+                              viewFiles(target);
+                            }
+                          }}><FolderOpen size={15} /> View Server Files</button> : '-'}</td>
+                        </tr>
+                      ))}
+                      {globalSearchResults.length === 0 && <tr><td colSpan="8" className="muted">No search results yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
 
           <div className="sectionHeader asteriskFilesHeader">
             <div><span className="eyebrow">Remote Files</span><h2>Sound Library</h2></div>

@@ -897,46 +897,202 @@ nav button.active {
   background: rgba(2, 7, 19, 0.34);
 }
 
-.asteriskResultRows {
+.asteriskSearchPanel {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(34, 211, 238, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 7, 19, 0.28);
 }
 
-.asteriskResultRow {
+.asteriskSearchForm {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(110px, 0.8fr) auto minmax(180px, 1.6fr);
+  grid-template-columns: minmax(220px, 1.2fr) minmax(150px, 0.7fr) minmax(140px, 0.6fr) auto;
   gap: 10px;
-  align-items: center;
-  padding: 9px 10px;
+  align-items: end;
+}
+
+.asteriskSearchForm label {
+  display: grid;
+  gap: 6px;
+}
+
+.asteriskSearchForm label span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-soft, #a8b3c7);
+}
+
+.asteriskSearchSummary {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.asteriskGlobalSearchTable {
+  max-height: 330px;
+  overflow: auto;
+}
+
+.asteriskGlobalSearchTable table {
+  min-width: 1080px;
+}
+
+.asteriskGlobalSearchTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.asteriskDeploymentCounters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.asteriskDeploymentCounters div,
+.asteriskDeploymentSummaryCard {
+  padding: 10px 12px;
   border: 1px solid rgba(125, 211, 252, 0.14);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
 }
 
+.asteriskDeploymentCounters span,
+.asteriskDeploymentSummaryCard h3 {
+  display: block;
+  color: var(--text-soft, #a8b3c7);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.asteriskDeploymentCounters strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-main, #f8fbff);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+}
+
+.asteriskResultTableWrap {
+  max-height: 330px;
+  overflow: auto;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  border-radius: 8px;
+}
+
+.asteriskResultTable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.asteriskResultTable th,
+.asteriskResultTable td {
+  padding: 10px 12px !important;
+}
+
+.asteriskResultTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.asteriskResultRow td {
+  color: var(--text-soft, #a8b3c7);
+  overflow-wrap: anywhere;
+  vertical-align: middle;
+}
+
+.asteriskResultRow td strong {
+  color: var(--text-main, #f8fbff);
+}
+
+.asteriskResultStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(125, 211, 252, 0.08);
+  color: #7dd3fc;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.asteriskResultStatus.connecting,
+.asteriskResultStatus.uploading {
+  color: #7dd3fc;
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.asteriskResultStatus.success {
+  color: var(--accent-success, #00ff9c);
+  border-color: rgba(52, 211, 153, 0.36);
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.asteriskResultStatus.failed {
+  color: var(--accent-danger, #ff4d4d);
+  border-color: rgba(251, 113, 133, 0.4);
+  background: rgba(251, 113, 133, 0.12);
+}
+
+.asteriskResultStatus.skipped {
+  color: var(--accent-warning, #ffc857);
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.asteriskResultRow.connecting,
+.asteriskResultRow.uploading {
+  box-shadow: inset 3px 0 0 rgba(59, 130, 246, 0.72);
+}
+
 .asteriskResultRow.success {
-  border-color: rgba(52, 211, 153, 0.38);
   box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.75);
 }
 
 .asteriskResultRow.failed {
-  border-color: rgba(251, 113, 133, 0.44);
   box-shadow: inset 3px 0 0 rgba(251, 113, 133, 0.78);
 }
 
-.asteriskResultRow b {
-  color: var(--accent-success, #00ff9c);
-  text-transform: uppercase;
-  font-size: 12px;
+.asteriskResultRow.skipped {
+  box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.78);
 }
 
-.asteriskResultRow.failed b {
-  color: var(--accent-danger, #ff4d4d);
+.asteriskDeploymentSummary {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(280px, 1.2fr);
+  gap: 10px;
 }
 
-.asteriskResultRow span,
-.asteriskResultRow small {
+.asteriskDeploymentSummaryCard {
+  min-height: 100%;
+}
+
+.asteriskDeploymentSummaryCard h3 {
+  margin: 0 0 8px;
+  color: var(--text-main, #f8fbff);
+  font-size: 14px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.asteriskDeploymentSummaryCard p {
+  margin: 0 0 6px;
   color: var(--text-soft, #a8b3c7);
-  overflow-wrap: anywhere;
+}
+
+.asteriskDeploymentSummaryCard.failedList p {
+  color: #fecdd3;
 }
 
 .asteriskFilesHeader {
@@ -991,13 +1147,31 @@ nav button.active {
     max-height: none;
   }
 
-  .asteriskResultRow {
-    grid-template-columns: 1fr;
+  .asteriskSearchForm {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width: 640px) {
   .asteriskSoundForm {
+    grid-template-columns: 1fr;
+  }
+
+  .asteriskSearchForm {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 980px) {
+  .asteriskDeploymentCounters,
+  .asteriskDeploymentSummary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .asteriskDeploymentCounters,
+  .asteriskDeploymentSummary {
     grid-template-columns: 1fr;
   }
 }

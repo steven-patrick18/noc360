@@ -438,6 +438,12 @@ class AsteriskSoundFileOut(BaseModel):
     modified_at: Optional[datetime] = None
 
 
+class AsteriskSoundGlobalSearchIn(BaseModel):
+    file_name: str
+    search_type: str = "contains"
+    extension_filter: str = ".wav"
+
+
 class TerminalSessionOut(OrmModel):
     id: int
     connection_id: Optional[int] = None
