@@ -445,6 +445,15 @@ class AsteriskSoundGlobalSearchIn(BaseModel):
     server_ids: Optional[list[int]] = None
 
 
+class AsteriskSoundBulkActionIn(BaseModel):
+    server_ids: list[int]
+    action: str
+    mode: str = "all_together"
+    command: Optional[str] = None
+    delay_seconds: Optional[int] = 10
+    confirm_dangerous: bool = False
+
+
 class TerminalSessionOut(OrmModel):
     id: int
     connection_id: Optional[int] = None

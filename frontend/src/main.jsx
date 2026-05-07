@@ -2975,10 +2975,15 @@ function AsteriskSoundManagerPage({ user }) {
   const [busy, setBusy] = useState('');
   const [deploymentResults, setDeploymentResults] = useState([]);
   const deploymentStatusRef = useRef(null);
+  const [targetFilter, setTargetFilter] = useState('');
   const [globalSearch, setGlobalSearch] = useState({ file_name: '', search_type: 'contains', extension_filter: '.wav' });
   const [globalSearchResults, setGlobalSearchResults] = useState([]);
   const [globalSearchSummary, setGlobalSearchSummary] = useState({ total_servers: 0, completed: 0, found: 0, failed: 0, timeout: 0 });
   const globalSearchStatusRef = useRef(null);
+  const [serverAction, setServerAction] = useState({ action: 'restart_asterisk', mode: 'sequentially', command: '', delay_seconds: 10 });
+  const [actionResults, setActionResults] = useState([]);
+  const [actionSummary, setActionSummary] = useState({ total: 0, pending: 0, running: 0, success: 0, failed: 0 });
+  const actionStatusRef = useRef(null);
 
   const loadServers = async () => {
     const rows = await request('/asterisk-sounds/servers');
@@ -3003,10 +3008,17 @@ function AsteriskSoundManagerPage({ user }) {
     globalSearchStatusRef.current.scrollTop = globalSearchStatusRef.current.scrollHeight;
   }, [globalSearchResults]);
 
+  useEffect(() => {
+    if (!actionStatusRef.current || actionResults.length === 0) return;
+    actionStatusRef.current.scrollTop = actionStatusRef.current.scrollHeight;
+  }, [actionResults]);
+
   const selectedServers = servers.filter((server) => selectedIds.includes(String(server.id)));
   const selectedServer = selectedServers.length === 1 ? selectedServers[0] : null;
   const activeViewServer = servers.find((server) => String(server.id) === String(viewServerId)) || selectedServer || selectedServers[0] || null;
   const filteredServers = servers.filter((server) => `${server.cluster_name} ${server.server_name} ${server.server_ip} ${server.sounds_path}`.toLowerCase().includes(search.toLowerCase()));
+  const targetFilterNormalized = targetFilter.trim().toLowerCase();
+  const filteredTargetServers = servers.filter((server) => `${server.cluster_name} ${server.server_name} ${server.server_ip}`.toLowerCase().includes(targetFilterNormalized));
   const filteredFiles = files.filter((item) => item.filename.toLowerCase().includes(fileSearch.toLowerCase()));
   const uploadReady = selectedServers.length > 0 && uploadFile && uploadFile.name.toLowerCase().endsWith('.wav');
   const globalSearchReady = Boolean(globalSearch.file_name.trim());
@@ -3017,11 +3029,24 @@ function AsteriskSoundManagerPage({ user }) {
   const failedCount = deploymentResults.filter((item) => item.status === 'failed').length;
   const skippedCount = deploymentResults.filter((item) => item.status === 'skipped').length;
   const failedRows = deploymentResults.filter((item) => item.status === 'failed');
+  const canRunCustomServerCommand = user?.role === 'admin';
+  const bulkActionReady = selectedServers.length > 0 && (serverAction.action !== 'custom_safe_command' || Boolean(serverAction.command.trim()));
 
   const setField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const setGlobalSearchField = (field, value) => setGlobalSearch((current) => ({ ...current, [field]: value }));
+  const setServerActionField = (field, value) => setServerAction((current) => ({ ...current, [field]: value }));
   const updateDeploymentRow = (serverId, patch) => {
     setDeploymentResults((current) => current.map((item) => item.server_id === serverId ? { ...item, ...patch } : item));
+  };
+  const updateActionSummary = (rows) => {
+    const normalizedRows = Array.isArray(rows) ? rows : [];
+    setActionSummary({
+      total: normalizedRows.length,
+      pending: normalizedRows.filter((item) => item.status === 'pending').length,
+      running: normalizedRows.filter((item) => item.status === 'running').length,
+      success: normalizedRows.filter((item) => item.status === 'success').length,
+      failed: normalizedRows.filter((item) => item.status === 'failed').length,
+    });
   };
   const formatDeploymentTime = (value) => {
     if (!value) return '-';
@@ -3036,6 +3061,20 @@ function AsteriskSoundManagerPage({ user }) {
       hour12: true,
     });
   };
+  const getAsteriskServerGroupName = (server) => {
+    const cluster = String(server.cluster_name || '').trim();
+    if (cluster) return cluster;
+    const name = String(server.server_name || '').trim();
+    const match = name.match(/^[A-Za-z]+/);
+    return match?.[0] || 'Other';
+  };
+  const groupedTargetServers = filteredTargetServers.reduce((accumulator, server) => {
+    const group = getAsteriskServerGroupName(server);
+    if (!accumulator[group]) accumulator[group] = [];
+    accumulator[group].push(server);
+    return accumulator;
+  }, {});
+  const orderedTargetGroups = Object.entries(groupedTargetServers).sort(([left], [right]) => left.localeCompare(right));
   const deploymentStatusLabel = (status) => {
     const normalized = String(status || '').toLowerCase();
     return ({
@@ -3185,6 +3224,19 @@ function AsteriskSoundManagerPage({ user }) {
     const ids = servers.map((server) => String(server.id));
     setSelectedIds(ids);
     setViewServerId(ids[0] || '');
+  };
+  const selectFilteredServers = () => {
+    const filteredIds = filteredTargetServers.map((server) => String(server.id));
+    setSelectedIds((current) => Array.from(new Set([...current, ...filteredIds])));
+    if (!viewServerId && filteredIds[0]) setViewServerId(filteredIds[0]);
+  };
+  const clearFilteredServers = () => {
+    const filteredSet = new Set(filteredTargetServers.map((server) => String(server.id)));
+    setSelectedIds((current) => {
+      const remaining = current.filter((id) => !filteredSet.has(id));
+      if (filteredSet.has(String(viewServerId))) setViewServerId(remaining[0] || '');
+      return remaining;
+    });
   };
   const clearSelection = () => {
     setSelectedIds([]);
@@ -3352,6 +3404,71 @@ function AsteriskSoundManagerPage({ user }) {
     await runWavDeployment(selectedServers.filter((server) => failedRows.some((item) => item.server_id === server.id)));
   };
 
+  const runServerAction = async (event) => {
+    event?.preventDefault?.();
+    setError('');
+    setMessage('');
+    if (selectedServers.length === 0) {
+      setError('Select at least one target server');
+      return;
+    }
+    if (serverAction.action === 'custom_safe_command' && !canRunCustomServerCommand) {
+      setError('Only admin can run custom safe commands');
+      return;
+    }
+    if (serverAction.action === 'custom_safe_command' && !serverAction.command.trim()) {
+      setError('Enter a custom safe command');
+      return;
+    }
+    if (serverAction.action === 'reboot' && !window.confirm('This will reboot selected servers. Continue?')) return;
+    const customDangerous = serverAction.action === 'custom_safe_command' && /\b(rm|mkfs|dd|reboot|shutdown|poweroff|halt|userdel|passwd)\b/i.test(serverAction.command);
+    if (customDangerous && !window.confirm('This command looks dangerous. Continue?')) return;
+    const startedAt = new Date().toISOString();
+    const initialRows = selectedServers.map((server) => ({
+      server_id: server.id,
+      server_name: server.server_name,
+      server_ip: server.server_ip,
+      action: serverAction.action,
+      status: 'pending',
+      message: 'Queued for action',
+      started_at: startedAt,
+      finished_at: '',
+      timestamp: startedAt,
+    }));
+    setActionResults(initialRows);
+    updateActionSummary(initialRows);
+    setBusy('server-action');
+    try {
+      const runningRows = initialRows.map((row) => ({ ...row, status: 'running', message: serverAction.mode === 'sequentially' ? 'Waiting for sequential execution...' : 'Running action...' }));
+      setActionResults(runningRows);
+      updateActionSummary(runningRows);
+      const result = await request('/asterisk-sounds/actions', {
+        method: 'POST',
+        body: JSON.stringify({
+          server_ids: selectedServers.map((server) => server.id),
+          action: serverAction.action,
+          mode: serverAction.mode,
+          command: serverAction.action === 'custom_safe_command' ? serverAction.command : null,
+          delay_seconds: Number(serverAction.delay_seconds || 10),
+          confirm_dangerous: customDangerous,
+        }),
+      });
+      const resultMap = new Map((result.results || []).map((item) => [String(item.server_id), item]));
+      const nextRows = runningRows.map((row) => resultMap.get(String(row.server_id)) || row);
+      setActionResults(nextRows);
+      updateActionSummary(nextRows);
+      setMessage(result.message || 'Server action finished');
+    } catch (err) {
+      const finishedAt = new Date().toISOString();
+      const failedRowsNext = initialRows.map((row) => ({ ...row, status: 'failed', message: err.message || 'Server action failed', finished_at: finishedAt, timestamp: finishedAt }));
+      setActionResults(failedRowsNext);
+      updateActionSummary(failedRowsNext);
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
   useEffect(() => {
     if (!deploymentResults.length || busy === 'upload') return;
     const selectedCount = deploymentResults.length;
@@ -3364,6 +3481,16 @@ function AsteriskSoundManagerPage({ user }) {
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / 1024 / 1024).toFixed(2)} MB`;
   };
+  const actionStatusLabel = (status) => {
+    const normalized = String(status || '').toLowerCase();
+    return ({
+      pending: 'Pending',
+      running: 'Running',
+      success: 'Success',
+      failed: 'Failed',
+    })[normalized] || 'Pending';
+  };
+  const actionLabel = serverAction.action === 'reboot' ? 'Reboot' : serverAction.action === 'restart_asterisk' ? 'Restart Asterisk' : 'Custom Safe Command';
 
   return (
     <section className="asteriskSoundPage">
@@ -3447,18 +3574,27 @@ function AsteriskSoundManagerPage({ user }) {
                 <span>Target Servers</span>
                 <strong>{selectedServers.length} server{selectedServers.length === 1 ? '' : 's'} selected</strong>
               </div>
+              <div className="search terminalSearch asteriskTargetSearch"><Search size={16} /><input placeholder="Search servers by name/IP/cluster" value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} /></div>
               <div className="actions">
+                <button type="button" onClick={selectFilteredServers} disabled={filteredTargetServers.length === 0}>Select Filtered</button>
+                <button type="button" onClick={clearFilteredServers} disabled={filteredTargetServers.length === 0}>Clear Filtered</button>
                 <button type="button" onClick={selectAllServers}>Select All</button>
                 <button type="button" onClick={clearSelection}>Clear Selection</button>
               </div>
               <div className="asteriskMultiOptions">
-                {servers.map((server) => (
-                  <label key={server.id}>
-                    <input type="checkbox" checked={selectedIds.includes(String(server.id))} onChange={() => toggleServer(server.id)} />
-                    <span>{server.server_name}</span>
-                    <small>{server.server_ip}</small>
-                  </label>
+                {orderedTargetGroups.map(([groupName, groupServers]) => (
+                  <div className="asteriskGroupBlock" key={groupName}>
+                    <div className="asteriskGroupTitle">{groupName}</div>
+                    {groupServers.map((server) => (
+                      <label key={server.id}>
+                        <input type="checkbox" checked={selectedIds.includes(String(server.id))} onChange={() => toggleServer(server.id)} />
+                        <span>{server.server_name}</span>
+                        <small>{server.server_ip}</small>
+                      </label>
+                    ))}
+                  </div>
                 ))}
+                {orderedTargetGroups.length === 0 && <div className="asteriskEmptySelection muted">No servers match this filter.</div>}
               </div>
             </div>
             <label>
@@ -3469,6 +3605,85 @@ function AsteriskSoundManagerPage({ user }) {
           </form>
           {selectedServers.length === 0 && <div className="asteriskValidation">Select at least one target server.</div>}
           {uploadFile && !uploadFile.name.toLowerCase().endsWith('.wav') && <div className="asteriskValidation">Only .wav files are allowed.</div>}
+
+          <div className="asteriskSearchPanel">
+            <div className="sectionHeader">
+              <div><span className="eyebrow">Server Actions</span><h2>Server Actions</h2></div>
+            </div>
+            <form className="asteriskActionForm" onSubmit={runServerAction}>
+              <label>
+                <span>Server Filter / Search</span>
+                <input value={targetFilter} onChange={(event) => setTargetFilter(event.target.value)} placeholder="Search servers by name/IP/cluster" />
+              </label>
+              <label>
+                <span>Action</span>
+                <select value={serverAction.action} onChange={(event) => setServerActionField('action', event.target.value)}>
+                  <option value="reboot">Reboot</option>
+                  <option value="restart_asterisk">Restart Asterisk</option>
+                  {canRunCustomServerCommand && <option value="custom_safe_command">Custom Safe Command</option>}
+                </select>
+              </label>
+              <label>
+                <span>Execution Mode</span>
+                <select value={serverAction.mode} onChange={(event) => setServerActionField('mode', event.target.value)}>
+                  <option value="all_together">Run All Together</option>
+                  <option value="sequentially">Run Sequentially</option>
+                </select>
+              </label>
+              {serverAction.action === 'custom_safe_command' && canRunCustomServerCommand && (
+                <label className="wide">
+                  <span>Custom Safe Command</span>
+                  <input value={serverAction.command} onChange={(event) => setServerActionField('command', event.target.value)} placeholder="systemctl status asterisk" />
+                </label>
+              )}
+              {serverAction.mode === 'sequentially' && (
+                <label>
+                  <span>Delay Between Servers</span>
+                  <input type="number" min="0" max="600" value={serverAction.delay_seconds} onChange={(event) => setServerActionField('delay_seconds', event.target.value)} />
+                </label>
+              )}
+              <button className="primary" disabled={!bulkActionReady || busy === 'server-action'}><Play size={16} /> {busy === 'server-action' ? 'Running...' : actionLabel}</button>
+            </form>
+            {!canRunCustomServerCommand && <div className="asteriskValidation">Custom safe commands are available to admin only.</div>}
+            {(actionResults.length > 0 || actionSummary.total > 0) && (
+              <>
+                <div className="asteriskDeploymentCounters asteriskSearchSummary">
+                  <div><span>Total Selected</span><strong>{actionSummary.total}</strong></div>
+                  <div><span>Pending</span><strong>{actionSummary.pending}</strong></div>
+                  <div><span>Running</span><strong>{actionSummary.running}</strong></div>
+                  <div><span>Success</span><strong>{actionSummary.success}</strong></div>
+                  <div><span>Failed</span><strong>{actionSummary.failed}</strong></div>
+                </div>
+                <div className="asteriskResultTableWrap" ref={actionStatusRef}>
+                  <table className="asteriskResultTable">
+                    <thead>
+                      <tr>
+                        <th>Server Name</th>
+                        <th>IP</th>
+                        <th>Action</th>
+                        <th>Status</th>
+                        <th>Message</th>
+                        <th>Timestamp</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {actionResults.map((row, index) => (
+                        <tr className={`asteriskResultRow ${row.status || 'pending'}`} key={`${row.server_id}-${index}`}>
+                          <td><strong>{row.server_name}</strong></td>
+                          <td>{row.server_ip}</td>
+                          <td>{row.action === 'reboot' ? 'Reboot' : row.action === 'restart_asterisk' ? 'Restart Asterisk' : 'Custom Safe Command'}</td>
+                          <td><span className={`asteriskResultStatus ${row.status || 'pending'}`}>{actionStatusLabel(row.status)}</span></td>
+                          <td>{row.message || '-'}</td>
+                          <td>{formatDeploymentTime(row.finished_at || row.started_at || row.timestamp)}</td>
+                        </tr>
+                      ))}
+                      {actionResults.length === 0 && <tr><td colSpan="6" className="muted">No server actions run yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
 
           {deploymentResults.length > 0 && (
             <div className="asteriskResultPanel">
@@ -3707,9 +3922,11 @@ function TerminalCenterPage({ user, visible = true }) {
   const restoredTabsRef = useRef(null);
   const tabsSaveTimerRef = useRef(null);
   const [connections, setConnections] = useState([]);
+  const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [search, setSearch] = useState('');
   const [form, setForm] = useState({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
   const [editingId, setEditingId] = useState(null);
+  const [vaultTab, setVaultTab] = useState('saved');
   const [tabs, setTabs] = useState(() => {
     const restored = loadStoredTerminalTabs();
     restoredTabsRef.current = restored;
@@ -3734,6 +3951,10 @@ function TerminalCenterPage({ user, visible = true }) {
   useEffect(() => {
     Promise.all([loadConnections(), loadCommands(), loadHistory()]).catch((err) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    setSelectedConnectionIds((current) => current.filter((id) => connections.some((connection) => String(connection.id) === String(id))));
+  }, [connections]);
 
   useEffect(() => {
     if (tabsSaveTimerRef.current) window.clearTimeout(tabsSaveTimerRef.current);
@@ -3771,6 +3992,7 @@ function TerminalCenterPage({ user, visible = true }) {
   const resetForm = () => {
     setEditingId(null);
     setForm({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
+    setVaultTab('form');
   };
 
   const saveConnection = async (event) => {
@@ -3785,7 +4007,9 @@ function TerminalCenterPage({ user, visible = true }) {
       body: JSON.stringify(payload),
     });
     setMessage(isEditing ? `SSH connection updated: ${saved.connection_name}` : `SSH connection added: ${saved.connection_name}`);
-    resetForm();
+    setEditingId(null);
+    setForm({ connection_name: '', host_ip: '', ssh_port: 22, username: '', password: '', status: 'Active', notes: '' });
+    setVaultTab('saved');
     setSearch('');
     await loadConnections();
   };
@@ -3801,6 +4025,7 @@ function TerminalCenterPage({ user, visible = true }) {
       status: connection.status || 'Active',
       notes: connection.notes || '',
     });
+    setVaultTab('form');
   };
 
   const deleteConnection = async (connection) => {
@@ -3835,11 +4060,63 @@ function TerminalCenterPage({ user, visible = true }) {
     }
   };
 
+  const toggleConnectionSelection = (connectionId) => {
+    const id = String(connectionId);
+    setSelectedConnectionIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  };
+
+  const selectAllConnections = () => {
+    setSelectedConnectionIds(filteredConnections.map((connection) => String(connection.id)));
+  };
+
+  const clearConnectionSelection = () => {
+    setSelectedConnectionIds([]);
+  };
+
+  const openConnectionSet = (connectionsToOpen, summaryLabel = 'terminal') => {
+    const uniqueConnections = connectionsToOpen.filter((connection, index, list) => list.findIndex((item) => item.id === connection.id) === index);
+    if (uniqueConnections.length === 0) {
+      setMessage('No matching saved connections to open.');
+      return;
+    }
+    let lastTabId = null;
+    let openedCount = 0;
+    setTabs((current) => {
+      const next = [...current];
+      const seed = Date.now();
+      uniqueConnections.forEach((connection, index) => {
+        const existing = next.find((tab) => String(tab.connection?.id) === String(connection.id));
+        if (existing) {
+          lastTabId = existing.id;
+          return;
+        }
+        const tabId = `${connection.id}-${seed}-${index}`;
+        next.push({ id: tabId, name: connection.connection_name, connection, status: 'Opening', reconnectKey: 0, clearKey: 0, disconnectKey: 0, fullscreen: false });
+        lastTabId = tabId;
+        openedCount += 1;
+      });
+      return next;
+    });
+    if (lastTabId) setActiveTabId(lastTabId);
+    setMessage(openedCount > 0 ? `Opened ${openedCount} ${summaryLabel}${openedCount === 1 ? '' : 's'}` : 'All requested terminals are already open.');
+  };
+
   const openTerminal = (connection) => {
-    const tabId = `${connection.id}-${Date.now()}`;
-    const tab = { id: tabId, name: connection.connection_name, connection, status: 'Opening', reconnectKey: 0, clearKey: 0, disconnectKey: 0, fullscreen: false };
-    setTabs((current) => [...current, tab]);
-    setActiveTabId(tabId);
+    openConnectionSet([connection], 'terminal');
+  };
+
+  const openSelectedConnections = () => {
+    openConnectionSet(
+      connections.filter((connection) => selectedConnectionIds.includes(String(connection.id))),
+      'terminal',
+    );
+  };
+
+  const openAllActiveConnections = () => {
+    openConnectionSet(
+      connections.filter((connection) => String(connection.status || '').toLowerCase() === 'active'),
+      'terminal',
+    );
   };
 
   const updateTab = (tabId, patch) => {
@@ -3900,6 +4177,14 @@ function TerminalCenterPage({ user, visible = true }) {
     const haystack = `${connection.connection_name} ${connection.host_ip} ${connection.username} ${connection.notes || ''}`.toLowerCase();
     return haystack.includes(search.toLowerCase());
   });
+  const selectedConnectionsCount = selectedConnectionIds.length;
+  const activeConnectionCount = connections.filter((item) => String(item.status || '').toLowerCase() === 'active').length;
+  const connectionStripClass = (status) => {
+    const normalized = String(status || '').toLowerCase();
+    if (normalized === 'active') return 'online';
+    if (normalized === 'inactive') return 'offline';
+    return 'unknown';
+  };
   const duplicateNameCount = form.connection_name
     ? connections.filter((connection) => connection.connection_name?.trim().toLowerCase() === form.connection_name.trim().toLowerCase() && connection.id !== editingId).length
     : 0;
@@ -3907,7 +4192,7 @@ function TerminalCenterPage({ user, visible = true }) {
     <section className="terminalCenter">
       <div className="cards managementCards">
         <div className="metric"><span>Saved Connections</span><strong>{connections.length}</strong></div>
-        <div className="metric payment"><span>Active Records</span><strong>{connections.filter((item) => item.status === 'Active').length}</strong></div>
+        <div className="metric payment"><span>Active Records</span><strong>{activeConnectionCount}</strong></div>
         <div className="metric revenue"><span>Open Tabs</span><strong>{tabs.length}</strong></div>
         <div className="metric"><span>Focused Host</span><strong>{activeTab?.connection?.host_ip || '-'}</strong></div>
       </div>
@@ -3923,9 +4208,75 @@ function TerminalCenterPage({ user, visible = true }) {
           </div>
           {message && <div className="toastSuccess">{message}</div>}
           {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
-          <div className="search terminalSearch"><Search size={16} /><input placeholder="Search servers" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+          <div className="terminalVaultTabs">
+            <button type="button" className={vaultTab === 'saved' ? 'active' : ''} onClick={() => setVaultTab('saved')}>Saved Connections</button>
+            {(canCreate || editingId) && (
+              <button type="button" className={vaultTab === 'form' ? 'active' : ''} onClick={() => setVaultTab('form')}>
+                {editingId ? 'Update Connection' : 'Add / Update Connection'}
+              </button>
+            )}
+          </div>
+          {vaultTab === 'saved' && (
+            <>
+              <div className="terminalConnectionTools">
+                <div className="search terminalSearch"><Search size={16} /><input placeholder="Search servers" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
+                <div className="terminalConnectionBulkBar">
+                  <strong>{selectedConnectionsCount} selected</strong>
+                  <div className="actions">
+                    <button type="button" onClick={selectAllConnections} disabled={filteredConnections.length === 0}>Select All</button>
+                    <button type="button" onClick={clearConnectionSelection} disabled={selectedConnectionsCount === 0}>Clear Selection</button>
+                    <button type="button" onClick={openSelectedConnections} disabled={selectedConnectionsCount === 0}><Play size={15} /> Open Selected</button>
+                    <button type="button" className="primary" onClick={openAllActiveConnections} disabled={activeConnectionCount === 0}><Play size={15} /> Open All Active</button>
+                  </div>
+                </div>
+              </div>
+              <div className="terminalConnectionList">
+                {filteredConnections.map((connection) => (
+                  <div className="terminalConnectionCard" key={connection.id}>
+                    <div className="terminalConnectionCardHeader">
+                      <div className="terminalConnectionTopRow">
+                        <label className="terminalConnectionSelect">
+                          <input type="checkbox" checked={selectedConnectionIds.includes(String(connection.id))} onChange={() => toggleConnectionSelection(connection.id)} />
+                        </label>
+                        <div className="terminalConnectionIdentity">
+                          <strong title={connection.connection_name}>{connection.connection_name}</strong>
+                        </div>
+                      </div>
+                      <StatusPill value={connection.status} />
+                    </div>
+                    <div className="terminalConnectionInfoRow">
+                      <div className="terminalConnectionInfoItem">
+                        <small>Host/IP</small>
+                        <span title={connection.host_ip}>{connection.host_ip}</span>
+                      </div>
+                      <div className="terminalConnectionInfoItem">
+                        <small>Username</small>
+                        <span title={connection.username || '-'}>{connection.username || '-'}</span>
+                      </div>
+                      <div className="terminalConnectionInfoItem">
+                        <small>Port</small>
+                        <span>{connection.ssh_port || 22}</span>
+                      </div>
+                    </div>
+                    <div className="terminalConnectionAuxRow">
+                      <small>{revealed[connection.id] ? `Password: ${revealed[connection.id]}` : connection.has_password ? 'Password: ********' : 'Password: not saved'}</small>
+                      {connection.notes && <p title={connection.notes}>{connection.notes}</p>}
+                    </div>
+                    <div className="terminalConnectionActions">
+                      <button className="primary" onClick={() => openTerminal(connection)}><Play size={15} /> Open</button>
+                      <button onClick={() => testConnection(connection)}>Test</button>
+                      {isAdmin && <button onClick={() => revealPassword(connection)}>{revealed[connection.id] ? <EyeOff size={15} /> : <Eye size={15} />} Reveal</button>}
+                      {canEdit && <button onClick={() => editConnection(connection)}><Edit3 size={15} /> Edit</button>}
+                      {canDelete && <button className="danger" onClick={() => deleteConnection(connection)}><Trash2 size={15} /> Delete</button>}
+                    </div>
+                  </div>
+                ))}
+                {filteredConnections.length === 0 && <div className="terminalConnectionEmpty muted">No saved connections match this search.</div>}
+              </div>
+            </>
+          )}
 
-          {(canCreate || editingId) && (
+          {vaultTab === 'form' && (canCreate || editingId) && (
             <form className="terminalForm" onSubmit={saveConnection}>
               <label><span>Connection Name</span><input value={form.connection_name} onChange={(event) => setField('connection_name', event.target.value)} placeholder="Asterisk PBX" /></label>
               <label><span>Host/IP</span><input value={form.host_ip} onChange={(event) => setField('host_ip', event.target.value)} placeholder="203.0.113.10" /></label>
@@ -3936,32 +4287,11 @@ function TerminalCenterPage({ user, visible = true }) {
               <label><span>Notes</span><textarea value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Server role, provider, handover notes" /></label>
               {duplicateNameCount > 0 && <div className="terminalDuplicateNotice">Name already exists. It will still save as a separate SSH connection.</div>}
               <div className="formActions">
-                <button className="primary"><Plus size={16} /> {editingId ? 'Update Selected Connection' : 'Add New Connection'}</button>
-                {editingId && <button type="button" onClick={resetForm}>Cancel</button>}
+                <button className="primary"><Plus size={16} /> {editingId ? 'Update Connection' : 'Add Connection'}</button>
+                {editingId && <button type="button" onClick={resetForm}>Cancel Edit</button>}
               </div>
             </form>
           )}
-
-          <div className="terminalConnectionList">
-            {filteredConnections.map((connection) => (
-              <div className="terminalConnectionCard" key={connection.id}>
-                <div>
-                  <strong>{connection.connection_name}</strong>
-                  <span>{connection.username}@{connection.host_ip}:{connection.ssh_port || 22}</span>
-                  <small>{revealed[connection.id] ? `Password: ${revealed[connection.id]}` : connection.has_password ? 'Password: ********' : 'Password: not saved'}</small>
-                </div>
-                <StatusPill value={connection.status} />
-                {connection.notes && <p>{connection.notes}</p>}
-                <div className="actions">
-                  <button className="primary" onClick={() => openTerminal(connection)}><Play size={15} /> Open</button>
-                  <button onClick={() => testConnection(connection)}>Test</button>
-                  {isAdmin && <button onClick={() => revealPassword(connection)}>{revealed[connection.id] ? <EyeOff size={15} /> : <Eye size={15} />} Reveal</button>}
-                  {canEdit && <button onClick={() => editConnection(connection)}><Edit3 size={15} /> Edit</button>}
-                  {canDelete && <button className="danger" onClick={() => deleteConnection(connection)}><Trash2 size={15} /></button>}
-                </div>
-              </div>
-            ))}
-          </div>
         </aside>
 
         <div className={`panel terminalWorkspace ${activeTab?.fullscreen ? 'terminalFullscreen' : ''}`}>

@@ -20,6 +20,7 @@ import time
 import urllib.request
 import zipfile
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -47,6 +48,7 @@ from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetti
 from schemas import (
     ActivityLogOut,
     AsteriskSoundFileOut,
+    AsteriskSoundBulkActionIn,
     AsteriskSoundGlobalSearchIn,
     AsteriskSoundServerCreate,
     AsteriskSoundServerOut,
@@ -2716,6 +2718,86 @@ def validate_asterisk_extension_filter(value: str | None):
     return normalized
 
 
+def validate_asterisk_bulk_action(value: str | None):
+    normalized = (normalize(value) or "").strip().lower().replace(" ", "_")
+    if normalized not in {"reboot", "restart_asterisk", "custom_safe_command"}:
+        raise HTTPException(status_code=400, detail="Action must be Reboot, Restart Asterisk, or Custom Safe Command")
+    return normalized
+
+
+def validate_asterisk_action_mode(value: str | None):
+    normalized = (normalize(value) or "all_together").strip().lower().replace(" ", "_")
+    if normalized not in {"all_together", "sequentially"}:
+        raise HTTPException(status_code=400, detail="Mode must be Run All Together or Run Sequentially")
+    return normalized
+
+
+def sanitize_asterisk_custom_command(value: str | None):
+    command = normalize(value)
+    if not command:
+        raise HTTPException(status_code=400, detail="Custom command is required")
+    if len(command) > 220:
+        raise HTTPException(status_code=400, detail="Custom command is too long")
+    if any(token in command for token in ["\x00", "\n", "\r"]):
+        raise HTTPException(status_code=400, detail="Custom command contains unsafe characters")
+    if re.search(r"[;&|><`$()]", command):
+        raise HTTPException(status_code=400, detail="Custom command contains unsupported shell operators")
+    if not re.fullmatch(r"[A-Za-z0-9_./:=,@%+\- ]+", command):
+        raise HTTPException(status_code=400, detail="Custom command contains unsupported characters")
+    return command
+
+
+def is_dangerous_asterisk_command(command: str):
+    lowered = f" {command.lower()} "
+    dangerous_tokens = [
+        " rm ",
+        " mkfs",
+        " dd ",
+        " poweroff",
+        " shutdown",
+        " halt",
+        " init 0",
+        " reboot",
+        " userdel ",
+        " passwd ",
+    ]
+    return any(token in lowered for token in dangerous_tokens)
+
+
+def build_asterisk_action_result(record: AsteriskSoundServer | None, *, action: str, status: str, message: str, started_at: datetime | None = None, finished_at: datetime | None = None, server_id: int | None = None):
+    target_id = record.id if record is not None else server_id
+    server_name = record.server_name if record is not None else (f"Server #{target_id}" if target_id is not None else "Unknown server")
+    server_ip = record.server_ip if record is not None else "-"
+    started_value = started_at or datetime.utcnow()
+    finished_value = finished_at or datetime.utcnow()
+    return {
+        "server_id": target_id,
+        "server_name": server_name,
+        "server_ip": server_ip,
+        "action": action,
+        "status": (status or "failed").lower(),
+        "message": message,
+        "started_at": started_value.isoformat(),
+        "finished_at": finished_value.isoformat(),
+        "timestamp": finished_value.isoformat(),
+    }
+
+
+def classify_asterisk_action_error(exc: Exception):
+    lowered = str(exc or "").strip().lower()
+    if "authentication" in lowered or "auth failed" in lowered:
+        return "Authentication failed"
+    if "permission denied" in lowered:
+        return "Permission denied"
+    if "timed out" in lowered or "timeout" in lowered:
+        return "SSH timeout"
+    if "systemctl" in lowered or "service" in lowered:
+        return "Service action failed"
+    if "reboot" in lowered:
+        return "Reboot command failed"
+    return "Action failed"
+
+
 def build_asterisk_search_result(
     record: AsteriskSoundServer,
     *,
@@ -3150,6 +3232,35 @@ def upload_asterisk_wav_to_server(record: AsteriskSoundServer, filename: str, co
     )
 
 
+def resolve_asterisk_bulk_action_command(action: str, command: str | None = None):
+    if action == "reboot":
+        return "nohup sh -c 'sleep 1; (sudo reboot || reboot)' >/dev/null 2>&1 & echo rebooting"
+    if action == "restart_asterisk":
+        return "systemctl restart asterisk || service asterisk restart"
+    if action == "custom_safe_command":
+        return command or ""
+    raise HTTPException(status_code=400, detail="Unsupported Asterisk server action")
+
+
+def run_asterisk_bulk_action_on_server(record: AsteriskSoundServer, action: str, command: str):
+    started_at = datetime.utcnow()
+    client = open_asterisk_ssh_client(record, timeout=8)
+    try:
+        exit_code, output, error = run_asterisk_ssh_command(client, command, timeout=20)
+    finally:
+        client.close()
+    finished_at = datetime.utcnow()
+    if action == "reboot":
+        success_message = "Reboot command sent successfully"
+        success_status = "success"
+    else:
+        success_message = output or "Command completed successfully"
+        success_status = "success"
+    if exit_code != 0:
+        raise RuntimeError(error or output or f"Command failed with exit code {exit_code}")
+    return build_asterisk_action_result(record, action=action, status=success_status, message=success_message, started_at=started_at, finished_at=finished_at)
+
+
 @app.post("/api/asterisk-sounds/upload")
 @app.post("/asterisk-sounds/upload")
 def upload_asterisk_sound_file_multi(request: Request, file: UploadFile = File(...), server_ids: list[int] = Form(default=[]), db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_edit"))):
@@ -3184,6 +3295,79 @@ def upload_asterisk_sound_file_multi(request: Request, file: UploadFile = File(.
         "ok": failed_count == 0,
         "message": f"Selected {len(results)} server(s). Uploaded successfully: {success_count}. Failed: {failed_count}.",
         "total": len(results),
+        "success": success_count,
+        "failed": failed_count,
+        "results": results,
+    }
+
+
+@app.post("/api/asterisk-sounds/actions")
+@app.post("/asterisk-sounds/actions")
+def run_asterisk_sound_server_actions(payload: AsteriskSoundBulkActionIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_asterisk_sound_manager("can_edit"))):
+    require_paramiko()
+    if not payload.server_ids:
+        raise HTTPException(status_code=400, detail="Select at least one target server")
+    action = validate_asterisk_bulk_action(payload.action)
+    mode = validate_asterisk_action_mode(payload.mode)
+    delay_seconds = max(0, min(int(payload.delay_seconds or 0), 600))
+    command_text = None
+    if action == "custom_safe_command":
+        if user.role != "admin":
+            raise HTTPException(status_code=403, detail="Only admin can run custom safe commands")
+        command_text = sanitize_asterisk_custom_command(payload.command)
+        if is_dangerous_asterisk_command(command_text) and not payload.confirm_dangerous:
+            raise HTTPException(status_code=400, detail="Dangerous command requires confirmation")
+    command = resolve_asterisk_bulk_action_command(action, command_text)
+    unique_ids = list(dict.fromkeys(int(server_id) for server_id in payload.server_ids))
+    records = db.query(AsteriskSoundServer).filter(AsteriskSoundServer.id.in_(unique_ids)).all()
+    by_id = {record.id: record for record in records}
+    results = []
+
+    def run_one(record: AsteriskSoundServer):
+        try:
+            return run_asterisk_bulk_action_on_server(record, action, command)
+        except Exception as exc:
+            finished_at = datetime.utcnow()
+            started_at = finished_at
+            label = classify_asterisk_action_error(exc)
+            return build_asterisk_action_result(record, action=action, status="failed", message=f"{label}: {exc}", started_at=started_at, finished_at=finished_at)
+
+    missing_ids = [server_id for server_id in unique_ids if server_id not in by_id]
+    for missing_id in missing_ids:
+        now = datetime.utcnow()
+        results.append(build_asterisk_action_result(None, action=action, server_id=missing_id, status="failed", message="Server record not found", started_at=now, finished_at=now))
+
+    target_records = [by_id[server_id] for server_id in unique_ids if server_id in by_id]
+    if mode == "all_together" and len(target_records) > 1:
+        with ThreadPoolExecutor(max_workers=min(5, len(target_records))) as executor:
+            future_map = {executor.submit(run_one, record): record for record in target_records}
+            completed_by_id = {}
+            for future in as_completed(future_map):
+                item = future.result()
+                completed_by_id[item["server_id"]] = item
+            for record in target_records:
+                results.append(completed_by_id[record.id])
+    else:
+        for index, record in enumerate(target_records):
+            results.append(run_one(record))
+            if mode == "sequentially" and delay_seconds > 0 and index < len(target_records) - 1:
+                time.sleep(delay_seconds)
+
+    success_count = sum(1 for item in results if item.get("status") == "success")
+    failed_count = sum(1 for item in results if item.get("status") == "failed")
+    for item in results:
+        record = by_id.get(item["server_id"])
+        if record is None:
+            continue
+        if item["status"] == "success":
+            log_activity(db, user, "run_asterisk_sound_action", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"Ran {action} on {record.server_name}", new_value={"action": action, "mode": mode, "message": item["message"]}, request=request, commit=False)
+        else:
+            log_activity(db, user, "run_asterisk_sound_action_failed", "asterisk_sound_manager", "AsteriskSoundServer", record.id, f"{action} failed on {record.server_name}: {item['message']}", new_value={"action": action, "mode": mode}, request=request, commit=False)
+    db.commit()
+    return {
+        "ok": failed_count == 0,
+        "message": f"Selected {len(unique_ids)} server(s). Successful: {success_count}. Failed: {failed_count}.",
+        "total": len(unique_ids),
         "success": success_count,
         "failed": failed_count,
         "results": results,
