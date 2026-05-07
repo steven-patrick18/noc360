@@ -466,6 +466,7 @@ function App() {
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
   const [isSidebarCompact, setIsSidebarCompact] = useState(() => localStorage.getItem('noc360_sidebar_compact') === '1');
+  const loadAllRequestRef = useRef(0);
   const [collapsedSidebarGroups, setCollapsedSidebarGroups] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('noc360_sidebar_groups') || '{}') || {};
@@ -489,7 +490,6 @@ function App() {
       return { total: 0, page: 1, page_size: 50, total_pages: 1 };
     }
     const query = ledgerQuery(ledgerFilters);
-    console.log('[NOC360] refreshLedger filters', ledgerFilters, query);
     const [billingRows, billingSummary, ledgerPage, ledgerSummary, billingRate] = await Promise.all([
       request('/billing'),
       request('/billing/summary'),
@@ -508,45 +508,60 @@ function App() {
 
   const loadAll = async () => {
     if (!auth) return;
+    const requestId = Date.now();
+    loadAllRequestRef.current = requestId;
+    const hasComms = ['chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets'].some((pageKey) => canDo(auth.user, pageKey));
     setLoading(true);
     setError('');
-    try {
-      await refreshBillingData();
-      const hasComms = ['chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets'].some((pageKey) => canDo(auth.user, pageKey));
-      if (hasComms) {
-        request('/communication/summary').then(setCommunicationSummary).catch(() => setCommunicationSummary({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 }));
-      }
+    setLoading(false);
 
-      if (auth.user.role !== 'customer') {
-        const can = (pageKey) => canDo(auth.user, pageKey);
-        const [dash, summary, clusterAssignments, rdpClusterAssignments, routingAssignments, vos, vosDesktop, clusters, rdps, gateways, clients, users] = await Promise.all([
-          can('dashboard') ? request('/dashboard') : Promise.resolve(null),
-          can('management_portal') ? request('/management/summary') : Promise.resolve(null),
-          can('management_portal') ? request('/management/cluster-assignments') : Promise.resolve([]),
-          can('management_portal') ? request('/management/rdp-cluster-assignments') : Promise.resolve([]),
-          can('management_portal') ? request('/management/routing-media-assignments') : Promise.resolve([]),
-          can('vos_portals') || can('management_portal') ? request('/vos-portals') : Promise.resolve([]),
-          can('vos_desktop_launcher') ? request('/vos-desktop') : Promise.resolve([]),
-          can('dialer_clusters') || can('management_portal') ? request('/dialer-clusters') : Promise.resolve([]),
-          can('rdp_media') || can('management_portal') ? request('/rdps') : Promise.resolve([]),
-          can('routing_gateways') || can('management_portal') ? request('/routing-gateways') : Promise.resolve([]),
-          request('/clients'),
-          can('user_access') ? request('/users') : Promise.resolve([]),
-        ]);
-        setDashboard(dash);
-        setManagement({ summary, cluster: clusterAssignments, rdpCluster: rdpClusterAssignments, routing: routingAssignments });
-        setData({ vos, vosDesktop, clusters, rdps, gateways, clients, users });
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+    refreshBillingData().catch((err) => {
+      if (loadAllRequestRef.current === requestId) setError(err.message);
+    });
+
+    if (hasComms) {
+      request('/communication/summary')
+        .then((result) => {
+          if (loadAllRequestRef.current !== requestId) return;
+          setCommunicationSummary(result);
+        })
+        .catch(() => {
+          if (loadAllRequestRef.current !== requestId) return;
+          setCommunicationSummary({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 });
+        });
+    }
+
+    if (auth.user.role !== 'customer') {
+      const can = (pageKey) => canDo(auth.user, pageKey);
+      Promise.all([
+        can('dashboard') ? request('/dashboard') : Promise.resolve(null),
+        can('management_portal') ? request('/management/summary') : Promise.resolve(null),
+        can('management_portal') ? request('/management/cluster-assignments') : Promise.resolve([]),
+        can('management_portal') ? request('/management/rdp-cluster-assignments') : Promise.resolve([]),
+        can('management_portal') ? request('/management/routing-media-assignments') : Promise.resolve([]),
+        can('vos_portals') || can('management_portal') ? request('/vos-portals') : Promise.resolve([]),
+        can('vos_desktop_launcher') ? request('/vos-desktop') : Promise.resolve([]),
+        can('dialer_clusters') || can('management_portal') ? request('/dialer-clusters') : Promise.resolve([]),
+        can('rdp_media') || can('management_portal') ? request('/rdps') : Promise.resolve([]),
+        can('routing_gateways') || can('management_portal') ? request('/routing-gateways') : Promise.resolve([]),
+        request('/clients'),
+        can('user_access') ? request('/users') : Promise.resolve([]),
+      ])
+        .then(([dash, summary, clusterAssignments, rdpClusterAssignments, routingAssignments, vos, vosDesktop, clusters, rdps, gateways, clients, users]) => {
+          if (loadAllRequestRef.current !== requestId) return;
+          setDashboard(dash);
+          setManagement({ summary, cluster: clusterAssignments, rdpCluster: rdpClusterAssignments, routing: routingAssignments });
+          setData({ vos, vosDesktop, clusters, rdps, gateways, clients, users });
+        })
+        .catch((err) => {
+          if (loadAllRequestRef.current === requestId) setError(err.message);
+        });
     }
   };
 
   useEffect(() => {
     loadAll();
-  }, [auth]);
+  }, [auth?.token]);
 
   useEffect(() => {
     const applyTheme = () => {
@@ -2964,8 +2979,10 @@ function BareMetalOsInstallerPage({ user }) {
 function UpdateCenterPage({ user }) {
   const canEdit = canDo(user, 'update_center', 'can_edit');
   const [status, setStatus] = useState(null);
+  const [backups, setBackups] = useState([]);
+  const [diskUsage, setDiskUsage] = useState(null);
+  const [processInfo, setProcessInfo] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [tab, setTab] = useState('status');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -2976,6 +2993,30 @@ function UpdateCenterPage({ user }) {
   const updateRequest = (path, options = {}) => {
     const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
     return request(normalizedPath, options);
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  };
+
+  const refreshBackups = async () => {
+    const result = await updateRequest('/api/update/backups');
+    setBackups(result.items || []);
+    return result;
+  };
+
+  const refreshDiskUsage = async () => {
+    const result = await updateRequest('/api/update/disk-usage');
+    setDiskUsage(result);
+    return result;
+  };
+
+  const refreshProcessInfo = async () => {
+    const result = await updateRequest('/api/update/process');
+    setProcessInfo(result);
+    return result;
   };
 
   const loadStatus = async (quiet = false) => {
@@ -3000,7 +3041,12 @@ function UpdateCenterPage({ user }) {
   };
 
   useEffect(() => {
-    loadStatus().catch(() => {});
+    Promise.all([
+      loadStatus().catch(() => {}),
+      refreshBackups().catch(() => {}),
+      refreshDiskUsage().catch(() => {}),
+      refreshProcessInfo().catch(() => {}),
+    ]).catch(() => {});
     pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
     return () => {
       if (pollingRef.current) window.clearInterval(pollingRef.current);
@@ -3025,7 +3071,6 @@ function UpdateCenterPage({ user }) {
         pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
       }
       setMessage(result.update_available ? 'Update available from GitHub.' : 'No new updates found.');
-      setTab('features');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3046,8 +3091,10 @@ function UpdateCenterPage({ user }) {
       if (!pollingRef.current) {
         pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
       }
+      refreshBackups().catch(() => {});
+      refreshDiskUsage().catch(() => {});
+      refreshProcessInfo().catch(() => {});
       setMessage(result.message || 'Update workflow started.');
-      setTab('logs');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3068,8 +3115,10 @@ function UpdateCenterPage({ user }) {
       if (!pollingRef.current) {
         pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
       }
+      refreshBackups().catch(() => {});
+      refreshDiskUsage().catch(() => {});
+      refreshProcessInfo().catch(() => {});
       setMessage(result.message || 'Rollback workflow started.');
-      setTab('logs');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -3077,94 +3126,220 @@ function UpdateCenterPage({ user }) {
     }
   };
 
-  const updateAvailable = status?.update_available ? 'Yes' : 'No';
-  const serviceStatus = status?.service_status || 'Unknown';
-  const commits = status?.new_commits || [];
-  const changedFiles = status?.changed_files || [];
+  const runBackupNow = async () => {
+    if (!window.confirm('Create a fresh backup now?')) return;
+    setBusy('backup');
+    setError('');
+    setMessage('');
+    try {
+      const result = await updateRequest('/api/update/backup/run', { method: 'POST', body: JSON.stringify({}) });
+      setBackups(result.items || []);
+      setMessage(result.message || 'Backup created successfully.');
+      await refreshDiskUsage().catch(() => {});
+      await loadStatus(true).catch(() => {});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const restoreBackup = async (name) => {
+    if (!window.confirm(`Restore backup ${name}?`)) return;
+    setBusy(`restore-${name}`);
+    setError('');
+    setMessage('');
+    try {
+      const result = await updateRequest(`/api/update/backup/restore?backup_name=${encodeURIComponent(name)}`, { method: 'POST', body: JSON.stringify({}) });
+      setMessage(result.message || 'Backup restored successfully.');
+      await Promise.all([
+        loadStatus(true).catch(() => {}),
+        refreshBackups().catch(() => {}),
+        refreshDiskUsage().catch(() => {}),
+        refreshProcessInfo().catch(() => {}),
+      ]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const deleteBackup = async (name) => {
+    if (!window.confirm(`Delete backup ${name}?`)) return;
+    setBusy(`delete-${name}`);
+    setError('');
+    setMessage('');
+    try {
+      const result = await updateRequest(`/api/update/backups/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      setBackups(result.items || []);
+      setMessage(result.message || 'Backup deleted successfully.');
+      await refreshDiskUsage().catch(() => {});
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const downloadBackup = async (name) => {
+    setBusy(`download-${name}`);
+    setError('');
+    try {
+      const blob = await requestBlob(`/update/backups/${encodeURIComponent(name)}/download`);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${name}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const updateAvailable = Boolean(status?.update_available);
+  const commits = status?.commits || status?.new_commits || [];
+  const serviceStatus = processInfo?.backend_status || status?.service_status || 'unknown';
+  const latestBackup = backups[0] || null;
+  const updateBadgeLabel = updateAvailable ? 'Update available' : 'Up to date';
 
   return (
-    <section className="updateCenterPage">
-      <div className="cards managementCards">
-        <div className="metric"><span>Current Version</span><strong>{status?.current_local_commit || '-'}</strong></div>
-        <div className="metric payment"><span>Latest Version</span><strong>{status?.latest_remote_commit || '-'}</strong></div>
-        <div className="metric revenue"><span>Update Available</span><strong>{updateAvailable}</strong></div>
-        <div className="metric"><span>Last Update</span><strong>{status?.last_update_at ? new Date(status.last_update_at).toLocaleString() : '-'}</strong></div>
+    <section className="updateHealthPage">
+      <div className="updateHealthHeader panel">
+        <div>
+          <span className="eyebrow">System Health</span>
+          <h2>System Health</h2>
+          <p className="muted">Pull updates from git, run backup, see disk usage - all without SSH.</p>
+        </div>
+        <div className="updateHealthHeaderActions">
+          <button type="button" onClick={() => loadStatus()} disabled={busy === 'refresh'}><RefreshCcw size={16} /> Refresh</button>
+          <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run' || busy === 'rollback' || busy === 'backup'}>{busy === 'check' ? 'Checking...' : 'Check Now'}</button>
+          <button type="button" className="primary" onClick={runUpdate} disabled={!canEdit || busy === 'check' || busy === 'run' || busy === 'rollback' || busy === 'backup'}>{busy === 'run' ? 'Updating...' : 'Update Now'}</button>
+          <button type="button" onClick={runBackupNow} disabled={!canEdit || busy === 'backup' || busy === 'run' || busy === 'rollback'}>{busy === 'backup' ? 'Backing up...' : 'Run Backup Now'}</button>
+          <button type="button" className="danger" onClick={runRollback} disabled={!canEdit || !status?.last_backup_path || busy === 'run' || busy === 'rollback'}>{busy === 'rollback' ? 'Rolling Back...' : 'Rollback Last Backup'}</button>
+        </div>
       </div>
 
-      <div className="updateCenterLayout">
-        <div className="panel updateCenterMain">
+      {message && <div className="toastSuccess">{message}</div>}
+      {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+
+      <div className="updateHealthGrid">
+        <div className="panel updateHealthCard">
           <div className="sectionHeader">
-            <div><span className="eyebrow">System Update Center</span><h2>Update Center</h2></div>
+            <div><span className="eyebrow">Git version</span><h3>Current Version</h3></div>
             <div className="actions">
-              <button type="button" onClick={() => loadStatus()} disabled={busy === 'refresh'}><RefreshCcw size={16} /> Refresh</button>
-              <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run' || busy === 'rollback'}>{busy === 'check' ? 'Checking...' : 'Check Updates'}</button>
-              <button type="button" className="primary" onClick={runUpdate} disabled={!canEdit || busy === 'check' || busy === 'run' || busy === 'rollback'}>{busy === 'run' ? 'Updating...' : 'Update Now'}</button>
+              <span className={`updateHealthBadge ${updateAvailable ? 'warning' : 'success'}`}>{updateBadgeLabel}</span>
+              <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run'}>{busy === 'check' ? 'Checking...' : 'Check Now'}</button>
             </div>
           </div>
-          {message && <div className="toastSuccess">{message}</div>}
-          {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
-
-          <div className="updateCenterStatusGrid">
-            <div><span>Current Local Branch</span><strong>{status?.current_local_branch || '-'}</strong></div>
-            <div><span>Current Local Commit</span><strong>{status?.current_local_commit || '-'}</strong></div>
-            <div><span>Latest Remote Commit</span><strong>{status?.latest_remote_commit || '-'}</strong></div>
-            <div><span>Service Status</span><strong>{serviceStatus}</strong></div>
-            <div><span>Last Checked</span><strong>{status?.last_checked_at ? new Date(status.last_checked_at).toLocaleString() : '-'}</strong></div>
-            <div><span>Job Status</span><strong>{status?.job_status || 'idle'}</strong></div>
+          <div className="updateHealthStats">
+            <div><span>Current Commit</span><strong>{status?.current_commit || status?.current_local_commit || '-'}</strong></div>
+            <div><span>Branch</span><strong>{status?.current_branch || status?.current_local_branch || '-'}</strong></div>
+            <div><span>Author</span><strong>{status?.commit_author || '-'}</strong></div>
+            <div><span>Date</span><strong>{formatDateTime(status?.commit_date)}</strong></div>
           </div>
-
-          <div className="updateCenterTabs">
-            {[
-              ['status', 'Status'],
-              ['features', 'New Features'],
-              ['logs', 'Update Logs'],
-              ['rollback', 'Rollback'],
-            ].map(([key, label]) => (
-              <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>
-            ))}
+          <div className="updateHealthMessage">
+            <span>Commit Message</span>
+            <strong>{status?.last_commit_message || '-'}</strong>
           </div>
+        </div>
 
-          {tab === 'status' && (
-            <div className="panel updateCenterTabPanel">
-              <p className="muted">Production path: <code>/opt/noc360</code></p>
-              <p className="muted">Service: <code>noc360</code></p>
-              <p className="muted">Update Available: <strong>{updateAvailable}</strong></p>
-              <p className="muted">Feature Summary: {status?.feature_summary || 'No update summary yet.'}</p>
-            </div>
-          )}
-
-          {tab === 'features' && (
-            <div className="panel updateCenterTabPanel">
-              <h3>New Commits</h3>
-              <div className="updateCenterList">
-                {commits.length ? commits.map((item) => <div key={item}>{item}</div>) : <div className="muted">No new commits detected.</div>}
+        <div className="panel updateHealthCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Remote status</span><h3>Update Status</h3></div>
+            <span className={`updateHealthBadge ${updateAvailable ? 'warning' : 'success'}`}>{updateBadgeLabel}</span>
+          </div>
+          {updateAvailable ? (
+            <>
+              <div className="updateHealthStats">
+                <div><span>Latest Remote</span><strong>{status?.remote_commit || status?.latest_remote_commit || '-'}</strong></div>
+                <div><span>Last Checked</span><strong>{formatDateTime(status?.last_checked || status?.last_checked_at)}</strong></div>
               </div>
-              <h3>Changed Files</h3>
-              <div className="updateCenterList">
-                {changedFiles.length ? changedFiles.map((item) => <div key={item}>{item}</div>) : <div className="muted">No file changes to show.</div>}
+              <div className="updateCenterList healthCommitList">
+                {commits.length ? commits.map((item) => <div key={item}>{item}</div>) : <div className="muted">Update detected. Commit summary is not available yet.</div>}
               </div>
-            </div>
-          )}
-
-          {tab === 'logs' && (
-            <div className="panel updateCenterTabPanel">
-              <div className="updateCenterLogs" ref={logsRef}>
-                {logs.length ? logs.map((entry, index) => (
-                  <div key={`${entry.timestamp}-${index}`} className={`updateCenterLogRow ${entry.level || 'info'}`}>
-                    <strong>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '-'}</strong>
-                    <span>{entry.message}</span>
-                  </div>
-                )) : <div className="muted">No logs yet.</div>}
+              <div className="formActions">
+                <button type="button" className="primary" onClick={runUpdate} disabled={!canEdit || busy === 'run' || busy === 'check'}>{busy === 'run' ? 'Updating...' : 'Update Now'}</button>
               </div>
+            </>
+          ) : (
+            <div className="updateHealthEmpty">
+              <span className="updateHealthBadge success">Up to date</span>
+              <p className="muted">Your local checkout is already up to date with origin/main.</p>
             </div>
           )}
+        </div>
 
-          {tab === 'rollback' && (
-            <div className="panel updateCenterTabPanel">
-              <p className="muted">Last backup: {status?.last_backup_path || 'No backup created yet.'}</p>
-              <button type="button" className="danger" onClick={runRollback} disabled={!canEdit || !status?.last_backup_path || busy === 'run' || busy === 'rollback'}>{busy === 'rollback' ? 'Rolling Back...' : 'Rollback Last Backup'}</button>
-            </div>
-          )}
+        <div className="panel updateHealthCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Recovery</span><h3>Backups</h3></div>
+            <button type="button" onClick={runBackupNow} disabled={!canEdit || busy === 'backup'}>{busy === 'backup' ? 'Backing up...' : 'Run Backup Now'}</button>
+          </div>
+          <div className="updateBackupsList">
+            {backups.length ? backups.map((item) => (
+              <div className="updateBackupRow" key={item.name}>
+                <div>
+                  <strong>{item.name}</strong>
+                  <span>{formatDateTime(item.created_at)}</span>
+                </div>
+                <em>{item.size_label || '-'}</em>
+                <div className="updateBackupActions">
+                  <button type="button" onClick={() => downloadBackup(item.name)} disabled={busy === `download-${item.name}`}>{busy === `download-${item.name}` ? 'Downloading...' : 'Download'}</button>
+                  <button type="button" onClick={() => restoreBackup(item.name)} disabled={!canEdit || busy === `restore-${item.name}`}>{busy === `restore-${item.name}` ? 'Restoring...' : 'Restore'}</button>
+                  <button type="button" className="danger" onClick={() => deleteBackup(item.name)} disabled={!canEdit || busy === `delete-${item.name}`}>{busy === `delete-${item.name}` ? 'Deleting...' : 'Delete'}</button>
+                </div>
+              </div>
+            )) : <div className="muted">No backups created yet.</div>}
+          </div>
+          {latestBackup && <p className="muted">Latest backup: <code>{latestBackup.name}</code></p>}
+        </div>
+
+        <div className="panel updateHealthCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Storage</span><h3>Disk Usage</h3></div>
+          </div>
+          <div className="updateHealthStats">
+            <div><span>Database Size</span><strong>{diskUsage?.database_size_label || '-'}</strong></div>
+            <div><span>Uploaded Files</span><strong>{diskUsage?.uploaded_files_size_label || '-'}</strong></div>
+            <div><span>Backup Archive</span><strong>{diskUsage?.backup_archive_size_label || '-'}</strong></div>
+            <div><span>Total Size</span><strong>{diskUsage?.total_size_label || '-'}</strong></div>
+          </div>
+        </div>
+
+        <div className="panel updateHealthCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Runtime</span><h3>App Process</h3></div>
+            <StatusPill value={serviceStatus} />
+          </div>
+          <div className="updateHealthStats">
+            <div><span>Backend Status</span><strong>{serviceStatus || '-'}</strong></div>
+            <div><span>Service Uptime</span><strong>{processInfo?.service_uptime || '-'}</strong></div>
+            <div><span>Memory Usage</span><strong>{processInfo?.memory_usage || '-'}</strong></div>
+            <div><span>PID</span><strong>{processInfo?.pid || '-'}</strong></div>
+            <div><span>Python Version</span><strong>{processInfo?.python_version || '-'}</strong></div>
+            <div><span>Node Version</span><strong>{processInfo?.node_version || '-'}</strong></div>
+            <div><span>Install Directory</span><strong>{processInfo?.install_directory || '/opt/noc360'}</strong></div>
+            <div><span>Environment</span><strong>{processInfo?.environment || '-'}</strong></div>
+          </div>
+        </div>
+
+        <div className="panel updateHealthCard updateHealthLogsCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Workflow</span><h3>Update Logs</h3></div>
+          </div>
+          <div className="updateCenterLogs" ref={logsRef}>
+            {logs.length ? logs.map((entry, index) => (
+              <div key={`${entry.timestamp}-${index}`} className={`updateCenterLogRow ${entry.level || 'info'}`}>
+                <strong>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '-'}</strong>
+                <span>{entry.message}</span>
+              </div>
+            )) : <div className="muted">No logs yet.</div>}
+          </div>
         </div>
       </div>
     </section>

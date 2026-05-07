@@ -162,6 +162,8 @@ TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "i
 TERMINAL_IDLE_TIMEOUT_SECONDS = int(os.getenv("TERMINAL_IDLE_TIMEOUT_SECONDS", "300"))
 TERMINAL_LIVE_SESSIONS: dict[str, dict] = {}
 TERMINAL_LIVE_SESSIONS_LOCK = threading.Lock()
+STARTUP_STATE_PATH = Path(DATABASE_PATH).with_suffix(".startup_state.json")
+STARTUP_MAINTENANCE_VERSION = 1
 DEFAULT_TERMINAL_COMMANDS = [
     {"title": "Uptime", "command": "uptime", "purpose": "Shows how long the server has been running and load averages.", "category": "Linux", "risk_level": "Safe"},
     {"title": "Top Processes", "command": "top", "purpose": "Interactive process and resource monitor.", "category": "Linux", "risk_level": "Safe"},
@@ -1143,17 +1145,43 @@ def normalize_ledger_currency(db: Session):
         db.commit()
 
 
+def read_startup_state():
+    try:
+        return json.loads(STARTUP_STATE_PATH.read_text("utf-8"))
+    except Exception:
+        return {}
+
+
+def write_startup_state(state: dict):
+    try:
+        STARTUP_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        logger.warning("Unable to persist startup state", exc_info=True)
+
+
+def run_startup_maintenance(db: Session):
+    state = read_startup_state()
+    version = int(state.get("maintenance_version") or 0)
+    get_billing_setting(db)
+    seed_user_access_defaults(db)
+    seed_terminal_default_commands(db)
+    ensure_chat_rooms_for_clients(db)
+    if version >= STARTUP_MAINTENANCE_VERSION:
+        return
+    backfill_reference_ids(db)
+    normalize_ledger_currency(db)
+    normalize_data_cost_currency(db)
+    write_startup_state({
+        "maintenance_version": STARTUP_MAINTENANCE_VERSION,
+        "updated_at": datetime.utcnow().isoformat(),
+    })
+
+
 @app.on_event("startup")
 def startup():
     create_database()
     with SessionLocal() as db:
-        backfill_reference_ids(db)
-        get_billing_setting(db)
-        normalize_ledger_currency(db)
-        normalize_data_cost_currency(db)
-        seed_user_access_defaults(db)
-        seed_terminal_default_commands(db)
-        ensure_chat_rooms_for_clients(db)
+        run_startup_maintenance(db)
 
 
 @app.get("/")
@@ -1929,6 +1957,111 @@ def require_update_center_project():
         raise HTTPException(status_code=400, detail=f"Update Center project path is missing: {UPDATE_CENTER_PROJECT_PATH}")
 
 
+def update_center_path_size(path: Path):
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            try:
+                total += item.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def format_update_center_bytes(size: int):
+    units = ["B", "KB", "MB", "GB", "TB"]
+    value = float(size or 0)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{size} B"
+
+
+def update_center_backup_name(backup_path: Path):
+    return backup_path.name
+
+
+def get_update_center_backup_rows():
+    require_update_center_project()
+    UPDATE_CENTER_BACKUPS_PATH.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for entry in sorted(UPDATE_CENTER_BACKUPS_PATH.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        if not entry.is_dir():
+            continue
+        stamp = datetime.fromtimestamp(entry.stat().st_mtime)
+        size_bytes = update_center_path_size(entry)
+        rows.append({
+            "name": update_center_backup_name(entry),
+            "path": str(entry),
+            "created_at": stamp.isoformat(),
+            "size_bytes": size_bytes,
+            "size_label": format_update_center_bytes(size_bytes),
+        })
+    return rows
+
+
+def resolve_update_center_backup(name: str):
+    require_update_center_project()
+    safe_name = re.sub(r"[^A-Za-z0-9_-]", "", str(name or ""))
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Backup name is required")
+    backup_path = (UPDATE_CENTER_BACKUPS_PATH / safe_name).resolve()
+    backups_root = UPDATE_CENTER_BACKUPS_PATH.resolve()
+    if backups_root not in backup_path.parents or not backup_path.exists() or not backup_path.is_dir():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return backup_path
+
+
+def collect_update_center_disk_usage():
+    require_update_center_project()
+    db_path = UPDATE_CENTER_BACKEND_PATH / "noc360.db"
+    uploads_path = UPDATE_CENTER_PROJECT_PATH / "uploads"
+    backups_path = UPDATE_CENTER_BACKUPS_PATH
+    database_size = update_center_path_size(db_path)
+    uploads_size = update_center_path_size(uploads_path)
+    backups_size = update_center_path_size(backups_path)
+    total_size = database_size + uploads_size + backups_size
+    return {
+        "database_size": database_size,
+        "database_size_label": format_update_center_bytes(database_size),
+        "uploaded_files_size": uploads_size,
+        "uploaded_files_size_label": format_update_center_bytes(uploads_size),
+        "backup_archive_size": backups_size,
+        "backup_archive_size_label": format_update_center_bytes(backups_size),
+        "total_size": total_size,
+        "total_size_label": format_update_center_bytes(total_size),
+    }
+
+
+def collect_update_center_process():
+    require_update_center_project()
+    service_status = run_update_center_checked(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20)
+    pid = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MainPID", "--value"], cwd=PROJECT_ROOT, timeout=20)
+    uptime = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "ActiveEnterTimestamp", "--value"], cwd=PROJECT_ROOT, timeout=20)
+    memory = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MemoryCurrent", "--value"], cwd=PROJECT_ROOT, timeout=20)
+    python_version = run_update_center_checked(["python3", "--version"], cwd=PROJECT_ROOT, timeout=20)
+    node_version = run_update_center_checked(["node", "--version"], cwd=PROJECT_ROOT, timeout=20)
+    environment_name = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or "production"
+    pid_value = int(pid or "0") if str(pid or "").strip().isdigit() else 0
+    memory_bytes = int(memory or "0") if str(memory or "").strip().isdigit() else 0
+    return {
+        "backend_status": service_status,
+        "service_uptime": uptime or "-",
+        "memory_usage": format_update_center_bytes(memory_bytes),
+        "memory_usage_bytes": memory_bytes,
+        "pid": pid_value or None,
+        "python_version": python_version,
+        "node_version": node_version,
+        "install_directory": str(UPDATE_CENTER_PROJECT_PATH),
+        "environment": environment_name,
+    }
+
+
 def summarize_update_center_commits(lines: list[str]):
     if not lines:
         return "No new commits detected."
@@ -1945,6 +2078,8 @@ def collect_update_center_status():
     current_commit = run_update_center_checked(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, timeout=20)
     remote_commit = run_update_center_checked(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=20)
     last_commit_message = run_update_center_checked(["git", "log", "-1", "--pretty=%s"], cwd=PROJECT_ROOT, timeout=20)
+    commit_author = run_update_center_checked(["git", "log", "-1", "--pretty=%an"], cwd=PROJECT_ROOT, timeout=20)
+    commit_date = run_update_center_checked(["git", "log", "-1", "--date=iso-strict", "--pretty=%ad"], cwd=PROJECT_ROOT, timeout=20)
     service_status = run_update_center_checked(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20)
     last_checked = datetime.utcnow().isoformat()
     return merge_update_center_state({
@@ -1952,6 +2087,8 @@ def collect_update_center_status():
         "current_commit": current_commit,
         "remote_commit": remote_commit,
         "last_commit_message": last_commit_message,
+        "commit_author": commit_author,
+        "commit_date": commit_date,
         "service_status": service_status,
         "update_available": current_commit != remote_commit,
         "last_checked": last_checked,
@@ -1978,6 +2115,18 @@ def build_update_center_backup():
     merge_update_center_state({"last_backup_path": str(backup_dir)})
     push_update_center_log(f"Backup created at {backup_dir}")
     return backup_dir
+
+
+def restore_update_center_backup(backup_path: Path):
+    push_update_center_log(f"Restoring backup from {backup_path}")
+    restore_map = [
+        (backup_path / "noc360.db", UPDATE_CENTER_BACKEND_PATH / "noc360.db"),
+        (backup_path / "main.py", UPDATE_CENTER_BACKEND_PATH / "main.py"),
+        (backup_path / "main.jsx", UPDATE_CENTER_FRONTEND_PATH / "src" / "main.jsx"),
+    ]
+    for source, target in restore_map:
+        if source.exists():
+            shutil.copy2(source, target)
 
 
 def perform_update_center_check():
@@ -2020,15 +2169,7 @@ def run_update_center_workflow(job_type: str):
             backup_path = Path(last_backup)
             if not backup_path.exists():
                 raise RuntimeError("No backup found for rollback")
-            push_update_center_log(f"Restoring backup from {backup_path}")
-            restore_map = [
-                (backup_path / "noc360.db", UPDATE_CENTER_BACKEND_PATH / "noc360.db"),
-                (backup_path / "main.py", UPDATE_CENTER_BACKEND_PATH / "main.py"),
-                (backup_path / "main.jsx", UPDATE_CENTER_FRONTEND_PATH / "src" / "main.jsx"),
-            ]
-            for source, target in restore_map:
-                if source.exists():
-                    shutil.copy2(source, target)
+            restore_update_center_backup(backup_path)
             steps = [
                 ("Installing frontend dependencies", ["npm", "install"], UPDATE_CENTER_FRONTEND_PATH, 600),
                 ("Building frontend", ["npm", "run", "build"], UPDATE_CENTER_FRONTEND_PATH, 900),
@@ -2856,6 +2997,96 @@ def check_update_center(request: Request, db: Session = Depends(get_db), user: U
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     log_activity(db, user, "check_update_center", "update_center", "System", None, "Checked GitHub updates for NOC360", new_value={"update_available": result.get("update_available"), "latest_remote_commit": result.get("latest_remote_commit")}, request=request, commit=True)
     return result
+
+
+@app.get("/api/update/backups")
+def list_update_center_backups(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
+    try:
+        return {"items": get_update_center_backup_rows(), "last_backup_path": read_update_center_state().get("last_backup_path")}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/update/backup/run")
+def run_update_center_backup(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    try:
+        backup_dir = build_update_center_backup()
+        rows = get_update_center_backup_rows()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_activity(db, user, "run_update_center_backup", "update_center", "System", None, "Created Update Center backup", new_value={"backup_path": str(backup_dir)}, request=request, commit=True)
+    return {"ok": True, "message": "Backup created successfully", "backup": next((item for item in rows if item["path"] == str(backup_dir)), None), "items": rows}
+
+
+@app.post("/api/update/backup/restore")
+def restore_update_center_backup_route(backup_name: str = Query(...), request: Request = None, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    try:
+        backup_path = resolve_update_center_backup(backup_name)
+        restore_update_center_backup(backup_path)
+        merge_update_center_state({"last_backup_path": str(backup_path)})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_activity(db, user, "restore_update_center_backup", "update_center", "System", None, "Restored Update Center backup", new_value={"backup_path": str(backup_path)}, request=request, commit=True)
+    return {"ok": True, "message": "Backup restored successfully", "backup_name": backup_name}
+
+
+@app.delete("/api/update/backups/{backup_name}")
+def delete_update_center_backup(backup_name: str, request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    try:
+        backup_path = resolve_update_center_backup(backup_name)
+        shutil.rmtree(backup_path)
+        rows = get_update_center_backup_rows()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log_activity(db, user, "delete_update_center_backup", "update_center", "System", None, "Deleted Update Center backup", new_value={"backup_name": backup_name}, request=request, commit=True)
+    return {"ok": True, "message": "Backup deleted successfully", "items": rows}
+
+
+@app.get("/api/update/backups/{backup_name}/download")
+def download_update_center_backup(backup_name: str, user: User = Depends(require_update_center())):
+    try:
+        backup_path = resolve_update_center_backup(backup_name)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_path in backup_path.rglob("*"):
+            if file_path.is_file():
+                archive.write(file_path, arcname=str(Path(backup_name) / file_path.relative_to(backup_path)))
+    buffer.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{backup_name}.zip"'}
+    return StreamingResponse(buffer, media_type="application/zip", headers=headers)
+
+
+@app.get("/api/update/disk-usage")
+def get_update_center_disk_usage(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
+    try:
+        return collect_update_center_disk_usage()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/update/process")
+def get_update_center_process(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
+    try:
+        return collect_update_center_process()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def start_update_center_job(job_type: str):

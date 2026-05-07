@@ -6836,3 +6836,194 @@ td {
     padding: 10px 12px !important;
   }
 }
+
+.updateHealthPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.updateHealthHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.updateHealthHeader h2 {
+  margin: 4px 0 8px;
+}
+
+.updateHealthHeaderActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.updateHealthGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.updateHealthCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.updateHealthStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.updateHealthStats div,
+.updateHealthMessage {
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(9, 16, 28, 0.72);
+}
+
+.updateHealthStats span,
+.updateHealthMessage span,
+.updateBackupRow span {
+  display: block;
+  color: rgba(203, 225, 246, 0.7);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.updateHealthStats strong,
+.updateHealthMessage strong,
+.updateBackupRow strong,
+.updateBackupRow em {
+  display: block;
+  margin-top: 6px;
+  color: #f8fbff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.updateHealthMessage strong {
+  font-size: 15px;
+}
+
+.updateHealthBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.12);
+  background: rgba(15, 23, 42, 0.76);
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.updateHealthBadge.success {
+  border-color: rgba(52, 211, 153, 0.3);
+  color: #86efac;
+  background: rgba(6, 35, 27, 0.9);
+}
+
+.updateHealthBadge.warning {
+  border-color: rgba(251, 191, 36, 0.28);
+  color: #fde68a;
+  background: rgba(43, 30, 7, 0.9);
+}
+
+.updateBackupsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.updateBackupRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(9, 16, 28, 0.72);
+}
+
+.updateBackupRow em {
+  margin-top: 0;
+  font-style: normal;
+  text-align: right;
+}
+
+.updateBackupActions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.updateHealthEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0 2px;
+}
+
+.healthCommitList {
+  max-height: 230px;
+  overflow-y: auto;
+}
+
+.updateHealthLogsCard {
+  grid-column: 1 / -1;
+}
+
+.updateCenterLogs {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+@media (max-width: 1180px) {
+  .updateHealthGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .updateHealthHeader {
+    flex-direction: column;
+  }
+
+  .updateHealthHeaderActions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .updateHealthStats {
+    grid-template-columns: 1fr;
+  }
+
+  .updateBackupRow {
+    grid-template-columns: 1fr;
+  }
+
+  .updateBackupRow em {
+    text-align: left;
+  }
+}
