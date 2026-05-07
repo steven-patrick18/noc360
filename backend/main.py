@@ -290,7 +290,8 @@ ROLE_DEFAULT_PAGES = {
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
 
-UPDATE_CENTER_PROJECT_PATH = Path("/opt/noc360")
+PROJECT_ROOT = "/opt/noc360"
+UPDATE_CENTER_PROJECT_PATH = Path(PROJECT_ROOT)
 UPDATE_CENTER_BACKEND_PATH = UPDATE_CENTER_PROJECT_PATH / "backend"
 UPDATE_CENTER_FRONTEND_PATH = UPDATE_CENTER_PROJECT_PATH / "frontend"
 UPDATE_CENTER_BACKUPS_PATH = UPDATE_CENTER_PROJECT_PATH / "backups"
@@ -1900,6 +1901,29 @@ def run_update_center_command(args: list[str], *, cwd: Path, timeout: int = 300)
     return {"ok": completed.returncode == 0, "returncode": completed.returncode, "output": output}
 
 
+def run_update_center_checked(args: list[str], *, cwd: str | Path = PROJECT_ROOT, timeout: int = 60):
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception as exc:
+        push_update_center_log(str(exc), "error")
+        raise RuntimeError(str(exc)) from exc
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if stderr:
+        logger.error("Update Center command stderr for %s: %s", " ".join(args), stderr)
+        push_update_center_log(stderr, "error")
+    if completed.returncode != 0:
+        raise RuntimeError(stderr or stdout or f"{args[0]} failed with exit code {completed.returncode}")
+    return stdout
+
+
 def require_update_center_project():
     if not update_center_project_exists():
         raise HTTPException(status_code=400, detail=f"Update Center project path is missing: {UPDATE_CENTER_PROJECT_PATH}")
@@ -1916,24 +1940,26 @@ def summarize_update_center_commits(lines: list[str]):
 
 
 def collect_update_center_status():
-    if not update_center_project_exists():
-        return merge_update_center_state({
-            "service_status": "Path Missing",
-            "current_local_branch": "",
-            "current_local_commit": "",
-            "latest_remote_commit": "",
-            "update_available": False,
-        })
-    branch = run_update_center_command(["git", "branch", "--show-current"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
-    local_commit = run_update_center_command(["git", "rev-parse", "--short", "HEAD"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
-    remote_commit = run_update_center_command(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
-    service = run_safe_command(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], timeout=10)
+    require_update_center_project()
+    current_branch = run_update_center_checked(["git", "branch", "--show-current"], cwd=PROJECT_ROOT, timeout=20)
+    current_commit = run_update_center_checked(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, timeout=20)
+    remote_commit = run_update_center_checked(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=20)
+    last_commit_message = run_update_center_checked(["git", "log", "-1", "--pretty=%s"], cwd=PROJECT_ROOT, timeout=20)
+    service_status = run_update_center_checked(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20)
+    last_checked = datetime.utcnow().isoformat()
     return merge_update_center_state({
-        "current_local_branch": branch.get("output", "") if branch.get("ok") else "",
-        "current_local_commit": local_commit.get("output", "") if local_commit.get("ok") else "",
-        "latest_remote_commit": remote_commit.get("output", "") if remote_commit.get("ok") else "",
-        "update_available": bool(local_commit.get("output") and remote_commit.get("output") and local_commit.get("output") != remote_commit.get("output")),
-        "service_status": service.get("output", "") or ("active" if service.get("ok") else "unknown"),
+        "current_branch": current_branch,
+        "current_commit": current_commit,
+        "remote_commit": remote_commit,
+        "last_commit_message": last_commit_message,
+        "service_status": service_status,
+        "update_available": current_commit != remote_commit,
+        "last_checked": last_checked,
+        # Keep the existing frontend cards happy while the backend shape evolves.
+        "current_local_branch": current_branch,
+        "current_local_commit": current_commit,
+        "latest_remote_commit": remote_commit,
+        "last_checked_at": last_checked,
     })
 
 
@@ -1957,23 +1983,18 @@ def build_update_center_backup():
 def perform_update_center_check():
     require_update_center_project()
     push_update_center_log("Fetching latest code from origin")
-    fetch = run_update_center_command(["git", "fetch", "origin"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=120)
-    if not fetch["ok"]:
-        raise RuntimeError(fetch["output"] or "git fetch origin failed")
+    run_update_center_checked(["git", "fetch", "origin"], cwd=PROJECT_ROOT, timeout=120)
     status = collect_update_center_status()
-    git_status = run_update_center_command(["git", "status", "--short", "--branch"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
-    commit_log = run_update_center_command(["git", "log", f"HEAD..origin/{UPDATE_CENTER_BRANCH}", "--oneline"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
-    diff_stat = run_update_center_command(["git", "diff", "--stat", "HEAD", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
-    commit_lines = [line.strip() for line in (commit_log.get("output") or "").splitlines() if line.strip()]
-    diff_lines = [line.strip() for line in (diff_stat.get("output") or "").splitlines() if line.strip()]
-    checked_at = datetime.utcnow().isoformat()
+    commit_log = run_update_center_checked(["git", "log", f"HEAD..origin/{UPDATE_CENTER_BRANCH}", "--oneline"], cwd=PROJECT_ROOT, timeout=30)
+    diff_stat = run_update_center_checked(["git", "diff", "--stat", f"HEAD..origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=30)
+    commit_lines = [line.strip() for line in commit_log.splitlines() if line.strip()]
+    diff_lines = [line.strip() for line in diff_stat.splitlines() if line.strip()]
     return merge_update_center_state({
         **status,
-        "last_checked_at": checked_at,
-        "new_commits": commit_lines,
+        "commits": commit_lines,
         "changed_files": diff_lines,
+        "new_commits": commit_lines,
         "feature_summary": summarize_update_center_commits(commit_lines),
-        "git_status": git_status.get("output", ""),
     })
 
 
@@ -2817,13 +2838,22 @@ def install_bare_metal_os(payload: IPMIRequestIn, request: Request, db: Session 
 
 @app.get("/api/update/status")
 def get_update_center_status(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
-    require_update_center_project()
-    return collect_update_center_status()
+    try:
+        return collect_update_center_status()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/update/check")
 def check_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
-    result = perform_update_center_check()
+    try:
+        result = perform_update_center_check()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     log_activity(db, user, "check_update_center", "update_center", "System", None, "Checked GitHub updates for NOC360", new_value={"update_available": result.get("update_available"), "latest_remote_commit": result.get("latest_remote_commit")}, request=request, commit=True)
     return result
 
