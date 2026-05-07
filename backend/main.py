@@ -53,6 +53,7 @@ from schemas import (
     AsteriskSoundServerCreate,
     AsteriskSoundServerOut,
     AsteriskSoundServerUpdate,
+    # Update Center does not need dedicated Pydantic route models yet.
     BillingChargeCreate,
     BillingChargeOut,
     BillingChargeUpdate,
@@ -217,6 +218,7 @@ PAGE_KEYS = [
     "terminal",
     "asterisk_sound_manager",
     "bare_metal_os_installer",
+    "update_center",
 ]
 PAGE_KEY_ALIASES = {
     "command_center": "dashboard",
@@ -226,6 +228,7 @@ PAGE_KEY_ALIASES = {
     "vos_desktop": "vos_desktop_launcher",
     "media_nodes": "rdp_media",
     "traffic_control": "routing_gateways",
+    "update_center": "update_center",
 }
 DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
     "dashboard",
@@ -253,6 +256,7 @@ DEFAULT_PERMISSION_KEYS = list(dict.fromkeys([
     "terminal",
     "asterisk_sound_manager",
     "bare_metal_os_installer",
+    "update_center",
     *PAGE_KEYS,
 ]))
 ALLOWED_PERMISSION_KEYS = sorted(set(PAGE_KEYS) | set(DEFAULT_PERMISSION_KEYS) | set(PAGE_KEY_ALIASES))
@@ -277,12 +281,37 @@ MODULE_PAGE_MAP = {
     "terminal": "terminal",
     "asteriskSoundManager": "asterisk_sound_manager",
     "bareMetalOsInstaller": "bare_metal_os_installer",
+    "updateCenter": "update_center",
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
     "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager", "bare_metal_os_installer"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
+}
+
+UPDATE_CENTER_PROJECT_PATH = Path("/opt/noc360")
+UPDATE_CENTER_BACKEND_PATH = UPDATE_CENTER_PROJECT_PATH / "backend"
+UPDATE_CENTER_FRONTEND_PATH = UPDATE_CENTER_PROJECT_PATH / "frontend"
+UPDATE_CENTER_BACKUPS_PATH = UPDATE_CENTER_PROJECT_PATH / "backups"
+UPDATE_CENTER_SERVICE_NAME = "noc360"
+UPDATE_CENTER_BRANCH = "main"
+UPDATE_CENTER_LOCK = threading.Lock()
+UPDATE_CENTER_STATE = {
+    "current_local_branch": "",
+    "current_local_commit": "",
+    "latest_remote_commit": "",
+    "update_available": False,
+    "last_checked_at": None,
+    "service_status": "Unknown",
+    "last_update_at": None,
+    "last_backup_path": None,
+    "job_status": "idle",
+    "job_type": "",
+    "logs": [],
+    "new_commits": [],
+    "changed_files": [],
+    "feature_summary": "",
 }
 
 
@@ -681,6 +710,17 @@ def require_bare_metal_os_installer(action: str = "can_view"):
         permission = permission_dict(db, user).get("bare_metal_os_installer")
         if not permission or not permission.get(action):
             raise HTTPException(status_code=403, detail="Bare Metal OS Installer permission denied")
+        return user
+    return checker
+
+
+def require_update_center(action: str = "can_view"):
+    def checker(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "admin":
+            raise HTTPException(status_code=403, detail="Update Center is restricted to admin")
+        permission = permission_dict(db, user).get("update_center")
+        if permission and not permission.get(action):
+            raise HTTPException(status_code=403, detail="Update Center permission denied")
         return user
     return checker
 
@@ -1825,6 +1865,176 @@ def run_safe_command(args: list[str], timeout: int = 10):
         return {"ok": False, "returncode": 124, "output": f"{args[0]} timed out"}
 
 
+def update_center_project_exists():
+    return UPDATE_CENTER_PROJECT_PATH.exists() and UPDATE_CENTER_BACKEND_PATH.exists() and UPDATE_CENTER_FRONTEND_PATH.exists()
+
+
+def read_update_center_state():
+    with UPDATE_CENTER_LOCK:
+        return json.loads(json.dumps(UPDATE_CENTER_STATE))
+
+
+def merge_update_center_state(patch: dict):
+    with UPDATE_CENTER_LOCK:
+        UPDATE_CENTER_STATE.update(patch)
+        return json.loads(json.dumps(UPDATE_CENTER_STATE))
+
+
+def push_update_center_log(message: str, level: str = "info"):
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "level": level,
+        "message": message,
+    }
+    with UPDATE_CENTER_LOCK:
+        logs = UPDATE_CENTER_STATE.setdefault("logs", [])
+        logs.append(entry)
+        if len(logs) > 400:
+            del logs[:-400]
+    return entry
+
+
+def run_update_center_command(args: list[str], *, cwd: Path, timeout: int = 300):
+    completed = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, check=False)
+    output = "\n".join(part for part in [(completed.stdout or "").strip(), (completed.stderr or "").strip()] if part).strip()
+    return {"ok": completed.returncode == 0, "returncode": completed.returncode, "output": output}
+
+
+def require_update_center_project():
+    if not update_center_project_exists():
+        raise HTTPException(status_code=400, detail=f"Update Center project path is missing: {UPDATE_CENTER_PROJECT_PATH}")
+
+
+def summarize_update_center_commits(lines: list[str]):
+    if not lines:
+        return "No new commits detected."
+    summaries = []
+    for line in lines[:5]:
+        parts = line.split(" ", 1)
+        summaries.append(parts[1] if len(parts) > 1 else line)
+    return "; ".join(summaries)
+
+
+def collect_update_center_status():
+    if not update_center_project_exists():
+        return merge_update_center_state({
+            "service_status": "Path Missing",
+            "current_local_branch": "",
+            "current_local_commit": "",
+            "latest_remote_commit": "",
+            "update_available": False,
+        })
+    branch = run_update_center_command(["git", "branch", "--show-current"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
+    local_commit = run_update_center_command(["git", "rev-parse", "--short", "HEAD"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
+    remote_commit = run_update_center_command(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=20)
+    service = run_safe_command(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], timeout=10)
+    return merge_update_center_state({
+        "current_local_branch": branch.get("output", "") if branch.get("ok") else "",
+        "current_local_commit": local_commit.get("output", "") if local_commit.get("ok") else "",
+        "latest_remote_commit": remote_commit.get("output", "") if remote_commit.get("ok") else "",
+        "update_available": bool(local_commit.get("output") and remote_commit.get("output") and local_commit.get("output") != remote_commit.get("output")),
+        "service_status": service.get("output", "") or ("active" if service.get("ok") else "unknown"),
+    })
+
+
+def build_update_center_backup():
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    backup_dir = UPDATE_CENTER_BACKUPS_PATH / stamp
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    files_to_copy = [
+        (UPDATE_CENTER_BACKEND_PATH / "noc360.db", backup_dir / "noc360.db"),
+        (UPDATE_CENTER_BACKEND_PATH / "main.py", backup_dir / "main.py"),
+        (UPDATE_CENTER_FRONTEND_PATH / "src" / "main.jsx", backup_dir / "main.jsx"),
+    ]
+    for source, target in files_to_copy:
+        if source.exists():
+            shutil.copy2(source, target)
+    merge_update_center_state({"last_backup_path": str(backup_dir)})
+    push_update_center_log(f"Backup created at {backup_dir}")
+    return backup_dir
+
+
+def perform_update_center_check():
+    require_update_center_project()
+    push_update_center_log("Fetching latest code from origin")
+    fetch = run_update_center_command(["git", "fetch", "origin"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=120)
+    if not fetch["ok"]:
+        raise RuntimeError(fetch["output"] or "git fetch origin failed")
+    status = collect_update_center_status()
+    git_status = run_update_center_command(["git", "status", "--short", "--branch"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
+    commit_log = run_update_center_command(["git", "log", f"HEAD..origin/{UPDATE_CENTER_BRANCH}", "--oneline"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
+    diff_stat = run_update_center_command(["git", "diff", "--stat", "HEAD", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=UPDATE_CENTER_PROJECT_PATH, timeout=30)
+    commit_lines = [line.strip() for line in (commit_log.get("output") or "").splitlines() if line.strip()]
+    diff_lines = [line.strip() for line in (diff_stat.get("output") or "").splitlines() if line.strip()]
+    checked_at = datetime.utcnow().isoformat()
+    return merge_update_center_state({
+        **status,
+        "last_checked_at": checked_at,
+        "new_commits": commit_lines,
+        "changed_files": diff_lines,
+        "feature_summary": summarize_update_center_commits(commit_lines),
+        "git_status": git_status.get("output", ""),
+    })
+
+
+def run_update_center_workflow(job_type: str):
+    merge_update_center_state({"job_status": "running", "job_type": job_type, "logs": []})
+    push_update_center_log(f"Starting {job_type} workflow")
+    try:
+        require_update_center_project()
+        backup_dir = build_update_center_backup()
+        if job_type == "update":
+            steps = [
+                ("Fetching update", ["git", "fetch", "origin"], UPDATE_CENTER_PROJECT_PATH, 120),
+                ("Resetting code to origin/main", ["git", "reset", "--hard", f"origin/{UPDATE_CENTER_BRANCH}"], UPDATE_CENTER_PROJECT_PATH, 120),
+                ("Installing backend dependencies", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "pip"), "install", "-r", "requirements.txt"], UPDATE_CENTER_BACKEND_PATH, 600),
+                ("Installing frontend dependencies", ["npm", "install"], UPDATE_CENTER_FRONTEND_PATH, 600),
+                ("Building frontend", ["npm", "run", "build"], UPDATE_CENTER_FRONTEND_PATH, 900),
+                ("Running backend syntax check", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "python"), "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
+                ("Restarting noc360 service", ["systemctl", "restart", UPDATE_CENTER_SERVICE_NAME], UPDATE_CENTER_PROJECT_PATH, 60),
+                ("Reloading nginx", ["systemctl", "reload", "nginx"], UPDATE_CENTER_PROJECT_PATH, 60),
+            ]
+        else:
+            last_backup = read_update_center_state().get("last_backup_path") or str(backup_dir)
+            backup_path = Path(last_backup)
+            if not backup_path.exists():
+                raise RuntimeError("No backup found for rollback")
+            push_update_center_log(f"Restoring backup from {backup_path}")
+            restore_map = [
+                (backup_path / "noc360.db", UPDATE_CENTER_BACKEND_PATH / "noc360.db"),
+                (backup_path / "main.py", UPDATE_CENTER_BACKEND_PATH / "main.py"),
+                (backup_path / "main.jsx", UPDATE_CENTER_FRONTEND_PATH / "src" / "main.jsx"),
+            ]
+            for source, target in restore_map:
+                if source.exists():
+                    shutil.copy2(source, target)
+            steps = [
+                ("Installing frontend dependencies", ["npm", "install"], UPDATE_CENTER_FRONTEND_PATH, 600),
+                ("Building frontend", ["npm", "run", "build"], UPDATE_CENTER_FRONTEND_PATH, 900),
+                ("Running backend syntax check", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "python"), "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
+                ("Restarting noc360 service", ["systemctl", "restart", UPDATE_CENTER_SERVICE_NAME], UPDATE_CENTER_PROJECT_PATH, 60),
+                ("Reloading nginx", ["systemctl", "reload", "nginx"], UPDATE_CENTER_PROJECT_PATH, 60),
+            ]
+        for label, command, cwd, timeout in steps:
+            push_update_center_log(label)
+            result = run_update_center_command(command, cwd=cwd, timeout=timeout)
+            if result.get("output"):
+                push_update_center_log(result["output"])
+            if not result["ok"]:
+                raise RuntimeError(result["output"] or f"{label} failed")
+        checked = perform_update_center_check()
+        merge_update_center_state({
+            **checked,
+            "job_status": "completed",
+            "job_type": job_type,
+            "last_update_at": datetime.utcnow().isoformat(),
+        })
+        push_update_center_log(f"{job_type.title()} workflow completed successfully", "success")
+    except Exception as exc:
+        merge_update_center_state({"job_status": "failed", "job_type": job_type})
+        push_update_center_log(str(exc), "error")
+
+
 def clean_config_value(name: str, value: str | None, required: bool = True):
     normalized = normalize(value)
     if not normalized:
@@ -2603,6 +2813,46 @@ def install_bare_metal_os(payload: IPMIRequestIn, request: Request, db: Session 
     steps.append({"step": "Installing", "status": "Pending", "message": "Server is booting from mounted ISO. Continue installation from console or unattended ISO workflow."})
     log_activity(db, user, "start_bare_metal_os_install", "bare_metal_os_installer", "IPMI", None, f"Started OS install for {payload.server_name}", new_value={"server_name": payload.server_name, "ipmi_ip": payload.ipmi_ip, "public_ip": payload.public_ip, "os_name": payload.os_name, "iso_url": iso_url}, request=request, commit=True)
     return {"ok": True, "status": "Installing", "message": f"{payload.os_name} ISO mounted and server rebooted.", "server_name": payload.server_name, "public_ip": payload.public_ip, "os_name": payload.os_name, "steps": steps}
+
+
+@app.get("/api/update/status")
+def get_update_center_status(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
+    require_update_center_project()
+    return collect_update_center_status()
+
+
+@app.post("/api/update/check")
+def check_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    result = perform_update_center_check()
+    log_activity(db, user, "check_update_center", "update_center", "System", None, "Checked GitHub updates for NOC360", new_value={"update_available": result.get("update_available"), "latest_remote_commit": result.get("latest_remote_commit")}, request=request, commit=True)
+    return result
+
+
+def start_update_center_job(job_type: str):
+    state = read_update_center_state()
+    if state.get("job_status") == "running":
+        raise HTTPException(status_code=409, detail="Another update job is already running")
+    thread = threading.Thread(target=run_update_center_workflow, args=(job_type,), daemon=True)
+    thread.start()
+
+
+@app.post("/api/update/run")
+def run_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    require_update_center_project()
+    start_update_center_job("update")
+    log_activity(db, user, "run_update_center", "update_center", "System", None, "Started NOC360 update workflow", request=request, commit=True)
+    return {"ok": True, "started": True, "message": "Update workflow started", "status": read_update_center_state()}
+
+
+@app.post("/api/update/rollback")
+def rollback_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
+    require_update_center_project()
+    last_backup = read_update_center_state().get("last_backup_path")
+    if not last_backup or not Path(last_backup).exists():
+        raise HTTPException(status_code=400, detail="No backup is available for rollback")
+    start_update_center_job("rollback")
+    log_activity(db, user, "rollback_update_center", "update_center", "System", None, "Started NOC360 rollback workflow", new_value={"backup_path": last_backup}, request=request, commit=True)
+    return {"ok": True, "started": True, "message": "Rollback workflow started", "status": read_update_center_state()}
 
 
 ASTERISK_SOUND_DEFAULT_PATH = "/usr/share/asterisk/sounds/"

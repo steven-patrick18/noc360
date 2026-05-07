@@ -815,6 +815,84 @@ nav button.active {
   box-shadow: inset 3px 0 0 rgba(52, 211, 153, 0.85), 0 0 22px rgba(52, 211, 153, 0.1);
 }
 
+.updateCenterPage,
+.updateCenterLayout,
+.updateCenterMain,
+.updateCenterTabPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.updateCenterStatusGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.updateCenterStatusGrid div,
+.updateCenterList div,
+.updateCenterLogRow {
+  padding: 12px;
+  border: 1px solid rgba(34, 211, 238, 0.16);
+  border-radius: 8px;
+  background: rgba(2, 7, 19, 0.38);
+}
+
+.updateCenterStatusGrid span {
+  display: block;
+  color: var(--text-soft, #a8b3c7);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.updateCenterStatusGrid strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-main, #f8fbff);
+}
+
+.updateCenterTabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.updateCenterTabs button.active {
+  border-color: rgba(34, 211, 238, 0.46);
+  background: rgba(34, 211, 238, 0.1);
+  box-shadow: inset 0 -2px 0 rgba(34, 211, 238, 0.82);
+}
+
+.updateCenterList,
+.updateCenterLogs {
+  display: grid;
+  gap: 8px;
+}
+
+.updateCenterLogs {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.updateCenterLogRow {
+  display: grid;
+  gap: 6px;
+}
+
+.updateCenterLogRow strong {
+  color: #7dd3fc;
+  font-size: 12px;
+}
+
+.updateCenterLogRow.success {
+  border-color: rgba(52, 211, 153, 0.26);
+}
+
+.updateCenterLogRow.error {
+  border-color: rgba(251, 113, 133, 0.3);
+}
+
 .bareMetalStepLog strong {
   color: #e7faff;
 }
@@ -827,7 +905,8 @@ nav button.active {
 
 @media (max-width: 1100px) {
   .bareMetalLayout,
-  .bareMetalForm {
+  .bareMetalForm,
+  .updateCenterStatusGrid {
     grid-template-columns: 1fr;
   }
 }

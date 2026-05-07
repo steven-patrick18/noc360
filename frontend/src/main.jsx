@@ -168,7 +168,7 @@ async function optimizeCustomBackground(file) {
   }
 }
 
-const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager', 'bare_metal_os_installer'];
+const pageKeys = ['dashboard', 'my_dashboard', 'business_ai', 'reports', 'my_reports', 'management_portal', 'billing', 'my_ledger', 'clients', 'cdr', 'my_cdr', 'vos_portals', 'vos_desktop_launcher', 'dialer_clusters', 'rdp_media', 'routing_gateways', 'user_access', 'activity_logs', 'chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets', 'webphone', 'terminal', 'asterisk_sound_manager', 'bare_metal_os_installer', 'update_center'];
 const modulePageKeys = {
   dashboard: 'dashboard',
   myDashboard: 'my_dashboard',
@@ -195,6 +195,7 @@ const modulePageKeys = {
   terminal: 'terminal',
   asteriskSoundManager: 'asterisk_sound_manager',
   bareMetalOsInstaller: 'bare_metal_os_installer',
+  updateCenter: 'update_center',
   dangerZone: 'danger_zone',
 };
 
@@ -211,6 +212,7 @@ const modules = {
   terminal: { label: 'Terminal', icon: TerminalIcon },
   asteriskSoundManager: { label: 'Asterisk Sound Manager', icon: FileAudio },
   bareMetalOsInstaller: { label: 'Bare Metal OS Installer', icon: Server },
+  updateCenter: { label: 'Update Center', icon: RefreshCcw },
   dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
@@ -321,7 +323,7 @@ const sidebarGroups = [
   { id: 'finance', label: 'Finance', keys: ['billing', 'myBilling'] },
   { id: 'communication', label: 'Communication', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
   { id: 'voipTools', label: 'VoIP Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
-  { id: 'admin', label: 'Admin', keys: ['bareMetalOsInstaller', 'userAccess', 'activityLogs', 'dangerZone'] },
+  { id: 'admin', label: 'Admin', keys: ['bareMetalOsInstaller', 'updateCenter', 'userAccess', 'activityLogs', 'dangerZone'] },
 ];
 
 function emptyRecord(fields) {
@@ -803,6 +805,8 @@ function App() {
             <AsteriskSoundManagerPage user={auth.user} />
           ) : activeKey === 'bareMetalOsInstaller' ? (
             <BareMetalOsInstallerPage user={auth.user} />
+          ) : activeKey === 'updateCenter' ? (
+            <UpdateCenterPage user={auth.user} />
           ) : activeKey === 'dangerZone' ? (
             <DangerZonePage user={auth.user} reload={loadAll} />
           ) : activeKey === 'vosDesktop' ? (
@@ -2952,6 +2956,185 @@ function BareMetalOsInstallerPage({ user }) {
             {steps.length === 0 && <p className="muted">IPMI test and install progress will appear here.</p>}
           </div>
         </aside>
+      </div>
+    </section>
+  );
+}
+
+function UpdateCenterPage({ user }) {
+  const canEdit = canDo(user, 'update_center', 'can_edit');
+  const [status, setStatus] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [tab, setTab] = useState('status');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const logsRef = useRef(null);
+
+  const loadStatus = async (quiet = false) => {
+    try {
+      const result = await request('/update/status');
+      setStatus(result);
+      setLogs(result.logs || []);
+      if (!quiet) setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  useEffect(() => {
+    loadStatus().catch(() => {});
+    const timer = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!logsRef.current) return;
+    logsRef.current.scrollTop = logsRef.current.scrollHeight;
+  }, [logs]);
+
+  const runCheck = async () => {
+    setBusy('check');
+    setError('');
+    setMessage('');
+    try {
+      const result = await request('/update/check', { method: 'POST', body: JSON.stringify({}) });
+      setStatus(result);
+      setLogs(result.logs || []);
+      setMessage(result.update_available ? 'Update available from GitHub.' : 'No new updates found.');
+      setTab('features');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const runUpdate = async () => {
+    if (!window.confirm('This will update NOC360 from GitHub and restart services. Continue?')) return;
+    setBusy('run');
+    setError('');
+    setMessage('');
+    try {
+      const result = await request('/update/run', { method: 'POST', body: JSON.stringify({}) });
+      setStatus(result.status || null);
+      setLogs(result.status?.logs || []);
+      setMessage(result.message || 'Update workflow started.');
+      setTab('logs');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const runRollback = async () => {
+    if (!window.confirm('Rollback last backup and restart services?')) return;
+    setBusy('rollback');
+    setError('');
+    setMessage('');
+    try {
+      const result = await request('/update/rollback', { method: 'POST', body: JSON.stringify({}) });
+      setStatus(result.status || null);
+      setLogs(result.status?.logs || []);
+      setMessage(result.message || 'Rollback workflow started.');
+      setTab('logs');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const updateAvailable = status?.update_available ? 'Yes' : 'No';
+  const serviceStatus = status?.service_status || 'Unknown';
+  const commits = status?.new_commits || [];
+  const changedFiles = status?.changed_files || [];
+
+  return (
+    <section className="updateCenterPage">
+      <div className="cards managementCards">
+        <div className="metric"><span>Current Version</span><strong>{status?.current_local_commit || '-'}</strong></div>
+        <div className="metric payment"><span>Latest Version</span><strong>{status?.latest_remote_commit || '-'}</strong></div>
+        <div className="metric revenue"><span>Update Available</span><strong>{updateAvailable}</strong></div>
+        <div className="metric"><span>Last Update</span><strong>{status?.last_update_at ? new Date(status.last_update_at).toLocaleString() : '-'}</strong></div>
+      </div>
+
+      <div className="updateCenterLayout">
+        <div className="panel updateCenterMain">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">System Update Center</span><h2>Update Center</h2></div>
+            <div className="actions">
+              <button type="button" onClick={() => loadStatus()} disabled={busy === 'refresh'}><RefreshCcw size={16} /> Refresh</button>
+              <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run' || busy === 'rollback'}>{busy === 'check' ? 'Checking...' : 'Check Updates'}</button>
+              <button type="button" className="primary" onClick={runUpdate} disabled={!canEdit || busy === 'check' || busy === 'run' || busy === 'rollback'}>{busy === 'run' ? 'Updating...' : 'Update Now'}</button>
+            </div>
+          </div>
+          {message && <div className="toastSuccess">{message}</div>}
+          {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+
+          <div className="updateCenterStatusGrid">
+            <div><span>Current Local Branch</span><strong>{status?.current_local_branch || '-'}</strong></div>
+            <div><span>Current Local Commit</span><strong>{status?.current_local_commit || '-'}</strong></div>
+            <div><span>Latest Remote Commit</span><strong>{status?.latest_remote_commit || '-'}</strong></div>
+            <div><span>Service Status</span><strong>{serviceStatus}</strong></div>
+            <div><span>Last Checked</span><strong>{status?.last_checked_at ? new Date(status.last_checked_at).toLocaleString() : '-'}</strong></div>
+            <div><span>Job Status</span><strong>{status?.job_status || 'idle'}</strong></div>
+          </div>
+
+          <div className="updateCenterTabs">
+            {[
+              ['status', 'Status'],
+              ['features', 'New Features'],
+              ['logs', 'Update Logs'],
+              ['rollback', 'Rollback'],
+            ].map(([key, label]) => (
+              <button type="button" key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>
+            ))}
+          </div>
+
+          {tab === 'status' && (
+            <div className="panel updateCenterTabPanel">
+              <p className="muted">Production path: <code>/opt/noc360</code></p>
+              <p className="muted">Service: <code>noc360</code></p>
+              <p className="muted">Update Available: <strong>{updateAvailable}</strong></p>
+              <p className="muted">Feature Summary: {status?.feature_summary || 'No update summary yet.'}</p>
+            </div>
+          )}
+
+          {tab === 'features' && (
+            <div className="panel updateCenterTabPanel">
+              <h3>New Commits</h3>
+              <div className="updateCenterList">
+                {commits.length ? commits.map((item) => <div key={item}>{item}</div>) : <div className="muted">No new commits detected.</div>}
+              </div>
+              <h3>Changed Files</h3>
+              <div className="updateCenterList">
+                {changedFiles.length ? changedFiles.map((item) => <div key={item}>{item}</div>) : <div className="muted">No file changes to show.</div>}
+              </div>
+            </div>
+          )}
+
+          {tab === 'logs' && (
+            <div className="panel updateCenterTabPanel">
+              <div className="updateCenterLogs" ref={logsRef}>
+                {logs.length ? logs.map((entry, index) => (
+                  <div key={`${entry.timestamp}-${index}`} className={`updateCenterLogRow ${entry.level || 'info'}`}>
+                    <strong>{entry.timestamp ? new Date(entry.timestamp).toLocaleString() : '-'}</strong>
+                    <span>{entry.message}</span>
+                  </div>
+                )) : <div className="muted">No logs yet.</div>}
+              </div>
+            </div>
+          )}
+
+          {tab === 'rollback' && (
+            <div className="panel updateCenterTabPanel">
+              <p className="muted">Last backup: {status?.last_backup_path || 'No backup created yet.'}</p>
+              <button type="button" className="danger" onClick={runRollback} disabled={!canEdit || !status?.last_backup_path || busy === 'run' || busy === 'rollback'}>{busy === 'rollback' ? 'Rolling Back...' : 'Rollback Last Backup'}</button>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
