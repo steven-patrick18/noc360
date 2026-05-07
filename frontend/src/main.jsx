@@ -2970,22 +2970,41 @@ function UpdateCenterPage({ user }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const logsRef = useRef(null);
+  const pollingRef = useRef(null);
+  const failedPollsRef = useRef(0);
+
+  const updateRequest = (path, options = {}) => {
+    const normalizedPath = path.startsWith('/api/') ? path.slice(4) : path;
+    return request(normalizedPath, options);
+  };
 
   const loadStatus = async (quiet = false) => {
     try {
-      const result = await request('/update/status');
+      const result = await updateRequest('/api/update/status');
       setStatus(result);
       setLogs(result.logs || []);
+      failedPollsRef.current = 0;
       if (!quiet) setError('');
     } catch (err) {
-      setError(err.message);
+      failedPollsRef.current += 1;
+      if (pollingRef.current && failedPollsRef.current >= 3) {
+        window.clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        setError('Update Center status is unavailable. Automatic refresh paused.');
+        return;
+      }
+      if (!quiet) {
+        setError(err.message || 'Unable to load Update Center status.');
+      }
     }
   };
 
   useEffect(() => {
     loadStatus().catch(() => {});
-    const timer = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
-    return () => window.clearInterval(timer);
+    pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
+    return () => {
+      if (pollingRef.current) window.clearInterval(pollingRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -2998,9 +3017,13 @@ function UpdateCenterPage({ user }) {
     setError('');
     setMessage('');
     try {
-      const result = await request('/update/check', { method: 'POST', body: JSON.stringify({}) });
+      const result = await updateRequest('/api/update/check', { method: 'POST', body: JSON.stringify({}) });
       setStatus(result);
       setLogs(result.logs || []);
+      failedPollsRef.current = 0;
+      if (!pollingRef.current) {
+        pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
+      }
       setMessage(result.update_available ? 'Update available from GitHub.' : 'No new updates found.');
       setTab('features');
     } catch (err) {
@@ -3016,9 +3039,13 @@ function UpdateCenterPage({ user }) {
     setError('');
     setMessage('');
     try {
-      const result = await request('/update/run', { method: 'POST', body: JSON.stringify({}) });
+      const result = await updateRequest('/api/update/run', { method: 'POST', body: JSON.stringify({}) });
       setStatus(result.status || null);
       setLogs(result.status?.logs || []);
+      failedPollsRef.current = 0;
+      if (!pollingRef.current) {
+        pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
+      }
       setMessage(result.message || 'Update workflow started.');
       setTab('logs');
     } catch (err) {
@@ -3034,9 +3061,13 @@ function UpdateCenterPage({ user }) {
     setError('');
     setMessage('');
     try {
-      const result = await request('/update/rollback', { method: 'POST', body: JSON.stringify({}) });
+      const result = await updateRequest('/api/update/rollback', { method: 'POST', body: JSON.stringify({}) });
       setStatus(result.status || null);
       setLogs(result.status?.logs || []);
+      failedPollsRef.current = 0;
+      if (!pollingRef.current) {
+        pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
+      }
       setMessage(result.message || 'Rollback workflow started.');
       setTab('logs');
     } catch (err) {
