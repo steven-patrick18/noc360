@@ -4348,6 +4348,37 @@ function TerminalCenterPage({ user, visible = true }) {
     }
   };
 
+  const pasteIntoActiveTerminal = async () => {
+    if (!activeTabId) {
+      setError('Open a terminal tab first');
+      return;
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        setMessage('Clipboard is empty');
+        return;
+      }
+      setTerminalActions((current) => ({
+        ...current,
+        [activeTabId]: { id: Date.now(), type: 'paste', text },
+      }));
+    } catch (err) {
+      setError('Unable to read clipboard for paste');
+    }
+  };
+
+  const copyAllFromActiveTerminal = () => {
+    if (!activeTabId) {
+      setError('Open a terminal tab first');
+      return;
+    }
+    setTerminalActions((current) => ({
+      ...current,
+      [activeTabId]: { id: Date.now(), type: 'copy_all' },
+    }));
+  };
+
   const saveCommand = async (event) => {
     event.preventDefault();
     await request('/terminal/commands', { method: 'POST', body: JSON.stringify(commandForm) });
@@ -4371,6 +4402,19 @@ function TerminalCenterPage({ user, visible = true }) {
   const duplicateNameCount = form.connection_name
     ? connections.filter((connection) => connection.connection_name?.trim().toLowerCase() === form.connection_name.trim().toLowerCase() && connection.id !== editingId).length
     : 0;
+
+  useEffect(() => {
+    const handleShortcut = (event) => {
+      if (!activeTabId) return;
+      if (event.ctrlKey && event.shiftKey && String(event.key || '').toLowerCase() === 'v') {
+        event.preventDefault();
+        pasteIntoActiveTerminal().catch(() => {});
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [activeTabId]);
+
   return (
     <section className="terminalCenter">
       <div className="cards managementCards">
@@ -4493,6 +4537,8 @@ function TerminalCenterPage({ user, visible = true }) {
             <div className="terminalToolbar">
               <strong>{activeTab.connection.username}@{activeTab.connection.host_ip}</strong>
               <button onClick={() => renameTab(activeTab)}>Rename</button>
+              <button onClick={() => pasteIntoActiveTerminal()}>Paste</button>
+              <button onClick={copyAllFromActiveTerminal}>Copy All</button>
               <button onClick={() => updateTab(activeTab.id, { reconnectKey: activeTab.reconnectKey + 1, status: 'Reconnecting' })}>Reconnect</button>
               <button onClick={() => disconnectTab(activeTab)}>Disconnect</button>
               <button onClick={() => updateTab(activeTab.id, { clearKey: activeTab.clearKey + 1 })}>Clear</button>
@@ -4509,6 +4555,7 @@ function TerminalCenterPage({ user, visible = true }) {
                 commandAction={terminalActions[tab.id]}
                 onStatus={(status) => updateTab(tab.id, { status })}
                 onHistorySaved={loadHistory}
+                onNotice={setMessage}
               />
             ))}
           </div>
@@ -4539,13 +4586,79 @@ function TerminalCenterPage({ user, visible = true }) {
 
 const PersistentTerminalCenterPage = React.memo(TerminalCenterPage);
 
-function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved }) {
+function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved, onNotice }) {
   const containerRef = useRef(null);
   const terminalRef = useRef(null);
   const fitRef = useRef(null);
   const socketRef = useRef(null);
   const inputBufferRef = useRef('');
   const lastActionIdRef = useRef(null);
+
+  const focusTerminal = () => {
+    try {
+      terminalRef.current?.focus();
+    } catch {
+      // Ignore focus timing issues while layout settles.
+    }
+  };
+
+  const sendTerminalData = (text) => {
+    if (!text) return false;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(text);
+      focusTerminal();
+      return true;
+    }
+    terminalRef.current?.writeln('\r\n[terminal not connected]');
+    return false;
+  };
+
+  const readTerminalBuffer = () => {
+    const terminal = terminalRef.current;
+    if (!terminal) return '';
+    const lines = [];
+    for (let index = 0; index < terminal.buffer.active.length; index += 1) {
+      const line = terminal.buffer.active.getLine(index);
+      if (!line) continue;
+      lines.push(line.translateToString(true));
+    }
+    return lines.join('\n').trimEnd();
+  };
+
+  const pasteTextIntoTerminal = async (text) => {
+    const value = String(text || '');
+    if (!value) return;
+    const lineCount = value.split(/\r?\n/).filter(Boolean).length;
+    if (lineCount > 5 && !window.confirm(`Paste ${lineCount} lines into terminal?`)) return;
+    const normalized = value.replace(/\r\n/g, '\n').replace(/\n/g, '\r');
+    sendTerminalData(normalized);
+    onNotice?.(`Pasted ${lineCount || 1} line${lineCount === 1 ? '' : 's'} into terminal`);
+  };
+
+  const pasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) {
+        onNotice?.('Clipboard is empty');
+        focusTerminal();
+        return;
+      }
+      await pasteTextIntoTerminal(text);
+    } catch {
+      terminalRef.current?.writeln('\r\n[clipboard read failed]');
+    }
+  };
+
+  const copyAllTerminalText = async () => {
+    const text = readTerminalBuffer();
+    if (!text) {
+      onNotice?.('Terminal buffer is empty');
+      return;
+    }
+    await copyPlainText(text);
+    onNotice?.('Terminal output copied');
+    focusTerminal();
+  };
 
   const rememberCommand = async (command) => {
     const cleaned = String(command || '').trim();
@@ -4598,8 +4711,17 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
     terminal.open(containerRef.current);
     terminalRef.current = terminal;
     fitRef.current = fitAddon;
+    terminal.options.cursorBlink = true;
     terminal.writeln('NOC360 SSH Terminal Center');
     terminal.writeln(`Opening ${tab.connection.connection_name}...`);
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && event.ctrlKey && event.shiftKey && String(event.key || '').toLowerCase() === 'v') {
+        event.preventDefault();
+        pasteFromClipboard().catch(() => {});
+        return false;
+      }
+      return true;
+    });
 
     const socket = new WebSocket(websocketEndpoint(`/terminal/ws/${tab.connection.id}?tab_id=${encodeURIComponent(tab.id)}`));
     socketRef.current = socket;
@@ -4616,7 +4738,7 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
     socket.onopen = () => {
       onStatus('Connected');
       window.setTimeout(fitAndResize, 60);
-      if (active) terminal.focus();
+      focusTerminal();
     };
     socket.onmessage = (event) => terminal.write(event.data);
     socket.onerror = () => {
@@ -4632,11 +4754,20 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
       trackInput(data);
       if (socket.readyState === WebSocket.OPEN) socket.send(data);
     });
+    const handleClickFocus = () => focusTerminal();
+    const handlePasteShortcut = (event) => {
+      event.preventDefault();
+      pasteFromClipboard().catch(() => {});
+    };
+    containerRef.current.addEventListener('mousedown', handleClickFocus);
+    containerRef.current.addEventListener('contextmenu', handlePasteShortcut);
     window.addEventListener('resize', fitAndResize);
     window.setTimeout(fitAndResize, 120);
 
     return () => {
       window.removeEventListener('resize', fitAndResize);
+      containerRef.current?.removeEventListener('mousedown', handleClickFocus);
+      containerRef.current?.removeEventListener('contextmenu', handlePasteShortcut);
       disposable.dispose();
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(4002, 'Terminal pane detached');
       terminal.dispose();
@@ -4659,7 +4790,7 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
     window.setTimeout(() => {
       try {
         fitRef.current.fit();
-        terminalRef.current.focus();
+        focusTerminal();
         if (socketRef.current?.readyState === WebSocket.OPEN) {
           socketRef.current.send(`__resize__:${terminalRef.current.cols}:${terminalRef.current.rows}`);
         }
@@ -4676,17 +4807,20 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved 
   useEffect(() => {
     if (!commandAction || commandAction.id === lastActionIdRef.current) return;
     lastActionIdRef.current = commandAction.id;
+    if (commandAction.type === 'paste') {
+      pasteTextIntoTerminal(commandAction.text).catch(() => {});
+      return;
+    }
+    if (commandAction.type === 'copy_all') {
+      copyAllTerminalText().catch(() => {});
+      return;
+    }
     const data = `${commandAction.command}${commandAction.run ? '\r' : ''}`;
     if (!commandAction.run) inputBufferRef.current += commandAction.command;
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(data);
-      terminalRef.current?.focus();
-    } else {
-      terminalRef.current?.writeln('\r\n[terminal not connected]');
-    }
+    sendTerminalData(data);
   }, [commandAction]);
 
-  return <div className={`sshTerminalPane ${active ? 'active' : ''}`} ref={containerRef} />;
+  return <div className={`sshTerminalPane ${active ? 'active' : ''}`} ref={containerRef} tabIndex={0} />;
 }
 
 const terminalDangerWords = ['rm -rf', 'reboot', 'shutdown', 'mkfs', 'dd ', 'iptables flush', 'ufw reset', 'systemctl stop'];
