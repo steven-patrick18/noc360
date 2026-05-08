@@ -2012,20 +2012,22 @@ h2 {
 
 .dashboardLayoutItem {
   min-width: 0;
-  transition: transform 160ms ease, opacity 160ms ease, border-color 160ms ease, background 160ms ease;
+  transition: transform 160ms ease, opacity 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
+  will-change: transform, opacity;
 }
 
 .dashboardLayoutItem.isDragging {
-  opacity: 0.45;
-  transform: scale(0.992);
+  opacity: 0.78;
+  transform: scale(0.995);
+  box-shadow: 0 18px 38px rgba(3, 7, 18, 0.28);
 }
 
 .dashboardLayoutItem.isDragOver {
-  border-color: rgba(34, 211, 238, 0.52);
-  background: rgba(34, 211, 238, 0.055);
-  box-shadow: inset 0 3px 0 rgba(34, 211, 238, 0.65);
+  border-color: rgba(45, 212, 191, 0.34);
+  background: rgba(45, 212, 191, 0.045);
+  box-shadow: inset 0 3px 0 rgba(34, 211, 238, 0.52);
 }
 
 .dashboardSectionHeader {
@@ -2045,19 +2047,44 @@ h2 {
 }
 
 .dragHandle {
-  min-height: 32px !important;
-  padding: 6px 10px !important;
+  min-height: 34px !important;
+  padding: 6px 12px !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  border: 1px solid rgba(148, 163, 184, 0.16) !important;
+  background: rgba(17, 24, 39, 0.72) !important;
+  color: #d9e5f5 !important;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
 }
 
-.dragHandle:active {
+.dragHandle:hover {
+  border-color: rgba(45, 212, 191, 0.28) !important;
+  background: rgba(18, 29, 45, 0.9) !important;
+  box-shadow: 0 10px 18px rgba(2, 10, 23, 0.18);
+}
+
+.dragHandle:active,
+.dashboardLayoutItem.isDragging .dragHandle {
   cursor: grabbing;
+  opacity: 0.88;
 }
 
-.dragHandle span {
+.dragHandle span,
+.dragHandle::before {
   font-weight: 900;
   letter-spacing: 0;
+}
+
+.dragHandle::before {
+  content: "⋮⋮";
+  color: rgba(125, 211, 252, 0.82);
+  font-size: 14px;
+  line-height: 1;
 }
 
 .commandKpiCards {
@@ -6215,13 +6242,14 @@ body,
 #root {
   min-height: 100%;
   overflow-x: hidden;
+  color-scheme: dark;
 }
 
 body {
   background:
-    linear-gradient(rgba(0, 229, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 229, 255, 0.014) 1px, transparent 1px),
-    linear-gradient(135deg, #020711 0%, #07111e 48%, #02050b 100%) !important;
+    linear-gradient(rgba(45, 212, 191, 0.012) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 212, 191, 0.01) 1px, transparent 1px),
+    linear-gradient(180deg, #0d1522 0%, #111a29 52%, #0c1420 100%) !important;
   background-size: 56px 56px, 56px 56px, auto !important;
 }
 
@@ -6245,18 +6273,18 @@ body::before,
 .sidebar {
   position: sticky !important;
   top: 0 !important;
-  z-index: 30;
+  z-index: 60;
   width: var(--shell-sidebar);
   height: 100vh !important;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding: 18px 14px !important;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(3, 8, 16, 0.98), rgba(7, 13, 24, 0.98)) !important;
-  border-right: 1px solid rgba(125, 211, 252, 0.12) !important;
-  box-shadow: 12px 0 36px rgba(0, 0, 0, 0.34) !important;
+  background: linear-gradient(180deg, rgba(14, 21, 34, 0.98), rgba(16, 24, 38, 0.98)) !important;
+  border-right: 1px solid rgba(148, 163, 184, 0.12) !important;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.18) !important;
 }
 
 .brand {
@@ -6269,7 +6297,7 @@ body::before,
   min-height: 58px;
   padding: 6px 6px 14px !important;
   margin: 0 !important;
-  border-bottom: 1px solid rgba(125, 211, 252, 0.1) !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
 }
 
 .brand::after {
@@ -6290,7 +6318,7 @@ body::before,
 .brand span {
   display: block;
   margin-top: 4px;
-  color: rgba(226, 241, 255, 0.62) !important;
+  color: rgba(201, 213, 228, 0.68) !important;
   font-size: 12px;
 }
 
@@ -6300,41 +6328,46 @@ body::before,
   min-height: 36px !important;
   padding: 0 !important;
   justify-content: center !important;
-  border-color: rgba(125, 211, 252, 0.16) !important;
-  background: rgba(9, 16, 29, 0.78) !important;
+  border-color: rgba(148, 163, 184, 0.16) !important;
+  background: rgba(20, 28, 42, 0.84) !important;
 }
 
 .sidebarNav {
   flex: 1 1 auto;
   display: flex !important;
   flex-direction: column;
-  gap: 10px !important;
+  gap: 14px !important;
   min-height: 0;
+  position: relative;
+  z-index: 2;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 2px 2px 18px 0;
   scroll-behavior: smooth;
   scrollbar-width: thin;
-  scrollbar-color: rgba(34, 211, 238, 0.5) rgba(8, 13, 24, 0.72);
+  scrollbar-color: rgba(71, 85, 105, 0.68) rgba(10, 16, 28, 0.42);
 }
 
 .sidebarNav::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
 
 .sidebarNav::-webkit-scrollbar-track {
-  background: rgba(8, 13, 24, 0.72);
+  background: rgba(10, 16, 28, 0.42);
   border-radius: 999px;
 }
 
 .sidebarNav::-webkit-scrollbar-thumb {
-  background: rgba(34, 211, 238, 0.48);
+  background: rgba(71, 85, 105, 0.78);
   border-radius: 999px;
+  border: 2px solid rgba(10, 16, 28, 0.42);
 }
 
 .navGroup {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  position: relative;
+  z-index: 1;
 }
 
 .navGroupToggle {
@@ -6344,7 +6377,7 @@ body::before,
   justify-content: flex-start !important;
   gap: 8px !important;
   border: 0 !important;
-  color: rgba(203, 225, 246, 0.68) !important;
+  color: rgba(191, 203, 221, 0.72) !important;
   background: transparent !important;
   box-shadow: none !important;
   text-transform: uppercase;
@@ -6352,8 +6385,8 @@ body::before,
 
 .navGroupToggle:hover {
   transform: none !important;
-  color: rgba(237, 250, 255, 0.92) !important;
-  background: rgba(125, 211, 252, 0.04) !important;
+  color: rgba(239, 245, 255, 0.94) !important;
+  background: rgba(45, 212, 191, 0.04) !important;
   box-shadow: none !important;
 }
 
@@ -6372,8 +6405,8 @@ body::before,
   min-width: 22px;
   padding: 2px 6px;
   border-radius: 999px;
-  color: rgba(237, 250, 255, 0.62);
-  background: rgba(125, 211, 252, 0.08);
+  color: rgba(216, 226, 240, 0.7);
+  background: rgba(30, 41, 59, 0.72);
   font-style: normal;
   font-size: 10px;
   text-align: center;
@@ -6381,29 +6414,36 @@ body::before,
 
 .navGroupItems {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  position: relative;
+  z-index: 1;
 }
 
 .navItem,
 nav button.navItem {
-  min-height: 42px !important;
-  height: 42px;
+  position: relative;
+  z-index: 2;
+  min-height: 44px !important;
+  height: 44px;
   display: flex !important;
   align-items: center;
   justify-content: flex-start !important;
   gap: 10px !important;
   width: 100%;
   padding: 0 11px !important;
-  border-radius: 8px !important;
+  border-radius: 10px !important;
   border: 1px solid transparent !important;
-  color: rgba(223, 238, 255, 0.72) !important;
+  color: rgba(218, 228, 242, 0.78) !important;
   background: transparent !important;
   box-shadow: none !important;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+  pointer-events: auto;
 }
 
 .navItem svg {
   flex: 0 0 auto;
-  color: rgba(125, 211, 252, 0.78);
+  color: rgba(103, 232, 249, 0.76);
+  pointer-events: none;
 }
 
 .navItem span {
@@ -6413,26 +6453,28 @@ nav button.navItem {
   white-space: nowrap;
   font-size: 14px;
   font-weight: 700;
+  pointer-events: none;
 }
 
 .navItem:hover,
 nav button.navItem:hover {
   transform: translateX(2px) !important;
   color: #f5fbff !important;
-  border-color: rgba(34, 211, 238, 0.16) !important;
-  background: rgba(34, 211, 238, 0.055) !important;
+  border-color: rgba(45, 212, 191, 0.16) !important;
+  background: rgba(30, 41, 59, 0.72) !important;
 }
 
 .navItem.active,
 nav button.navItem.active {
   color: #ffffff !important;
-  border-color: rgba(34, 211, 238, 0.28) !important;
-  background: linear-gradient(90deg, rgba(34, 211, 238, 0.16), rgba(15, 23, 42, 0.46)) !important;
-  box-shadow: inset 3px 0 0 #22d3ee, 0 10px 28px rgba(0, 0, 0, 0.18) !important;
+  border-color: rgba(45, 212, 191, 0.22) !important;
+  background: linear-gradient(90deg, rgba(45, 212, 191, 0.12), rgba(15, 23, 42, 0.3)) !important;
+  box-shadow: inset 3px 0 0 #2dd4bf, 0 8px 18px rgba(0, 0, 0, 0.14) !important;
 }
 
 .navPulse {
   margin-left: auto;
+  pointer-events: none;
 }
 
 .navBadge {
@@ -6448,6 +6490,7 @@ nav button.navItem.active {
   background: #34d399;
   font-size: 11px;
   font-weight: 900;
+  pointer-events: none;
 }
 
 .sidebarCompact .sidebar {
@@ -6541,8 +6584,8 @@ main {
   border: 1px solid rgba(125, 211, 252, 0.12) !important;
   background: rgba(5, 10, 19, 0.9) !important;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28) !important;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .topbar::before,
@@ -7025,5 +7068,515 @@ td {
 
   .updateBackupRow em {
     text-align: left;
+  }
+}
+
+/* Final shell and modal cleanup pass: center modals, improve contrast, reduce glow. */
+:root {
+  --bg-0: #0b1220;
+  --bg-1: #111a2b;
+  --glass: rgba(17, 24, 39, 0.78);
+  --glass-strong: rgba(20, 28, 42, 0.92);
+  --line: rgba(148, 163, 184, 0.18);
+  --text: #eef4ff;
+  --muted: #aab6cc;
+}
+
+body {
+  background:
+    radial-gradient(circle at 16% 10%, rgba(34, 211, 238, 0.08), transparent 28%),
+    radial-gradient(circle at 84% 14%, rgba(56, 189, 248, 0.05), transparent 24%),
+    linear-gradient(180deg, #0b1220 0%, #0f1726 56%, #0c1422 100%);
+  color: var(--text);
+}
+
+body::before {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.025) 1px, transparent 1px);
+}
+
+.sidebar,
+.panel,
+.tableWrap,
+.modal,
+.metric,
+.loginBox {
+  background: rgba(17, 24, 39, 0.84) !important;
+  border-color: rgba(148, 163, 184, 0.14) !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.22) !important;
+}
+
+.sidebar {
+  background: linear-gradient(180deg, rgba(12, 18, 30, 0.98), rgba(16, 23, 37, 0.96)) !important;
+  border-right: 1px solid rgba(148, 163, 184, 0.12) !important;
+  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.18) !important;
+}
+
+.brand {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
+}
+
+.navGroupToggle {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-color: rgba(148, 163, 184, 0.08) !important;
+  color: #d8e2f2 !important;
+}
+
+.navItem,
+nav button.navItem {
+  background: rgba(255, 255, 255, 0.025) !important;
+  border-color: rgba(148, 163, 184, 0.08) !important;
+  color: #dce6f5 !important;
+}
+
+.navItem span {
+  color: #dce6f5 !important;
+}
+
+.navItem svg {
+  color: #9fb4cc !important;
+}
+
+.navItem:hover,
+nav button.navItem:hover {
+  background: rgba(148, 163, 184, 0.08) !important;
+  border-color: rgba(125, 211, 252, 0.18) !important;
+  box-shadow: none !important;
+}
+
+.navItem.active,
+nav button.navItem.active {
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.1), rgba(255, 255, 255, 0.04)) !important;
+  border-color: rgba(34, 211, 238, 0.22) !important;
+  box-shadow: inset 3px 0 0 #22d3ee !important;
+}
+
+.topbar {
+  background: rgba(16, 24, 38, 0.9) !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16) !important;
+}
+
+.topbar::before,
+.aiHero::before,
+.clientHero::before {
+  opacity: 0.28;
+}
+
+.metric {
+  min-height: 112px !important;
+}
+
+.metric::after {
+  background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.45), transparent) !important;
+}
+
+.metric span,
+.eyebrow,
+label span:first-child,
+.fieldLabel,
+.muted {
+  color: #aebbd0 !important;
+}
+
+h1,
+h2,
+h3,
+strong,
+th,
+td,
+button,
+input,
+select,
+textarea {
+  color: #eef4ff;
+}
+
+button {
+  background: rgba(26, 35, 51, 0.94) !important;
+  border-color: rgba(148, 163, 184, 0.14) !important;
+  box-shadow: none !important;
+}
+
+button:hover {
+  border-color: rgba(34, 211, 238, 0.24) !important;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12) !important;
+}
+
+.primary {
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.95), rgba(34, 211, 238, 0.88)) !important;
+  border-color: rgba(110, 231, 183, 0.32) !important;
+  color: #08111f !important;
+}
+
+input,
+select,
+textarea {
+  background: rgba(15, 23, 36, 0.94) !important;
+  border-color: rgba(148, 163, 184, 0.14) !important;
+  color: #eef4ff !important;
+  box-shadow: none !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #8ea0ba;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(34, 211, 238, 0.3) !important;
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.08) !important;
+}
+
+.tableWrap {
+  background: rgba(16, 24, 38, 0.88) !important;
+  overflow: auto !important;
+}
+
+.tableWrap::before,
+.tableWrap::after {
+  opacity: 0.35;
+}
+
+table {
+  background: transparent;
+}
+
+thead th,
+th {
+  background: #121b2b !important;
+  color: #f3f7ff !important;
+}
+
+tbody tr:nth-child(odd) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+tbody tr:hover td {
+  background: rgba(34, 211, 238, 0.05);
+}
+
+td {
+  color: #dde7f6 !important;
+}
+
+.modalBackdrop,
+.modal-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 24px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain !important;
+  background: rgba(6, 10, 18, 0.58) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+  z-index: 10000 !important;
+}
+
+.modal,
+.modal-box {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+  width: min(1040px, calc(100vw - 40px)) !important;
+  max-width: 1040px !important;
+  max-height: calc(100vh - 48px) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: contain !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: rgba(19, 28, 43, 0.98) !important;
+  border: 1px solid rgba(148, 163, 184, 0.16) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.34) !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 232, 249, 0.44) rgba(15, 23, 42, 0.48);
+}
+
+.modal > *,
+.modal-box > * {
+  min-width: 0;
+}
+
+.modal::-webkit-scrollbar,
+.modal-box::-webkit-scrollbar {
+  width: 10px;
+}
+
+.modal::-webkit-scrollbar-track,
+.modal-box::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.48);
+  border-radius: 999px;
+}
+
+.modal::-webkit-scrollbar-thumb,
+.modal-box::-webkit-scrollbar-thumb {
+  background: rgba(103, 232, 249, 0.44);
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.48);
+}
+
+.modalHeader,
+.weeklyInvoiceViewHeader {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 20px 22px 14px !important;
+  background: rgba(19, 28, 43, 0.98) !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.modalDragHandle {
+  cursor: grab;
+  user-select: none;
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+}
+
+.modal-box[data-dragging="1"] .modalDragHandle,
+.modal[data-dragging="1"] .modalDragHandle {
+  cursor: grabbing;
+}
+
+.modalGeneratedDragHandle {
+  min-height: 56px;
+}
+
+.modalDragBadge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px dashed rgba(148, 163, 184, 0.45);
+  color: #c9d5e8;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.03);
+  pointer-events: none;
+}
+
+.modalHeader .iconButton,
+.weeklyInvoiceViewHeader .iconButton {
+  position: relative !important;
+  top: auto !important;
+  right: auto !important;
+  flex: 0 0 auto;
+}
+
+.modal form,
+.modal .weeklyInvoiceSimple,
+.modal .tableWrap,
+.modal .panel,
+.modal .clientDetailBody,
+.modal .accountModal,
+.modal .dangerConfirmModal,
+.modal .ticketModal,
+.modal .activityDetailModal,
+.modal .vosDetailsModal,
+.modal .ledgerModal,
+.modal .weeklyInvoiceNotes {
+  width: 100%;
+}
+
+.modal form,
+.modal .weeklyInvoiceSimple,
+.modal .clientDetailBody,
+.modal .weeklyInvoiceNotes,
+.modal .commandDetailGrid,
+.modal .activityDetailBody,
+.modal .themeGrid,
+.modal .customBackgroundPanel {
+  overflow-y: auto;
+  padding: 0 22px 28px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 232, 249, 0.44) rgba(15, 23, 42, 0.48);
+}
+
+.modal form::-webkit-scrollbar,
+.modal .weeklyInvoiceSimple::-webkit-scrollbar,
+.modal .clientDetailBody::-webkit-scrollbar,
+.modal .weeklyInvoiceNotes::-webkit-scrollbar,
+.modal .commandDetailGrid::-webkit-scrollbar,
+.modal .activityDetailBody::-webkit-scrollbar,
+.modal .themeGrid::-webkit-scrollbar,
+.modal .customBackgroundPanel::-webkit-scrollbar {
+  width: 10px;
+}
+
+.modal form::-webkit-scrollbar-track,
+.modal .weeklyInvoiceSimple::-webkit-scrollbar-track,
+.modal .clientDetailBody::-webkit-scrollbar-track,
+.modal .weeklyInvoiceNotes::-webkit-scrollbar-track,
+.modal .commandDetailGrid::-webkit-scrollbar-track,
+.modal .activityDetailBody::-webkit-scrollbar-track,
+.modal .themeGrid::-webkit-scrollbar-track,
+.modal .customBackgroundPanel::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.48);
+  border-radius: 999px;
+}
+
+.modal form::-webkit-scrollbar-thumb,
+.modal .weeklyInvoiceSimple::-webkit-scrollbar-thumb,
+.modal .clientDetailBody::-webkit-scrollbar-thumb,
+.modal .weeklyInvoiceNotes::-webkit-scrollbar-thumb,
+.modal .commandDetailGrid::-webkit-scrollbar-thumb,
+.modal .activityDetailBody::-webkit-scrollbar-thumb,
+.modal .themeGrid::-webkit-scrollbar-thumb,
+.modal .customBackgroundPanel::-webkit-scrollbar-thumb {
+  background: rgba(103, 232, 249, 0.44);
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.48);
+}
+
+.weeklyInvoiceViewModal,
+.clientDetailModal,
+.ledgerModal {
+  max-width: 1100px !important;
+}
+
+.themeModal {
+  width: min(1100px, calc(100vw - 48px)) !important;
+  max-width: 1100px !important;
+}
+
+.themeModal .themeGrid,
+.themeModal .customBackgroundPanel,
+.themeModal .modalActions {
+  flex: 0 0 auto;
+}
+
+.themeModal .customBackgroundPanel {
+  margin: 0 22px 22px;
+}
+
+.themeModal .modalActions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 14px 22px 20px;
+  background: rgba(19, 28, 43, 0.98) !important;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.weeklyInvoiceSimple,
+.weeklyInvoiceViewGrid {
+  overflow-x: hidden;
+}
+
+.weeklyInvoiceViewGrid div,
+.weeklyInvoiceSection,
+.weeklyInvoiceNotes {
+  background: rgba(13, 20, 33, 0.7) !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
+}
+
+.actions,
+.formActions {
+  flex-wrap: wrap;
+}
+
+.modalResizeHandle {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 24px;
+  height: 24px;
+  border-right: 2px solid rgba(148, 163, 184, 0.65);
+  border-bottom: 2px solid rgba(148, 163, 184, 0.65);
+  border-radius: 0 0 6px 0;
+  cursor: nwse-resize;
+  opacity: 0.9;
+  z-index: 4;
+  background: rgba(11, 18, 32, 0.35);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.modalResizeHandle::before,
+.modalResizeHandle::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid rgba(148, 163, 184, 0.55);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.55);
+}
+
+.modalResizeHandle::after {
+  right: 7px;
+  bottom: 7px;
+  width: 4px;
+  height: 4px;
+}
+
+@media (max-width: 980px) {
+  .modal,
+  .modal-box {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 90vh !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+  }
+
+  .modalBackdrop,
+  .modal-overlay {
+    padding: 12px !important;
+  }
+
+  .modalHeader,
+  .weeklyInvoiceViewHeader {
+    padding: 16px 16px 12px !important;
+  }
+
+  .modal form,
+  .modal .weeklyInvoiceSimple,
+  .modal .clientDetailBody,
+  .modal .weeklyInvoiceNotes,
+  .modal .commandDetailGrid,
+  .modal .activityDetailBody,
+  .modal .themeGrid,
+  .modal .customBackgroundPanel {
+    padding: 0 16px 16px;
+  }
+
+  .themeModal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+  }
+
+  .themeModal .customBackgroundPanel {
+    margin: 0 16px 16px;
+  }
+
+  .themeModal .modalActions {
+    padding: 12px 16px 16px;
   }
 }

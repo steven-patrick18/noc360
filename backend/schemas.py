@@ -587,7 +587,9 @@ class ClientLedgerBase(BaseModel):
 
 
 class ClientLedgerCreate(ClientLedgerBase):
-    pass
+    entry_mode: Optional[str] = "single"
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
 
 
 class ClientLedgerOut(ClientLedgerBase, OrmModel):

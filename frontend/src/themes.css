@@ -586,8 +586,8 @@ body[data-theme][data-custom-bg="1"] .modal,
 body[data-theme][data-custom-bg="1"] .modal-box,
 body[data-theme][data-custom-bg="1"] .loginBox {
   background-color: rgba(5, 10, 19, 0.82) !important;
-  backdrop-filter: blur(18px) saturate(1.08) !important;
-  -webkit-backdrop-filter: blur(18px) saturate(1.08) !important;
+  backdrop-filter: blur(8px) saturate(1.04) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(1.04) !important;
 }
 
 .customBackgroundPanel {
@@ -680,4 +680,143 @@ body[data-theme][data-custom-bg="1"] .loginBox {
   .customBackgroundControls {
     grid-template-columns: 1fr;
   }
+}
+
+/* Final premium dark normalization: calmer theme, clearer text, centered readable modals. */
+body[data-theme] {
+  --theme-bg-main: #0f1724;
+  --theme-bg-elevated: #151f2d;
+  --theme-card-bg: rgba(21, 31, 45, 0.92);
+  --theme-card-solid: #1a2535;
+  --theme-sidebar-bg: linear-gradient(180deg, rgba(15, 23, 35, 0.99), rgba(18, 27, 40, 0.98));
+  --theme-topbar-bg: linear-gradient(105deg, rgba(20, 30, 44, 0.95), rgba(23, 33, 48, 0.92));
+  --theme-text-main: #eef3fb;
+  --theme-text-soft: #b6c3d7;
+  --theme-text-muted: #8695aa;
+  --theme-border: rgba(148, 163, 184, 0.12);
+  --theme-border-strong: rgba(45, 212, 191, 0.22);
+  --theme-shadow: 0 10px 26px rgba(2, 8, 20, 0.18);
+  --theme-shadow-hover: 0 12px 28px rgba(2, 8, 20, 0.2);
+  --theme-grid-opacity: 0.05;
+  --theme-hover-transform: none;
+  --theme-card-texture: none;
+  --theme-body-bg:
+    radial-gradient(circle at 16% 8%, color-mix(in srgb, var(--theme-accent) 5%, transparent), transparent 24%),
+    radial-gradient(circle at 85% 12%, color-mix(in srgb, var(--theme-accent-2) 4%, transparent), transparent 20%),
+    linear-gradient(180deg, var(--theme-bg-main) 0%, var(--theme-bg-elevated) 58%, var(--theme-bg-main) 100%);
+}
+
+body[data-theme]::before {
+  opacity: 0.12 !important;
+}
+
+body[data-theme] .sidebar,
+body[data-theme] .topbar,
+body[data-theme] .panel,
+body[data-theme] .tableWrap,
+body[data-theme] .loginBox,
+body[data-theme] .modal,
+body[data-theme] .modal-box,
+body[data-theme] .metric {
+  box-shadow: var(--theme-shadow) !important;
+}
+
+body[data-theme] .panel:hover,
+body[data-theme] .tableWrap:hover,
+body[data-theme] .metric:hover,
+body[data-theme] .themeCard:hover {
+  box-shadow: var(--theme-shadow-hover) !important;
+  border-color: var(--theme-border-strong) !important;
+  transform: none !important;
+}
+
+body[data-theme] .topbar::after,
+body[data-theme] .metric::after {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--theme-accent) 28%, white), transparent) !important;
+}
+
+body[data-theme] nav button:hover {
+  background: color-mix(in srgb, var(--theme-accent) 5%, transparent) !important;
+}
+
+body[data-theme] nav button.active {
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--theme-accent) !important;
+}
+
+body[data-theme] button {
+  background: color-mix(in srgb, var(--theme-card-solid) 92%, transparent) !important;
+  border-color: var(--theme-border) !important;
+}
+
+body[data-theme] button:hover {
+  background: color-mix(in srgb, var(--theme-accent) 7%, var(--theme-card-solid)) !important;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.1) !important;
+}
+
+body[data-theme] input,
+body[data-theme] select,
+body[data-theme] textarea,
+body[data-theme] .search {
+  background: color-mix(in srgb, var(--theme-card-solid) 94%, transparent) !important;
+  border-color: var(--theme-border) !important;
+}
+
+body[data-theme] th {
+  color: #eef4ff !important;
+  background: color-mix(in srgb, var(--theme-bg-main) 88%, #000000) !important;
+}
+
+body[data-theme] tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+body[data-theme] tbody tr:hover {
+  background: color-mix(in srgb, var(--theme-accent) 5%, transparent) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme] .modalBackdrop,
+body[data-theme] .modal-overlay {
+  background: rgba(7, 11, 18, 0.48) !important;
+  backdrop-filter: blur(3px) !important;
+  -webkit-backdrop-filter: blur(3px) !important;
+}
+
+body[data-theme] .modal,
+body[data-theme] .modal-box {
+  background: rgba(20, 28, 42, 0.98) !important;
+  border-color: rgba(148, 163, 184, 0.16) !important;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.26) !important;
+}
+
+body[data-theme] .sidebar {
+  border-right-color: rgba(148, 163, 184, 0.12) !important;
+}
+
+body[data-theme] .topbar,
+body[data-theme] .panel,
+body[data-theme] .tableWrap,
+body[data-theme] .metric {
+  background: rgba(21, 31, 45, 0.92) !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
+}
+
+body[data-theme] .navGroupToggle,
+body[data-theme] .navItem,
+body[data-theme] .brand span,
+body[data-theme] .topbar p,
+body[data-theme] .fieldLabel,
+body[data-theme] td {
+  color: var(--theme-text-soft) !important;
+}
+
+body[data-theme] .navItem.active,
+body[data-theme] .navItem:hover,
+body[data-theme] .topbar h1,
+body[data-theme] h2,
+body[data-theme] h3,
+body[data-theme] strong,
+body[data-theme] th {
+  color: var(--theme-text-main) !important;
 }

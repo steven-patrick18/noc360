@@ -4673,6 +4673,20 @@ def ledger_payload_values(db: Session, payload: ClientLedgerCreate, user: User |
     return data
 
 
+def ledger_entry_dates(payload: ClientLedgerCreate):
+    mode = (payload.entry_mode or "single").strip().lower()
+    if mode == "date_range":
+        if not payload.start_date or not payload.end_date:
+            raise HTTPException(status_code=400, detail="Start date and end date are required for range mode")
+        if payload.end_date < payload.start_date:
+            raise HTTPException(status_code=400, detail="End date cannot be before start date")
+        total_days = (payload.end_date - payload.start_date).days + 1
+        if total_days > 31:
+            raise HTTPException(status_code=400, detail="Maximum range is 31 days")
+        return [payload.start_date + timedelta(days=index) for index in range(total_days)]
+    return [payload.entry_date]
+
+
 def recalc_client_ledger(db: Session, client_id: int):
     balance_usd = 0
     balance_inr = 0
@@ -6887,15 +6901,26 @@ def get_ledger(
 @app.post("/billing/ledger", response_model=ClientLedgerMutationOut)
 def create_ledger(payload: ClientLedgerCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_create"))):
     data = ledger_payload_values(db, payload, user)
-    record = ClientLedger(**data)
-    db.add(record)
-    db.flush()
+    entry_dates = ledger_entry_dates(payload)
+    records = []
+    for entry_date in entry_dates:
+        row_data = {**data, "entry_date": entry_date}
+        row_data.pop("entry_mode", None)
+        row_data.pop("start_date", None)
+        row_data.pop("end_date", None)
+        record = ClientLedger(**row_data)
+        db.add(record)
+        db.flush()
+        records.append(record)
     recalc_client_ledger(db, payload.client_id)
     db.commit()
-    db.refresh(record)
-    logger.info("Ledger entry saved id=%s client_id=%s user=%s", record.id, record.client_id, user.username)
-    log_activity(db, user, "create_ledger", "billing", "ClientLedger", record.id, f"Created {record.entry_type} ledger entry for {record.client_name}", new_value=record, request=request, commit=True)
-    return {"success": True, "entry": record}
+    for record in records:
+        db.refresh(record)
+    first_record = records[0]
+    logger.info("Ledger entry saved count=%s client_id=%s user=%s", len(records), first_record.client_id, user.username)
+    action_message = f"Created {len(records)} {first_record.entry_type} ledger entr{'y' if len(records) == 1 else 'ies'} for {first_record.client_name}"
+    log_activity(db, user, "create_ledger", "billing", "ClientLedger", first_record.id, action_message, new_value=records[0] if len(records) == 1 else {"count": len(records), "entry_type": first_record.entry_type, "category": first_record.category, "client_id": first_record.client_id, "start_date": str(entry_dates[0]), "end_date": str(entry_dates[-1])}, request=request, commit=True)
+    return {"success": True, "entry": first_record}
 
 
 @app.put("/api/ledger/{record_id}", response_model=ClientLedgerMutationOut)
@@ -6903,6 +6928,8 @@ def create_ledger(payload: ClientLedgerCreate, request: Request, db: Session = D
 @app.put("/api/billing/ledger/{record_id}", response_model=ClientLedgerMutationOut)
 @app.put("/billing/ledger/{record_id}", response_model=ClientLedgerMutationOut)
 def update_ledger(record_id: int, payload: ClientLedgerCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("billing", "can_edit"))):
+    if (payload.entry_mode or "single").strip().lower() == "date_range":
+        raise HTTPException(status_code=400, detail="Date range mode is only supported when creating new entries")
     record = get_record(db, ClientLedger, record_id)
     old_value = sanitize_activity_value(record)
     old_client_id = record.client_id

@@ -375,6 +375,185 @@ function websocketEndpoint(path) {
   return url.toString();
 }
 
+function useGlobalModalInteractivity() {
+  useEffect(() => {
+    const cleanups = new Map();
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const enhanceModal = (modal) => {
+      if (!modal || modal.dataset.modalEnhanced === '1') return;
+      modal.dataset.modalEnhanced = '1';
+      let header = modal.querySelector('.modalHeader, .weeklyInvoiceViewHeader');
+      if (!header) {
+        header = document.createElement('div');
+        header.className = 'modalHeader modalGeneratedDragHandle';
+        header.innerHTML = '<div><span class="eyebrow">Window</span><h2>Drag Window</h2></div>';
+        modal.insertBefore(header, modal.firstChild);
+      }
+      header.classList.add('modalDragHandle');
+      const dragBadge = document.createElement('span');
+      dragBadge.className = 'modalDragBadge';
+      dragBadge.textContent = 'Drag';
+      if (!header.querySelector('.modalDragBadge')) header.appendChild(dragBadge);
+
+      const startDragSession = (clientX, clientY, pointerId = null, mode = 'mouse') => {
+        const rect = modal.getBoundingClientRect();
+        const startLeft = rect.left;
+        const startTop = rect.top;
+        const startWidth = rect.width;
+        const startHeight = rect.height;
+        document.body.style.userSelect = 'none';
+        modal.style.setProperty('width', `${startWidth}px`, 'important');
+        modal.style.setProperty('height', `${startHeight}px`, 'important');
+        modal.style.setProperty('max-width', `${Math.min(1100, window.innerWidth - 16)}px`, 'important');
+        modal.style.setProperty('max-height', `${window.innerHeight - 16}px`, 'important');
+        modal.style.setProperty('left', `${startLeft}px`, 'important');
+        modal.style.setProperty('top', `${startTop}px`, 'important');
+        modal.style.setProperty('transform', 'none', 'important');
+        modal.dataset.dragging = '1';
+
+        const move = (moveEvent) => {
+          if (moveEvent.cancelable) moveEvent.preventDefault();
+          const nextLeft = clamp(startLeft + (moveEvent.clientX - clientX), 8, Math.max(8, window.innerWidth - startWidth - 8));
+          const nextTop = clamp(startTop + (moveEvent.clientY - clientY), 8, Math.max(8, window.innerHeight - startHeight - 8));
+          modal.style.setProperty('left', `${nextLeft}px`, 'important');
+          modal.style.setProperty('top', `${nextTop}px`, 'important');
+        };
+
+        const stop = () => {
+          document.body.style.userSelect = '';
+          delete modal.dataset.dragging;
+          if (pointerId !== null && header.releasePointerCapture) {
+            try {
+              header.releasePointerCapture(pointerId);
+            } catch {}
+          }
+          if (mode === 'pointer') {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', stop);
+          } else {
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', stop);
+          }
+        };
+
+        if (mode === 'pointer') {
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', stop);
+        } else {
+          window.addEventListener('mousemove', move);
+          window.addEventListener('mouseup', stop);
+        }
+      };
+
+      const beginDrag = (event) => {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (event.target.closest('button, input, textarea, select, a, label')) return;
+        if (event.cancelable) event.preventDefault();
+        event.stopPropagation();
+        if (event.pointerId !== undefined && header.setPointerCapture) {
+          try {
+            header.setPointerCapture(event.pointerId);
+          } catch {}
+        }
+        startDragSession(event.clientX, event.clientY, event.pointerId ?? null, 'pointer');
+      };
+
+      const beginMouseDrag = (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('button, input, textarea, select, a, label')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        startDragSession(event.clientX, event.clientY, null, 'mouse');
+      };
+
+      const resizeHandle = document.createElement('div');
+      resizeHandle.className = 'modalResizeHandle';
+      resizeHandle.setAttribute('aria-hidden', 'true');
+
+      const beginResize = (event) => {
+        if (event.button !== undefined && event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = modal.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startWidth = rect.width;
+        const startHeight = rect.height;
+        const startLeft = rect.left;
+        const startTop = rect.top;
+        if (event.pointerId !== undefined && resizeHandle.setPointerCapture) {
+          try {
+            resizeHandle.setPointerCapture(event.pointerId);
+          } catch {}
+        }
+        document.body.style.userSelect = 'none';
+        modal.style.setProperty('left', `${startLeft}px`, 'important');
+        modal.style.setProperty('top', `${startTop}px`, 'important');
+        modal.style.setProperty('transform', 'none', 'important');
+        modal.dataset.resizing = '1';
+
+        const move = (moveEvent) => {
+          moveEvent.preventDefault();
+          const maxWidth = Math.min(1100, window.innerWidth - 16);
+          const maxHeight = window.innerHeight - 16;
+          const nextWidth = clamp(startWidth + (moveEvent.clientX - startX), 420, maxWidth);
+          const nextHeight = clamp(startHeight + (moveEvent.clientY - startY), 280, maxHeight);
+          modal.style.setProperty('width', `${nextWidth}px`, 'important');
+          modal.style.setProperty('height', `${nextHeight}px`, 'important');
+          modal.style.setProperty('max-width', `${maxWidth}px`, 'important');
+          modal.style.setProperty('max-height', `${maxHeight}px`, 'important');
+        };
+
+        const stop = () => {
+          document.body.style.userSelect = '';
+          delete modal.dataset.resizing;
+          if (event.pointerId !== undefined && resizeHandle.releasePointerCapture) {
+            try {
+              resizeHandle.releasePointerCapture(event.pointerId);
+            } catch {}
+          }
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', stop);
+        };
+
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', stop);
+      };
+
+      header.addEventListener('pointerdown', beginDrag);
+      header.addEventListener('mousedown', beginMouseDrag);
+      resizeHandle.addEventListener('pointerdown', beginResize);
+      modal.appendChild(resizeHandle);
+
+      cleanups.set(modal, () => {
+        header.removeEventListener('pointerdown', beginDrag);
+        header.removeEventListener('mousedown', beginMouseDrag);
+        resizeHandle.removeEventListener('pointerdown', beginResize);
+        dragBadge.remove();
+        resizeHandle.remove();
+        header.classList.remove('modalDragHandle');
+        delete modal.dataset.modalEnhanced;
+      });
+    };
+
+    const scan = () => {
+      document.querySelectorAll('.modal-box').forEach(enhanceModal);
+    };
+
+    scan();
+    const observer = new MutationObserver(scan);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      cleanups.forEach((dispose) => dispose());
+      cleanups.clear();
+    };
+  }, []);
+}
+
 function StatusPill({ value }) {
   const raw = String(value || 'Unknown');
   const normalized = raw.toLowerCase().trim();
@@ -445,6 +624,7 @@ function ledgerQuery(filters = {}, defaultLimit = true) {
 }
 
 function App() {
+  useGlobalModalInteractivity();
   const [auth, setAuth] = useState(() => {
     const token = localStorage.getItem('noc360_token');
     const user = localStorage.getItem('noc360_user');
@@ -6298,7 +6478,8 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   const canDelete = canDo(user, 'billing', 'can_delete');
   const canExport = canDo(user, billingPageKey, 'can_export');
   const defaultRate = settings?.usd_to_inr_rate || 83;
-  const [form, setForm] = useState({ client_id: '', entry_date: new Date().toISOString().slice(0, 10), entry_type: 'Debit', category: 'Usage Charges', description: '', amount_usd: '', amount_inr: '', exchange_rate: defaultRate });
+  const newLedgerForm = () => ({ client_id: '', entry_mode: 'single', entry_date: new Date().toISOString().slice(0, 10), start_date: new Date().toISOString().slice(0, 10), end_date: new Date().toISOString().slice(0, 10), entry_type: 'Debit', category: 'Usage Charges', description: '', amount_usd: '', amount_inr: '', exchange_rate: defaultRate });
+  const [form, setForm] = useState(newLedgerForm);
   const [editingLedger, setEditingLedger] = useState(null);
   const [lastEdited, setLastEdited] = useState('usd');
   const [entryError, setEntryError] = useState('');
@@ -6331,6 +6512,12 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   };
   const filteredRows = billing.ledger || [];
   const pageInfo = billing.ledgerPage || { total: filteredRows.length, page: 1, page_size: filteredRows.length || 50, total_pages: 1 };
+  const isRangeMode = !editingLedger && form.entry_mode === 'date_range';
+  const rangeStart = form.start_date ? new Date(form.start_date) : null;
+  const rangeEnd = form.end_date ? new Date(form.end_date) : null;
+  const rangeDays = isRangeMode && rangeStart && rangeEnd && !Number.isNaN(rangeStart.getTime()) && !Number.isNaN(rangeEnd.getTime()) && rangeEnd >= rangeStart
+    ? Math.floor((rangeEnd - rangeStart) / 86400000) + 1
+    : 0;
   const entryMatchesFilters = (entry, activeFilters) => {
     if (!entry) return true;
     if (activeFilters.client_id && String(entry.client_id) !== String(activeFilters.client_id)) return false;
@@ -6343,7 +6530,6 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
     return true;
   };
   const refreshLedger = async (activeFilters = filters) => {
-    console.log('[NOC360] Billing filters applied', activeFilters);
     const pageMeta = refreshBilling ? await refreshBilling(activeFilters) : null;
     if (pageMeta && pageMeta.page !== activeFilters.page) setFilters((current) => ({ ...current, page: pageMeta.page }));
     if (!refreshBilling) await reload();
@@ -6406,20 +6592,37 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       setEntryError('Enter a valid USD to INR rate.');
       return;
     }
+    if (isRangeMode) {
+      if (!form.start_date || !form.end_date) {
+        setEntryError('Select start date and end date for range mode.');
+        return;
+      }
+      if (rangeDays < 1) {
+        setEntryError('End date cannot be before start date.');
+        return;
+      }
+      if (rangeDays > 31) {
+        setEntryError('Maximum range is 31 days.');
+        return;
+      }
+    }
     if (!amountUsd && amountInr) amountUsd = amountInr / rate;
     if (!amountInr && amountUsd) amountInr = amountUsd * rate;
-    const body = { client_id: Number(form.client_id), entry_date: form.entry_date, entry_type: form.entry_type, category: form.category, description: form.description, amount_usd: Number(amountUsd.toFixed(2)), amount_inr: Number(amountInr.toFixed(2)), exchange_rate: rate, debit_amount: form.entry_type === 'Debit' ? Number(amountUsd.toFixed(2)) : 0, credit_amount: form.entry_type === 'Credit' ? Number(amountUsd.toFixed(2)) : 0 };
+    const totalGeneratedUsd = isRangeMode ? Number((amountUsd * rangeDays).toFixed(2)) : Number(amountUsd.toFixed(2));
+    if (!editingLedger && isRangeMode && totalGeneratedUsd >= 50000 && !window.confirm(`This will create ${rangeDays} daily entries totaling ${usd(totalGeneratedUsd)}. Continue?`)) {
+      return;
+    }
+    const body = { client_id: Number(form.client_id), entry_mode: isRangeMode ? 'date_range' : 'single', entry_date: isRangeMode ? form.start_date : form.entry_date, start_date: isRangeMode ? form.start_date : null, end_date: isRangeMode ? form.end_date : null, entry_type: form.entry_type, category: form.category, description: form.description, amount_usd: Number(amountUsd.toFixed(2)), amount_inr: Number(amountInr.toFixed(2)), exchange_rate: rate, debit_amount: form.entry_type === 'Debit' ? Number(amountUsd.toFixed(2)) : 0, credit_amount: form.entry_type === 'Credit' ? Number(amountUsd.toFixed(2)) : 0 };
     const response = await request(editingLedger ? `/billing/ledger/${editingLedger.id}` : '/billing/ledger', { method: editingLedger ? 'PUT' : 'POST', body: JSON.stringify(body) });
-    console.log('[NOC360] Ledger mutation response', response);
     const savedEntry = response.entry || response;
     const nextFilters = entryMatchesFilters(savedEntry, filters)
       ? { ...filters, page: 1 }
       : { ...filters, client_id: String(savedEntry.client_id || ''), from_date: savedEntry.entry_date || '', to_date: savedEntry.entry_date || '', entry_type: savedEntry.entry_type || '', category: savedEntry.category || '', page: 1 };
     if (nextFilters !== filters) setFilters(nextFilters);
     setEntryError('');
-    setEntryMessage(editingLedger ? 'Entry Updated' : 'Entry Saved');
+    setEntryMessage(editingLedger ? 'Entry Updated' : (isRangeMode ? `${rangeDays} daily entries saved` : 'Entry Saved'));
     setEditingLedger(null);
-    setForm({ client_id: '', entry_date: new Date().toISOString().slice(0, 10), entry_type: 'Debit', category: 'Usage Charges', description: '', amount_usd: '', amount_inr: '', exchange_rate: defaultRate });
+    setForm(newLedgerForm());
     await refreshLedger(nextFilters);
   };
   const startEdit = (row) => {
@@ -6428,7 +6631,10 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
     setEntryError('');
     setForm({
       client_id: row.client_id || '',
+      entry_mode: 'single',
       entry_date: row.entry_date,
+      start_date: row.entry_date,
+      end_date: row.entry_date,
       entry_type: row.entry_type,
       category: row.category,
       description: row.description || '',
@@ -6440,22 +6646,30 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   const cancelEdit = () => {
     setEditingLedger(null);
     setEntryError('');
-    setForm({ client_id: '', entry_date: new Date().toISOString().slice(0, 10), entry_type: 'Debit', category: 'Usage Charges', description: '', amount_usd: '', amount_inr: '', exchange_rate: defaultRate });
+    setForm(newLedgerForm());
   };
   const deleteLedger = async (row) => {
     if (!confirm(`Delete ledger entry for ${row.client_name || 'client'}?`)) return;
-    const response = await request(`/billing/ledger/${row.id}`, { method: 'DELETE' });
-    console.log('[NOC360] Ledger delete response', response);
+    await request(`/billing/ledger/${row.id}`, { method: 'DELETE' });
     setEntryMessage('Entry Deleted');
     await refreshLedger();
   };
   const previewUsd = Number(form.amount_usd || 0);
   const previewRate = Number(form.exchange_rate || defaultRate);
   const previewInr = Number(form.amount_inr || (previewUsd * previewRate) || 0);
+  const totalGeneratedUsd = Number((previewUsd * (rangeDays || 1)).toFixed(2));
   const ledgerEntryForm = (
     <form className="inlineForm billingEntryForm" onSubmit={save}>
       <ClientSelect value={form.client_id} clients={data.clients} onChange={(value) => setForm({ ...form, client_id: value })} />
-      <input type="date" value={form.entry_date} onChange={(event) => setForm({ ...form, entry_date: event.target.value })} />
+      {!editingLedger && <select value={form.entry_mode} onChange={(event) => setForm({ ...form, entry_mode: event.target.value })}><option value="single">Single Date</option><option value="date_range">Date Range</option></select>}
+      {isRangeMode ? (
+        <>
+          <input type="date" value={form.start_date} onChange={(event) => setForm({ ...form, start_date: event.target.value })} />
+          <input type="date" value={form.end_date} onChange={(event) => setForm({ ...form, end_date: event.target.value })} />
+        </>
+      ) : (
+        <input type="date" value={form.entry_date} onChange={(event) => setForm({ ...form, entry_date: event.target.value, start_date: event.target.value, end_date: event.target.value })} />
+      )}
       <select value={form.entry_type} onChange={(event) => setForm({ ...form, entry_type: event.target.value })}><option>Debit</option><option>Credit</option></select>
       <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{ledgerCategories.map((type) => <option key={type}>{type}</option>)}</select>
       <input placeholder="Description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
@@ -6469,6 +6683,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
           <small>= {usd(previewUsd)} × {Number(previewRate || 0).toFixed(2)} = {inr(previewInr)}</small>
         </div>
       </div>
+      {isRangeMode && <div className="alert billingAlert"><strong>Range Mode Active</strong> | Total Days: {rangeDays || 0} | Entry Per Day: {usd(previewUsd)} | Total Amount Generated: {usd(totalGeneratedUsd)}</div>}
       {entryError && <span className="formError">{entryError}</span>}
       <button className="primary"><Plus size={16} /> {editingLedger ? 'Update Entry' : 'Save Entry'}</button>
       {editingLedger && <button type="button" onClick={cancelEdit}>Cancel Edit</button>}
