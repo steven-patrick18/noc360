@@ -2070,6 +2070,7 @@ function makeQuery(filters) {
   if (filters.date_from) params.set('date_from', filters.date_from);
   if (filters.date_to) params.set('date_to', filters.date_to);
   if (filters.client_ids?.length) params.set('client_ids', filters.client_ids.join(','));
+  if (filters.cluster_ids?.length) params.set('cluster_ids', filters.cluster_ids.join(','));
   if (filters.charge_type) params.set('charge_type', filters.charge_type);
   if (filters.type) params.set('type', filters.type);
   return params.toString() ? `?${params}` : '';
@@ -5465,6 +5466,46 @@ function ReportsPage({ data, user }) {
     ['rdp-utilization', 'RDP Utilization Report', '/reports/rdp-utilization'],
     ['routing-capacity', 'Routing Gateway Capacity Report', '/reports/routing-capacity'],
   ];
+  const selectedClusterClientNames = useMemo(() => {
+    if (!filters.cluster_ids?.length) return [];
+    const selectedIds = new Set(filters.cluster_ids.map((value) => String(value)));
+    return Array.from(new Set(
+      (data.clusters || [])
+        .filter((cluster) => selectedIds.has(String(cluster.id)))
+        .map((cluster) => String(cluster.client_name || '').trim())
+        .filter(Boolean)
+    ));
+  }, [data.clusters, filters.cluster_ids]);
+
+  const visibleDataCostRows = useMemo(() => {
+    if (reportType !== 'data-cost') return rows;
+    const normalizedType = String(filters.charge_type || '').trim();
+    if (normalizedType && normalizedType !== 'Data Charges') return [];
+    if (!selectedClusterClientNames.length) return rows;
+    const allowedClients = new Set(selectedClusterClientNames);
+    return rows.filter((row) => allowedClients.has(String(row.client || row['Client / Group'] || '').trim()));
+  }, [filters.charge_type, reportType, rows, selectedClusterClientNames]);
+
+  const dataCostSummary = useMemo(() => {
+    const sourceRows = reportType === 'data-cost' ? visibleDataCostRows : [];
+    const totals = sourceRows.reduce((accumulator, row) => {
+      const quantity = Number(row.quantity || row.Quantity || 0);
+      const rate = Number(row.rate_usd || row.rate || row.Rate || 0);
+      const total = Number(row.total_data_cost_usd || row.total_data_cost || row['Total Data Cost'] || 0);
+      accumulator.quantity += quantity;
+      accumulator.total += total;
+      accumulator.rateWeighted += quantity > 0 ? rate * quantity : rate;
+      accumulator.rateBase += quantity > 0 ? quantity : (rate ? 1 : 0);
+      return accumulator;
+    }, { quantity: 0, total: 0, rateWeighted: 0, rateBase: 0 });
+    return {
+      totalQuantity: totals.quantity,
+      totalCost: totals.total,
+      averageRate: totals.rateBase ? totals.rateWeighted / totals.rateBase : 0,
+      count: sourceRows.length,
+    };
+  }, [reportType, visibleDataCostRows]);
+
   const load = async (type = reportType) => {
     const item = reports.find(([key]) => key === type);
     setRows(await request(`${item[2]}${makeQuery(filters)}`));
@@ -5476,6 +5517,14 @@ function ReportsPage({ data, user }) {
     await load('data-cost');
   };
   const headers = rows[0] ? Object.keys(rows[0]) : [];
+  const dataCostExportRows = visibleDataCostRows.map((row) => ({
+    Date: row.date,
+    'Client / Group': row.client,
+    Quantity: row.quantity,
+    Rate: row.rate_usd || row.rate || '',
+    'Total Data Cost': row.total_data_cost_usd || row.total_data_cost || '',
+    Description: row.description || '',
+  }));
   return (
     <section>
       <div className="reportFilters">
@@ -5486,7 +5535,7 @@ function ReportsPage({ data, user }) {
         <select value={filters.charge_type} onChange={(e) => setFilters({ ...filters, charge_type: e.target.value })}><option value="">All charge types</option>{ledgerCategories.map((type) => <option key={type}>{type}</option>)}</select>
         <select value={reportType} onChange={(e) => setReportType(e.target.value)}>{reports.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
         <button onClick={() => load()}><RefreshCcw size={16} /> Run</button>
-        {canExport && <button onClick={() => exportRows(`${reportType}.csv`, rows)}><Download size={16} /> Export CSV</button>}
+        {canExport && <button onClick={() => exportRows(`${reportType}.csv`, reportType === 'data-cost' ? dataCostExportRows : rows)} disabled={reportType === 'data-cost' ? !visibleDataCostRows.length : !rows.length}><Download size={16} /> Export CSV</button>}
       </div>
       {reportType === 'data-cost' && !isCustomer && canCreate && (
         <form className="inlineForm" onSubmit={addDataCost}>
@@ -5498,7 +5547,48 @@ function ReportsPage({ data, user }) {
           <button className="primary">Add Data Cost</button>
         </form>
       )}
-      <div className="tableWrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header.replaceAll('_', ' ')}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody></table></div>
+      {reportType === 'data-cost' ? (
+        <>
+          <div className="cards billingCards">
+            <div className="metric"><span>Total Quantity</span><strong>{Number(dataCostSummary.totalQuantity || 0).toFixed(2)}</strong></div>
+            <div className="metric"><span>Total Data Cost</span><strong>{usd(dataCostSummary.totalCost || 0)}</strong></div>
+            <div className="metric"><span>Average Rate</span><strong>{usd(dataCostSummary.averageRate || 0)}</strong></div>
+            <div className="metric"><span>Number of Entries</span><strong>{dataCostSummary.count}</strong></div>
+          </div>
+          {visibleDataCostRows.length ? (
+            <div className="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Client / Group</th>
+                    <th>Quantity</th>
+                    <th>Rate</th>
+                    <th>Total Data Cost</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleDataCostRows.map((row, index) => (
+                    <tr key={`${row.date}-${row.client}-${index}`}>
+                      <td>{reportValue('date', row.date)}</td>
+                      <td>{reportValue('client', row.client)}</td>
+                      <td>{reportValue('quantity', row.quantity)}</td>
+                      <td>{usd(Number(row.rate_usd || row.rate || 0))}</td>
+                      <td>{usd(Number(row.total_data_cost_usd || row.total_data_cost || 0))}</td>
+                      <td>{reportValue('description', row.description)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="panel"><p className="muted">No data charges found for selected filters.</p></div>
+          )}
+        </>
+      ) : (
+        <div className="tableWrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header.replaceAll('_', ' ')}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody></table></div>
+      )}
     </section>
   );
 }
