@@ -2072,7 +2072,9 @@ function makeQuery(filters) {
   if (filters.client_ids?.length) params.set('client_ids', filters.client_ids.join(','));
   if (filters.cluster_ids?.length) params.set('cluster_ids', filters.cluster_ids.join(','));
   if (filters.charge_type) params.set('charge_type', filters.charge_type);
+  if (filters.category) params.set('category', filters.category);
   if (filters.type) params.set('type', filters.type);
+  if (filters.search) params.set('search', filters.search);
   return params.toString() ? `?${params}` : '';
 }
 
@@ -5366,6 +5368,18 @@ function reportValue(header, value) {
   return Number(value).toFixed(2);
 }
 
+function formatReportDateValue(value) {
+  if (!value) return '';
+  const text = String(value);
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return text;
+  return `${match[3]}-${match[2]}-${match[1]}`;
+}
+
+function slugifyReportName(value) {
+  return String(value || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
 function ledgerBalanceText(value) {
   const amount = Number(value || 0);
   return amount < 0 ? `Advance ${inr(Math.abs(amount))}` : inr(amount);
@@ -5451,144 +5465,199 @@ function ClientInvoiceLedgerView({ user, pageKey = 'my_reports', title = 'Client
 function ReportsPage({ data, user }) {
   const isCustomer = user?.role === 'customer';
   const reportsPageKey = isCustomer ? 'my_reports' : 'reports';
-  const canCreate = canDo(user, reportsPageKey, 'can_create');
   const canExport = canDo(user, reportsPageKey, 'can_export');
-  const [filters, setFilters] = useState({ date_from: '', date_to: '', client_ids: [], cluster_ids: [], charge_type: '' });
-  const [reportType, setReportType] = useState('ledger');
+  const chargeOptions = ['All Charges', ...ledgerCategories];
+  const [filters, setFilters] = useState({ date_from: '', date_to: '', client_ids: [], category: 'All Charges', search: '' });
+  const [reportView, setReportView] = useState('detail');
   const [rows, setRows] = useState([]);
-  const [costForm, setCostForm] = useState({ client_id: '', entry_date: new Date().toISOString().slice(0, 10), quantity: '', rate: '', description: '' });
-  const reports = [
-    ['ledger', 'Client Ledger Report', '/reports/ledger'],
-    ['daily-billing', 'Daily Billing Report', '/reports/daily-billing'],
-    ['data-cost', 'Data Cost Report', '/reports/data-cost'],
-    ['outstanding', 'Client-wise Outstanding Report', '/reports/outstanding'],
-    ['cluster-usage', 'Cluster Usage Report', '/reports/cluster-usage'],
-    ['rdp-utilization', 'RDP Utilization Report', '/reports/rdp-utilization'],
-    ['routing-capacity', 'Routing Gateway Capacity Report', '/reports/routing-capacity'],
-  ];
-  const selectedClusterClientNames = useMemo(() => {
-    if (!filters.cluster_ids?.length) return [];
-    const selectedIds = new Set(filters.cluster_ids.map((value) => String(value)));
-    return Array.from(new Set(
-      (data.clusters || [])
-        .filter((cluster) => selectedIds.has(String(cluster.id)))
-        .map((cluster) => String(cluster.client_name || '').trim())
-        .filter(Boolean)
-    ));
-  }, [data.clusters, filters.cluster_ids]);
-
-  const visibleDataCostRows = useMemo(() => {
-    if (reportType !== 'data-cost') return rows;
-    const normalizedType = String(filters.charge_type || '').trim();
-    if (normalizedType && normalizedType !== 'Data Charges') return [];
-    if (!selectedClusterClientNames.length) return rows;
-    const allowedClients = new Set(selectedClusterClientNames);
-    return rows.filter((row) => allowedClients.has(String(row.client || row['Client / Group'] || '').trim()));
-  }, [filters.charge_type, reportType, rows, selectedClusterClientNames]);
-
-  const dataCostSummary = useMemo(() => {
-    const sourceRows = reportType === 'data-cost' ? visibleDataCostRows : [];
-    const totals = sourceRows.reduce((accumulator, row) => {
-      const quantity = Number(row.quantity || row.Quantity || 0);
-      const rate = Number(row.rate_usd || row.rate || row.Rate || 0);
-      const total = Number(row.total_data_cost_usd || row.total_data_cost || row['Total Data Cost'] || 0);
-      accumulator.quantity += quantity;
-      accumulator.total += total;
-      accumulator.rateWeighted += quantity > 0 ? rate * quantity : rate;
-      accumulator.rateBase += quantity > 0 ? quantity : (rate ? 1 : 0);
-      return accumulator;
-    }, { quantity: 0, total: 0, rateWeighted: 0, rateBase: 0 });
-    return {
-      totalQuantity: totals.quantity,
-      totalCost: totals.total,
-      averageRate: totals.rateBase ? totals.rateWeighted / totals.rateBase : 0,
-      count: sourceRows.length,
-    };
-  }, [reportType, visibleDataCostRows]);
-
-  const load = async (type = reportType) => {
-    const item = reports.find(([key]) => key === type);
-    setRows(await request(`${item[2]}${makeQuery(filters)}`));
+  const [summary, setSummary] = useState({});
+  const [message, setMessage] = useState('');
+  const [appliedFilters, setAppliedFilters] = useState({});
+  const [debugInfo, setDebugInfo] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const baseQuery = new URLSearchParams();
+      if (filters.date_from) baseQuery.set('from_date', filters.date_from);
+      if (filters.date_to) baseQuery.set('to_date', filters.date_to);
+      if (filters.search) baseQuery.set('search', filters.search);
+      baseQuery.set('page_size', 'all');
+      if (filters.category && filters.category !== 'All Charges' && filters.category !== 'Payment') {
+        baseQuery.set('category', filters.category);
+      }
+      if (filters.category === 'Payment') {
+        baseQuery.set('entry_type', 'Credit');
+      }
+      const endpoint = `/billing/ledger?${baseQuery.toString()}`;
+      const result = await request(endpoint);
+      const sourceRows = Array.isArray(result) ? result : (result.items || []);
+      const selectedIds = new Set((filters.client_ids || []).map((value) => String(value)));
+      const nextRows = sourceRows
+        .filter((row) => !selectedIds.size || selectedIds.has(String(row.client_id)))
+        .filter((row) => {
+          if (!filters.category || filters.category === 'All Charges') return true;
+          if (filters.category === 'Payment') return row.entry_type === 'Credit' || row.category === 'Payment';
+          return row.category === filters.category;
+        })
+        .map((row) => ({
+          date: row.entry_date,
+          client: row.client_name,
+          client_id: row.client_id,
+          type: row.entry_type,
+          category: row.category,
+          description: row.description,
+          debit_usd: Number(row.debit_usd ?? row.debit_amount ?? 0),
+          credit_usd: Number(row.credit_usd ?? row.credit_amount ?? 0),
+          debit_inr: Number(row.debit_inr ?? 0),
+          credit_inr: Number(row.credit_inr ?? 0),
+          balance_usd: Number(row.balance_usd ?? row.balance_after_entry ?? 0),
+          balance_inr: Number(row.balance_inr ?? 0),
+          quantity: null,
+          rate: null,
+        }));
+      const nextSummary = {
+        total_entries: nextRows.length,
+        total_debit_usd: nextRows.reduce((sum, row) => sum + Number(row.debit_usd || 0), 0),
+        total_credit_usd: nextRows.reduce((sum, row) => sum + Number(row.credit_usd || 0), 0),
+        total_debit_inr: nextRows.reduce((sum, row) => sum + Number(row.debit_inr || 0), 0),
+        total_credit_inr: nextRows.reduce((sum, row) => sum + Number(row.credit_inr || 0), 0),
+        net_inr: nextRows.reduce((sum, row) => sum + Number(row.debit_inr || 0) - Number(row.credit_inr || 0), 0),
+      };
+      setRows(nextRows);
+      setSummary(nextSummary);
+      setAppliedFilters({ source: 'billing/ledger', client_ids: [...selectedIds], date_from: filters.date_from, date_to: filters.date_to, category: filters.category, search: filters.search });
+      setMessage(nextRows.length ? '' : 'No ledger entries found for selected filters.');
+      setDebugInfo({ endpoint, applied_filters: { source: 'billing/ledger', client_ids: [...selectedIds], date_from: filters.date_from, date_to: filters.date_to, category: filters.category, search: filters.search }, rows_returned: nextRows.length });
+    } catch (err) {
+      setRows([]);
+      setSummary({});
+      setAppliedFilters(filters);
+      setMessage('');
+      setError(err.message);
+      setDebugInfo({ endpoint: '/billing/ledger?page_size=all', applied_filters: filters, rows_returned: 0, error: err.message });
+    } finally {
+      setLoading(false);
+    }
   };
-  useEffect(() => { load(); }, [reportType]);
-  const addDataCost = async (event) => {
-    event.preventDefault();
-    await request('/reports/data-cost', { method: 'POST', body: JSON.stringify({ ...costForm, client_id: Number(costForm.client_id), quantity: Number(costForm.quantity), rate: Number(costForm.rate) }) });
-    await load('data-cost');
-  };
-  const headers = rows[0] ? Object.keys(rows[0]) : [];
-  const dataCostExportRows = visibleDataCostRows.map((row) => ({
+  useEffect(() => { load(); }, []);
+  const filteredRows = useMemo(() => {
+    const search = String(filters.search || '').trim().toLowerCase();
+    if (!search) return rows;
+    return rows.filter((row) => Object.values(row || {}).some((value) => String(value ?? '').toLowerCase().includes(search)));
+  }, [filters.search, rows]);
+  const detailRows = filteredRows.map((row) => ({
     Date: row.date,
     'Client / Group': row.client,
-    Quantity: row.quantity,
-    Rate: row.rate_usd || row.rate || '',
-    'Total Data Cost': row.total_data_cost_usd || row.total_data_cost || '',
+    Type: row.type,
+    Category: row.category || '',
     Description: row.description || '',
+    'USD Debit': row.debit_usd || '',
+    'USD Credit': row.credit_usd || '',
+    'INR Debit': row.debit_inr || '',
+    'INR Credit': row.credit_inr || '',
+    'Balance INR': row.balance_inr || '',
   }));
+  const daySummaryRows = useMemo(() => {
+    const grouped = new Map();
+    filteredRows.forEach((row) => {
+      const key = row.date;
+      const current = grouped.get(key) || { date: key, total_debit_inr: 0, total_credit_inr: 0, net_inr: 0, entry_count: 0 };
+      current.total_debit_inr += Number(row.debit_inr || 0);
+      current.total_credit_inr += Number(row.credit_inr || 0);
+      current.net_inr += Number(row.debit_inr || 0) - Number(row.credit_inr || 0);
+      current.entry_count += 1;
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [filteredRows]);
+  const clientSummaryRows = useMemo(() => {
+    const grouped = new Map();
+    filteredRows.forEach((row) => {
+      const key = row.client || 'Unknown';
+      const current = grouped.get(key) || { client: key, total_debit_inr: 0, total_credit_inr: 0, net_inr: 0, entry_count: 0 };
+      current.total_debit_inr += Number(row.debit_inr || 0);
+      current.total_credit_inr += Number(row.credit_inr || 0);
+      current.net_inr += Number(row.debit_inr || 0) - Number(row.credit_inr || 0);
+      current.entry_count += 1;
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.values()).sort((a, b) => String(a.client).localeCompare(String(b.client)));
+  }, [filteredRows]);
+  const visibleRows = reportView === 'day'
+    ? daySummaryRows.map((row) => ({ Date: row.date, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Net INR': row.net_inr, 'Entry Count': row.entry_count }))
+    : reportView === 'client'
+      ? clientSummaryRows.map((row) => ({ Client: row.client, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Net INR': row.net_inr, 'Entry Count': row.entry_count }))
+      : detailRows;
+  const reportFilename = `${slugifyReportName(`${filters.category || 'all-charges'}-${reportView}-report`)}_${filters.date_from || 'all'}_to_${filters.date_to || 'all'}.csv`;
+  const headers = visibleRows[0] ? Object.keys(visibleRows[0]) : [];
+  const totals = useMemo(() => ({
+    total_entries: filteredRows.length,
+    total_debit_usd: filteredRows.reduce((sum, row) => sum + Number(row.debit_usd || 0), 0),
+    total_credit_usd: filteredRows.reduce((sum, row) => sum + Number(row.credit_usd || 0), 0),
+    total_debit_inr: filteredRows.reduce((sum, row) => sum + Number(row.debit_inr || 0), 0),
+    total_credit_inr: filteredRows.reduce((sum, row) => sum + Number(row.credit_inr || 0), 0),
+    net_inr: filteredRows.reduce((sum, row) => sum + Number(row.debit_inr || 0) - Number(row.credit_inr || 0), 0),
+  }), [filteredRows]);
   return (
     <section>
-      <div className="reportFilters">
-        <input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
-        <input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
-        {!isCustomer && <MultiSelect values={filters.client_ids} options={data.clients} onChange={(value) => setFilters({ ...filters, client_ids: value })} />}
-        {!isCustomer && <MultiSelect values={filters.cluster_ids} options={data.clusters} labelKey="cluster_name" onChange={(value) => setFilters({ ...filters, cluster_ids: value })} />}
-        <select value={filters.charge_type} onChange={(e) => setFilters({ ...filters, charge_type: e.target.value })}><option value="">All charge types</option>{ledgerCategories.map((type) => <option key={type}>{type}</option>)}</select>
-        <select value={reportType} onChange={(e) => setReportType(e.target.value)}>{reports.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
-        <button onClick={() => load()}><RefreshCcw size={16} /> Run</button>
-        {canExport && <button onClick={() => exportRows(`${reportType}.csv`, reportType === 'data-cost' ? dataCostExportRows : rows)} disabled={reportType === 'data-cost' ? !visibleDataCostRows.length : !rows.length}><Download size={16} /> Export CSV</button>}
+      <div className="sectionTitle">
+        <div>
+          <span className="eyebrow">Data Intelligence</span>
+          <h2>Charge Report Filter</h2>
+        </div>
       </div>
-      {reportType === 'data-cost' && !isCustomer && canCreate && (
-        <form className="inlineForm" onSubmit={addDataCost}>
-          <ClientSelect value={costForm.client_id} clients={data.clients} onChange={(value) => setCostForm({ ...costForm, client_id: value })} />
-          <input type="date" value={costForm.entry_date} onChange={(e) => setCostForm({ ...costForm, entry_date: e.target.value })} />
-          <input type="number" step="0.01" placeholder="Quantity" value={costForm.quantity} onChange={(e) => setCostForm({ ...costForm, quantity: e.target.value })} />
-          <input type="number" step="0.0001" placeholder="Rate" value={costForm.rate} onChange={(e) => setCostForm({ ...costForm, rate: e.target.value })} />
-          <input placeholder="Description" value={costForm.description} onChange={(e) => setCostForm({ ...costForm, description: e.target.value })} />
-          <button className="primary">Add Data Cost</button>
-        </form>
+      <div className="reportFilters">
+        <label className="fieldLabel">From Date<input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} /></label>
+        <label className="fieldLabel">To Date<input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} /></label>
+        {!isCustomer && <MultiSelect values={filters.client_ids} options={data.clients} onChange={(value) => setFilters({ ...filters, client_ids: value })} />}
+        <label className="fieldLabel">Charge Category<select value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}>{chargeOptions.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
+        <label className="fieldLabel">Report View<select value={reportView} onChange={(e) => setReportView(e.target.value)}>
+          <option value="detail">Detail View</option>
+          <option value="day">Day-wise Summary</option>
+          <option value="client">Client-wise Summary</option>
+        </select></label>
+        <label className="fieldLabel">Search Description<input type="search" placeholder="Search description" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
+        <button onClick={() => load()}><RefreshCcw size={16} /> Run Report</button>
+        {canExport && <button onClick={() => exportRows(reportFilename, visibleRows)} disabled={!visibleRows.length}><Download size={16} /> Export CSV</button>}
+        {user?.role === 'admin' && <button onClick={() => setShowDebug((current) => !current)}>{showDebug ? 'Hide Debug' : 'Show Debug'}</button>}
+      </div>
+      <div className="muted">Selected dates use inclusive day range. Display format: {formatReportDateValue(filters.date_from) || 'All'} to {formatReportDateValue(filters.date_to) || 'All'}.</div>
+      <div className="cards billingCards">
+        <div className="metric"><span>Total Entries</span><strong>{totals.total_entries}</strong></div>
+        <div className="metric"><span>Total Debit INR</span><strong>{inr(totals.total_debit_inr)}</strong></div>
+        <div className="metric"><span>Total Credit INR</span><strong>{inr(totals.total_credit_inr)}</strong></div>
+        <div className="metric"><span>Net INR</span><strong>{inr(totals.net_inr)}</strong></div>
+        <div className="metric"><span>Total Debit USD</span><strong>{usd(totals.total_debit_usd)}</strong></div>
+        <div className="metric"><span>Total Credit USD</span><strong>{usd(totals.total_credit_usd)}</strong></div>
+      </div>
+      {user?.role === 'admin' && showDebug && (
+        <div className="panel">
+          <span className="eyebrow">Debug</span>
+          <div className="muted">Endpoint: {debugInfo?.endpoint || '-'}</div>
+          <div className="muted">Source: {debugInfo?.applied_filters?.source || appliedFilters?.source || '-'}</div>
+          <div className="muted">Client IDs: {JSON.stringify(debugInfo?.applied_filters?.client_ids || appliedFilters?.client_ids || [])}</div>
+          <div className="muted">Date Range: {(debugInfo?.applied_filters?.date_from || appliedFilters?.date_from || 'All')} to {(debugInfo?.applied_filters?.date_to || appliedFilters?.date_to || 'All')}</div>
+          <div className="muted">Categories Matched: {JSON.stringify(debugInfo?.applied_filters?.categories_matched || appliedFilters?.categories_matched || [])}</div>
+          <div className="muted">Applied Filters: {JSON.stringify(debugInfo?.applied_filters || appliedFilters || {})}</div>
+          <div className="muted">Rows Returned: {debugInfo?.rows_returned ?? filteredRows.length}</div>
+        </div>
       )}
-      {reportType === 'data-cost' ? (
-        <>
-          <div className="cards billingCards">
-            <div className="metric"><span>Total Quantity</span><strong>{Number(dataCostSummary.totalQuantity || 0).toFixed(2)}</strong></div>
-            <div className="metric"><span>Total Data Cost</span><strong>{usd(dataCostSummary.totalCost || 0)}</strong></div>
-            <div className="metric"><span>Average Rate</span><strong>{usd(dataCostSummary.averageRate || 0)}</strong></div>
-            <div className="metric"><span>Number of Entries</span><strong>{dataCostSummary.count}</strong></div>
-          </div>
-          {visibleDataCostRows.length ? (
-            <div className="tableWrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Client / Group</th>
-                    <th>Quantity</th>
-                    <th>Rate</th>
-                    <th>Total Data Cost</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleDataCostRows.map((row, index) => (
-                    <tr key={`${row.date}-${row.client}-${index}`}>
-                      <td>{reportValue('date', row.date)}</td>
-                      <td>{reportValue('client', row.client)}</td>
-                      <td>{reportValue('quantity', row.quantity)}</td>
-                      <td>{usd(Number(row.rate_usd || row.rate || 0))}</td>
-                      <td>{usd(Number(row.total_data_cost_usd || row.total_data_cost || 0))}</td>
-                      <td>{reportValue('description', row.description)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="panel"><p className="muted">No data charges found for selected filters.</p></div>
-          )}
-        </>
+      {error && <div className="error"><AlertTriangle size={16} /> {error}</div>}
+      {visibleRows.length ? (
+        <div className="tableWrap">
+          <table>
+            <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+            <tbody>{visibleRows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
       ) : (
-        <div className="tableWrap"><table><thead><tr>{headers.map((header) => <th key={header}>{header.replaceAll('_', ' ')}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody></table></div>
+        <div className="panel"><p className="muted">{loading ? 'Loading report...' : (message || 'No ledger entries found for selected client/category/date range.')}</p></div>
       )}
+      <div className="muted">{visibleRows.length} row{visibleRows.length === 1 ? '' : 's'} loaded.</div>
     </section>
   );
 }

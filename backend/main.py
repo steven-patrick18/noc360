@@ -4639,6 +4639,39 @@ def ledger_query(db: Session, user: User, client_id=None, date_from=None, date_t
     return query
 
 
+def finance_ledger_report_query(db: Session, user: User, client_ids=None, cluster_ids=None, date_from=None, date_to=None, entry_type=None, search=None, created_by=None):
+    requested_ids = parse_ids(client_ids) if isinstance(client_ids, str) else (client_ids or [])
+    cluster_scope = parse_ids(cluster_ids) if isinstance(cluster_ids, str) else (cluster_ids or [])
+    effective_ids = report_client_scope_with_clusters(db, user, ",".join(str(item) for item in requested_ids) if requested_ids else None, ",".join(str(item) for item in cluster_scope) if cluster_scope else None)
+    query = db.query(ClientLedger)
+    if effective_ids:
+        query = query.filter(ClientLedger.client_id.in_(effective_ids))
+    elif user.role == "customer" and user.client_id:
+        query = query.filter(ClientLedger.client_id == user.client_id)
+    if date_from:
+        query = query.filter(ClientLedger.entry_date >= date_from)
+    if date_to:
+        query = query.filter(ClientLedger.entry_date <= date_to)
+    if entry_type:
+        query = query.filter(ClientLedger.entry_type == entry_type)
+    if search:
+        query = query.filter(ClientLedger.description.ilike(f"%{search}%"))
+    if created_by:
+        query = query.filter(ClientLedger.created_by.ilike(f"%{created_by}%"))
+    return query, effective_ids
+
+
+def charge_report_summary(rows):
+    return {
+        "total_entries": len(rows),
+        "total_debit_usd": round(sum(row_debit_usd(row) for row in rows), 2),
+        "total_credit_usd": round(sum(row_credit_usd(row) for row in rows), 2),
+        "total_debit_inr": round(sum(row_debit_inr(row) for row in rows), 2),
+        "total_credit_inr": round(sum(row_credit_inr(row) for row in rows), 2),
+        "net_inr": round(sum(row_debit_inr(row) - row_credit_inr(row) for row in rows), 2),
+    }
+
+
 def ledger_payload_values(db: Session, payload: ClientLedgerCreate, user: User | None = None):
     if payload.entry_type not in {"Debit", "Credit"}:
         raise HTTPException(status_code=400, detail="entry_type must be Debit or Credit")
@@ -5297,8 +5330,43 @@ def scoped_ledger_rows(db: Session, user: User, client_ids=None, date_from=None,
     return query.order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc()).all()
 
 
-def data_cost_rows(db: Session, user: User, client_ids=None, date_from=None, date_to=None):
-    ids, date_from, date_to = report_scope(db, user, client_ids, date_from, date_to)
+def report_client_scope_with_clusters(db: Session, user: User, client_ids: str | None = None, cluster_ids: str | None = None):
+    ids = scoped_client_ids(db, user, parse_ids(client_ids))
+    cluster_scope = parse_ids(cluster_ids)
+    if cluster_scope:
+        cluster_client_ids = sorted({
+            cluster.client_id
+            for cluster in db.query(DialerCluster).filter(DialerCluster.id.in_(cluster_scope)).all()
+            if cluster.client_id
+        })
+        cluster_client_ids = scoped_client_ids(db, user, cluster_client_ids)
+        if ids:
+            allowed = set(cluster_client_ids)
+            ids = [client_id for client_id in ids if client_id in allowed]
+        else:
+            ids = cluster_client_ids
+    return ids
+
+
+def _round_report_value(value):
+    return round(value, 2) if isinstance(value, (int, float)) else value
+
+
+def report_payload(rows, applied_filters: dict, message: str | None = None, summary: dict | None = None):
+    clean_rows = [{key: _round_report_value(value) for key, value in row.items()} for row in rows]
+    payload = {
+        "rows": clean_rows,
+        "summary": summary or {"total_entries": len(clean_rows)},
+        "applied_filters": applied_filters,
+        "message": message or ("No records found for selected filters." if not clean_rows else ""),
+    }
+    return payload
+
+
+def data_cost_rows(db: Session, user: User, client_ids=None, date_from=None, date_to=None, cluster_ids=None):
+    ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
+    if parse_ids(cluster_ids) and not ids:
+        return []
     query = db.query(DataCost)
     if ids:
         query = query.filter(DataCost.client_id.in_(ids))
@@ -7295,10 +7363,11 @@ def get_system_audit(db: Session = Depends(get_db), user: User = Depends(require
 
 @app.get("/api/reports/ledger")
 @app.get("/reports/ledger")
-def report_ledger(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+def report_ledger(client_ids: str | None = None, cluster_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
     if user.role == "customer":
         return client_invoice_ledger_report(db, user, date_from, date_to, type)
-    rows = scoped_ledger_rows(db, user, client_ids, date_from, date_to)
+    allowed_ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
+    rows = scoped_ledger_rows(db, user, ",".join(str(item) for item in allowed_ids) if allowed_ids else None, date_from, date_to)
     result = []
     by_client = {}
     for row in rows:
@@ -7314,7 +7383,125 @@ def report_ledger(client_ids: str | None = None, date_from: date | None = None, 
             if key != "client":
                 item[key] = round(item[key], 2)
         result.append(item)
-    return result
+    summary = {
+        "total_entries": len(result),
+        "total_usd": round(sum(item["debit_usd"] - item["credit_usd"] for item in result), 2),
+        "total_inr": round(sum(item["debit_inr"] - item["credit_inr"] for item in result), 2),
+    }
+    return report_payload(result, {"client_ids": parse_ids(client_ids), "cluster_ids": parse_ids(cluster_ids), "date_from": str(date_from) if date_from else "", "date_to": str(date_to) if date_to else "", "type": type or ""}, summary=summary)
+
+
+@app.get("/api/reports/charge-report")
+@app.get("/reports/charge-report")
+def report_charge_report(
+    client_ids: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    category: str | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view"))),
+):
+    selected_category = (category or "").strip()
+    logger.info(
+        "Charge report using db=%s table=%s category=%s client_ids=%s date_from=%s date_to=%s search=%s",
+        DATABASE_PATH,
+        ClientLedger.__tablename__,
+        selected_category or "All Charges",
+        client_ids,
+        date_from,
+        date_to,
+        search,
+    )
+    query, effective_ids = finance_ledger_report_query(
+        db,
+        user,
+        client_ids=client_ids,
+        date_from=date_from,
+        date_to=date_to,
+        search=search,
+    )
+    if selected_category and selected_category != "All Charges":
+        if selected_category == "Payment":
+            query = query.filter(or_(ClientLedger.category == "Payment", ClientLedger.entry_type == "Credit"))
+        else:
+            query = query.filter(ClientLedger.category == selected_category)
+    rows = query.order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all()
+    logger.info(
+        "Charge report columns=%s total_rows=%s sample=%s",
+        [column.name for column in ClientLedger.__table__.columns],
+        db.query(ClientLedger).count(),
+        [
+            {
+                "date": row.entry_date.isoformat(),
+                "client_id": row.client_id,
+                "client": row.client_name,
+                "category": row.category,
+                "type": row.entry_type,
+            }
+            for row in rows[:5]
+        ],
+    )
+    result_rows = [
+        {
+            "date": row.entry_date.isoformat(),
+            "client": row.client_name,
+            "type": row.entry_type,
+            "category": row.category,
+            "description": row.description,
+            "debit_usd": round(row_debit_usd(row), 2),
+            "credit_usd": round(row_credit_usd(row), 2),
+            "debit_inr": round(row_debit_inr(row), 2),
+            "credit_inr": round(row_credit_inr(row), 2),
+            "balance_usd": round(float(row.balance_usd or row.balance_after_entry or 0), 2),
+            "balance_inr": round(float(row.balance_inr or 0), 2),
+            "quantity": None,
+            "rate": None,
+        }
+        for row in rows
+    ]
+    return report_payload(
+        result_rows,
+        {
+            "source": "client_ledger",
+            "client_ids": effective_ids if effective_ids else parse_ids(client_ids),
+            "date_from": str(date_from) if date_from else "",
+            "date_to": str(date_to) if date_to else "",
+            "category": selected_category or "All Charges",
+            "search": search or "",
+        },
+        message="No ledger entries found for selected client/category/date range." if not result_rows else "",
+        summary=charge_report_summary(rows),
+    )
+
+
+@app.get("/api/debug/finance-ledger-sample")
+def debug_finance_ledger_sample(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    sample_rows = db.query(ClientLedger).order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).limit(5).all()
+    return {
+        "db_path": str(DATABASE_PATH),
+        "table_name": ClientLedger.__tablename__,
+        "columns_available": [column.name for column in ClientLedger.__table__.columns],
+        "total_rows": db.query(ClientLedger).count(),
+        "sample_rows": [
+            {
+                "id": row.id,
+                "entry_date": row.entry_date.isoformat(),
+                "client_id": row.client_id,
+                "client_name": row.client_name,
+                "category": row.category,
+                "entry_type": row.entry_type,
+                "description": row.description,
+                "debit_usd": row_debit_usd(row),
+                "credit_usd": row_credit_usd(row),
+                "debit_inr": row_debit_inr(row),
+                "credit_inr": row_credit_inr(row),
+            }
+            for row in sample_rows
+        ],
+        "distinct_categories": [item[0] for item in db.query(ClientLedger.category).distinct().order_by(ClientLedger.category.asc()).all()],
+        "distinct_client_ids": [item[0] for item in db.query(ClientLedger.client_id).distinct().order_by(ClientLedger.client_id.asc()).all()],
+    }
 
 
 @app.get("/api/reports/client-ledger")
@@ -7325,13 +7512,17 @@ def report_client_invoice_ledger(date_from: date | None = None, date_to: date | 
 
 @app.get("/api/reports/daily-billing")
 @app.get("/reports/daily-billing")
-def report_daily_billing(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, charge_type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+def report_daily_billing(client_ids: str | None = None, cluster_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, charge_type: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
     if user.role == "customer":
         safe_type = charge_type if charge_type in {"Invoice", "Payment", "Adjustment", "All"} else None
         return client_invoice_ledger_report(db, user, date_from, date_to, safe_type)
-    rows = scoped_ledger_rows(db, user, client_ids, date_from, date_to)
+    allowed_ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
+    rows = scoped_ledger_rows(db, user, ",".join(str(item) for item in allowed_ids) if allowed_ids else None, date_from, date_to)
     if charge_type:
-        rows = [row for row in rows if row.category == charge_type]
+        if charge_type == "Payment":
+            rows = [row for row in rows if row.category == "Payment" or row.entry_type == "Credit"]
+        else:
+            rows = [row for row in rows if row.category == charge_type]
     grouped = {}
     for row in rows:
         key = (row.entry_date.isoformat(), row.client_name)
@@ -7349,25 +7540,122 @@ def report_daily_billing(client_ids: str | None = None, date_from: date | None =
             item["Other Charges INR"] += row_debit_inr(row)
         item["outstanding_usd"] += debit_usd - credit_usd
         item["outstanding_inr"] += row_debit_inr(row) - row_credit_inr(row)
-    return [{key: (round(value, 2) if isinstance(value, (int, float)) else value) for key, value in item.items()} for item in grouped.values()]
+    result = [{key: (round(value, 2) if isinstance(value, (int, float)) else value) for key, value in item.items()} for item in grouped.values()]
+    summary = {
+        "total_entries": len(result),
+        "total_usd": round(sum(
+            sum(float(value or 0) for key, value in item.items() if key.endswith("USD"))
+            for item in result
+        ), 2),
+        "total_inr": round(sum(
+            sum(float(value or 0) for key, value in item.items() if key.endswith("INR"))
+            for item in result
+        ), 2),
+    }
+    return report_payload(result, {"client_ids": parse_ids(client_ids), "cluster_ids": parse_ids(cluster_ids), "date_from": str(date_from) if date_from else "", "date_to": str(date_to) if date_to else "", "charge_type": charge_type or ""}, summary=summary)
 
 
 @app.get("/api/reports/data-cost")
 @app.get("/reports/data-cost")
-def report_data_cost(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
-    return [
-        {
+def report_data_cost(
+    client_ids: str | None = None,
+    cluster_ids: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    charge_type: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view"))),
+):
+    category_aliases = {"Data Charges", "Data Cost", "Data"}
+    normalized_aliases = {item.lower() for item in category_aliases}
+    if charge_type and charge_type not in category_aliases:
+        return report_payload(
+            [],
+            {
+                "source": "client_ledger",
+                "client_ids": parse_ids(client_ids),
+                "cluster_ids": parse_ids(cluster_ids),
+                "date_from": str(date_from) if date_from else "",
+                "date_to": str(date_to) if date_to else "",
+                "charge_type": charge_type or "",
+                "categories_matched": sorted(category_aliases),
+            },
+            message="No Data Charges ledger entries found for selected filters.",
+        )
+
+    ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
+    if parse_ids(cluster_ids) and not ids:
+        return report_payload(
+            [],
+            {
+                "source": "client_ledger",
+                "client_ids": parse_ids(client_ids),
+                "cluster_ids": parse_ids(cluster_ids),
+                "date_from": str(date_from) if date_from else "",
+                "date_to": str(date_to) if date_to else "",
+                "charge_type": charge_type or "",
+                "categories_matched": sorted(category_aliases),
+            },
+            message="No Data Charges ledger entries found for selected filters.",
+        )
+
+    ledger_query_base, effective_ids = finance_ledger_report_query(
+        db,
+        user,
+        client_ids=client_ids,
+        cluster_ids=cluster_ids,
+        date_from=date_from,
+        date_to=date_to,
+        entry_type="Debit",
+    )
+    ledger_query_base = ledger_query_base.filter(func.lower(func.trim(ClientLedger.category)).in_(normalized_aliases))
+
+    records = []
+    for row in ledger_query_base.order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all():
+        amount_usd = round(float(row.debit_usd or row.amount_usd or row.debit_amount or 0), 2)
+        amount_inr = round(float(row.debit_inr or row.amount_inr or 0), 2)
+        records.append({
             "date": row.entry_date,
             "client": row.client_name,
-            "quantity": row.quantity,
-            "rate_usd": row.rate_usd or row.rate,
-            "total_data_cost_usd": round(cost_usd(row), 2),
-            "exchange_rate": row.exchange_rate or DEFAULT_USD_TO_INR,
-            "total_data_cost_inr": round(cost_inr(row), 2),
+            "category": row.category,
             "description": row.description,
-        }
-        for row in data_cost_rows(db, user, client_ids, date_from, date_to)
-    ]
+            "debit_usd": amount_usd,
+            "debit_inr": amount_inr,
+            "quantity": None,
+            "rate": None,
+            "rate_usd": None,
+            "total_data_cost": amount_usd,
+            "total_data_cost_usd": amount_usd,
+            "exchange_rate": row.exchange_rate or DEFAULT_USD_TO_INR,
+            "total_data_cost_inr": amount_inr,
+            "entry_source": "ledger",
+        })
+
+    result = sorted(records, key=lambda item: (str(item["date"]), str(item["client"] or "")), reverse=True)
+    total_quantity = round(sum(float(item.get("quantity") or 0) for item in result), 2)
+    total_usd = round(sum(float(item.get("total_data_cost_usd") or item.get("total_data_cost") or 0) for item in result), 2)
+    total_inr = round(sum(float(item.get("total_data_cost_inr") or 0) for item in result), 2)
+    summary = {
+        "total_entries": len(result),
+        "total_quantity": total_quantity,
+        "total_usd": total_usd,
+        "total_inr": total_inr,
+        "average_rate": round((sum(float(item.get("rate_usd") or 0) * float(item.get("quantity") or 0) for item in result) / total_quantity), 4) if total_quantity else 0,
+    }
+    return report_payload(
+        result,
+        {
+            "source": "client_ledger",
+            "client_ids": effective_ids if effective_ids else parse_ids(client_ids),
+            "cluster_ids": parse_ids(cluster_ids),
+            "date_from": str(date_from) if date_from else "",
+            "date_to": str(date_to) if date_to else "",
+            "charge_type": charge_type or "",
+            "categories_matched": sorted(category_aliases),
+        },
+        message="No Data Charges ledger entries found for selected filters." if not result else "",
+        summary=summary,
+    )
 
 
 @app.post("/api/reports/data-cost", response_model=DataCostOut)
@@ -7383,31 +7671,44 @@ def create_data_cost(payload: DataCostCreate, db: Session = Depends(get_db), use
 
 @app.get("/api/reports/outstanding")
 @app.get("/reports/outstanding")
-def report_outstanding(client_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
-    financials = client_financials(db, user, client_ids, date_from, date_to)
-    return [{"client": item["client"], "total_charges_usd": round(item["revenue"], 2), "total_charges_inr": round(item["revenue_inr"], 2), "total_payments_usd": round(item["credit"], 2), "total_payments_inr": round(item["credit_inr"], 2), "outstanding_usd": item["outstanding"], "outstanding_inr": item["outstanding_inr"]} for item in financials.values()]
+def report_outstanding(client_ids: str | None = None, cluster_ids: str | None = None, date_from: date | None = None, date_to: date | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+    allowed_ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
+    effective_client_ids = ",".join(str(item) for item in allowed_ids) if allowed_ids else client_ids
+    financials = client_financials(db, user, effective_client_ids, date_from, date_to)
+    result = [{"client": item["client"], "total_charges_usd": round(item["revenue"], 2), "total_charges_inr": round(item["revenue_inr"], 2), "total_payments_usd": round(item["credit"], 2), "total_payments_inr": round(item["credit_inr"], 2), "outstanding_usd": item["outstanding"], "outstanding_inr": item["outstanding_inr"]} for item in financials.values()]
+    summary = {
+        "total_entries": len(result),
+        "total_usd": round(sum(float(item["outstanding_usd"] or 0) for item in result), 2),
+        "total_inr": round(sum(float(item["outstanding_inr"] or 0) for item in result), 2),
+    }
+    return report_payload(result, {"client_ids": parse_ids(client_ids), "cluster_ids": parse_ids(cluster_ids), "date_from": str(date_from) if date_from else "", "date_to": str(date_to) if date_to else ""}, summary=summary)
 
 
 @app.get("/api/reports/cluster-usage")
 @app.get("/reports/cluster-usage")
-def report_cluster_usage(client_ids: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
-    ids = parse_ids(client_ids)
+def report_cluster_usage(client_ids: str | None = None, cluster_ids: str | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
+    ids = report_client_scope_with_clusters(db, user, client_ids, cluster_ids)
     if user.role == "customer":
         ids = [user.client_id]
     clusters = db.query(DialerCluster).all()
     if ids:
         clusters = [cluster for cluster in clusters if cluster.client_id in ids]
+    if parse_ids(cluster_ids):
+        allowed_clusters = set(parse_ids(cluster_ids))
+        clusters = [cluster for cluster in clusters if cluster.id in allowed_clusters]
     gateways = db.query(RoutingGateway).all()
     for gateway in gateways:
         sync_gateway_live_fields(gateway)
-    return [{"cluster": cluster.cluster_name, "client": cluster.client_name, "assigned_rdp": cluster.live_rdp_name, "rdp_ip": cluster.live_rdp_ip, "routing_gateway": next((gw.live_gateway_name for gw in gateways if cluster.live_rdp_name in {gw.live_media1_name, gw.live_media2_name}), None), "ports": next((gw.ports for gw in gateways if cluster.live_rdp_name in {gw.live_media1_name, gw.live_media2_name}), None), "status": cluster.status} for cluster in clusters]
+    result = [{"cluster": cluster.cluster_name, "client": cluster.client_name, "assigned_rdp": cluster.live_rdp_name, "rdp_ip": cluster.live_rdp_ip, "routing_gateway": next((gw.live_gateway_name for gw in gateways if cluster.live_rdp_name in {gw.live_media1_name, gw.live_media2_name}), None), "ports": next((gw.ports for gw in gateways if cluster.live_rdp_name in {gw.live_media1_name, gw.live_media2_name}), None), "status": cluster.status} for cluster in clusters]
+    return report_payload(result, {"client_ids": parse_ids(client_ids), "cluster_ids": parse_ids(cluster_ids)}, summary={"total_entries": len(result)})
 
 
 @app.get("/api/reports/rdp-utilization")
 @app.get("/reports/rdp-utilization")
 def report_rdp_utilization(db: Session = Depends(get_db), user: User = Depends(require_any_page(("reports", "can_view"), ("my_reports", "can_view")))):
     clusters = db.query(DialerCluster).all()
-    return [{"rdp": rdp.portal_type, "ip": rdp.server_ip, "assigned_cluster": (cluster.cluster_name if (cluster := next((c for c in clusters if c.live_rdp_name == rdp.portal_type and c.status != "Inactive"), None)) else None), "client": cluster.client_name if cluster else None, "status": rdp.status, "usage": "Used" if cluster else "Free"} for rdp in get_rdp_portals(db)]
+    result = [{"rdp": rdp.portal_type, "ip": rdp.server_ip, "assigned_cluster": (cluster.cluster_name if (cluster := next((c for c in clusters if c.live_rdp_name == rdp.portal_type and c.status != "Inactive"), None)) else None), "client": cluster.client_name if cluster else None, "status": rdp.status, "usage": "Used" if cluster else "Free"} for rdp in get_rdp_portals(db)]
+    return report_payload(result, {}, summary={"total_entries": len(result), "used": len([item for item in result if item["usage"] == "Used"]), "free": len([item for item in result if item["usage"] == "Free"])})
 
 
 @app.get("/api/reports/routing-capacity")
@@ -7416,7 +7717,8 @@ def report_routing_capacity(db: Session = Depends(get_db), user: User = Depends(
     rows = db.query(RoutingGateway).all()
     for row in rows:
         sync_gateway_live_fields(row)
-    return [{"gateway": row.live_gateway_name, "gateway_ip": row.live_gateway_ip, "media1": row.live_media1_name, "media2": row.live_media2_name, "carrier_ip": row.carrier_ip, "ports": row.ports, "vendor": row.vendor_name, "status": row.status} for row in rows]
+    result = [{"gateway": row.live_gateway_name, "gateway_ip": row.live_gateway_ip, "media1": row.live_media1_name, "media2": row.live_media2_name, "carrier_ip": row.carrier_ip, "ports": row.ports, "vendor": row.vendor_name, "status": row.status} for row in rows]
+    return report_payload(result, {}, summary={"total_entries": len(result)})
 
 
 @app.get("/api/reports/profit-margin")
