@@ -2160,6 +2160,18 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.settledAmount {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settledAmount b {
+  color: #bbf7d0;
+  font-size: 13px;
+}
+
 .inrOutcome small {
   color: rgba(203, 213, 225, 0.72);
   font-size: 11px;

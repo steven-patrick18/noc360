@@ -5427,6 +5427,58 @@ def weekly_invoice_final_outstanding(invoice: WeeklyInvoice):
     return float(invoice.final_payable or 0)
 
 
+def payment_inr_amount(row: ClientLedger):
+    value = row_credit_inr(row)
+    if value:
+        return abs(float(value))
+    if row.amount_inr:
+        return abs(float(row.amount_inr or 0))
+    return abs(float(row_debit_inr(row) or 0))
+
+
+def payments_after_invoice(db: Session, invoice: WeeklyInvoice | None):
+    if not invoice or not invoice.created_at:
+        return 0.0
+    rows = (
+        db.query(ClientLedger)
+        .filter(
+            ClientLedger.client_id == invoice.client_id,
+            ClientLedger.created_at > invoice.created_at,
+            or_(ClientLedger.category == "Payment", ClientLedger.entry_type == "Credit"),
+        )
+        .all()
+    )
+    return round(sum(payment_inr_amount(row) for row in rows), 2)
+
+
+def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):
+    if not invoice:
+        return {
+            "latest_invoice_week": None,
+            "invoice_id": None,
+            "latest_invoice": None,
+            "invoice_amount": 0.0,
+            "payments_after_invoice": 0.0,
+            "final_outstanding": 0.0,
+            "raw_final_outstanding": 0.0,
+            "status": "No Invoice",
+        }
+    invoice_amount = round(weekly_invoice_final_outstanding(invoice), 2)
+    later_payments = payments_after_invoice(db, invoice)
+    raw_final = round(invoice_amount - later_payments, 2)
+    settled = raw_final <= 0
+    return {
+        "latest_invoice_week": f"{invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
+        "invoice_id": invoice.id,
+        "latest_invoice": weekly_invoice_response(invoice, include_internal=False),
+        "invoice_amount": invoice_amount,
+        "payments_after_invoice": later_payments,
+        "final_outstanding": 0.0 if settled else raw_final,
+        "raw_final_outstanding": raw_final,
+        "status": "Settled" if settled else "Outstanding",
+    }
+
+
 def invoice_based_client_outstanding(db: Session, user: User, client_id: int | None = None, tolerance_inr: float = DEFAULT_FX_TOLERANCE_INR):
     client_scope = scoped_client_ids(db, user)
     client_query = db.query(Client).order_by(Client.name.asc())
@@ -5448,30 +5500,27 @@ def invoice_based_client_outstanding(db: Session, user: User, client_id: int | N
             .order_by(WeeklyInvoice.week_end_date.desc(), WeeklyInvoice.id.desc())
             .first()
         )
-        final_outstanding = round(weekly_invoice_final_outstanding(latest_invoice), 2) if latest_invoice else 0.0
-        settled = not latest_invoice or final_outstanding <= tolerance
-        display_outstanding = 0.0 if settled else final_outstanding
+        snapshot = invoice_outstanding_snapshot(db, latest_invoice)
+        display_outstanding = snapshot["final_outstanding"]
         if display_outstanding > 0:
             total_outstanding_inr += display_outstanding
-        if latest_invoice and settled:
+        if latest_invoice and snapshot["status"] == "Settled":
             settled_count += 1
-        latest_invoice_week = None
-        if latest_invoice:
-            latest_invoice_week = f"{latest_invoice.week_start_date.isoformat()} to {latest_invoice.week_end_date.isoformat()}"
-        status = "No Invoice" if not latest_invoice else ("Settled" if settled else "Outstanding")
         client_outstanding.append({
             "client": client.name,
             "client_id": client.id,
-            "latest_invoice_week": latest_invoice_week,
-            "invoice_id": latest_invoice.id if latest_invoice else None,
-            "latest_invoice": weekly_invoice_response(latest_invoice, include_internal=False) if latest_invoice else None,
+            "latest_invoice_week": snapshot["latest_invoice_week"],
+            "invoice_id": snapshot["invoice_id"],
+            "latest_invoice": snapshot["latest_invoice"],
+            "invoice_amount": snapshot["invoice_amount"],
+            "payments_after_invoice": snapshot["payments_after_invoice"],
             "outstanding": 0.0,
             "outstanding_inr": display_outstanding,
             "usd_difference": 0.0,
             "raw_outstanding": 0.0,
-            "raw_outstanding_inr": final_outstanding,
+            "raw_outstanding_inr": snapshot["raw_final_outstanding"],
             "fx_adjusted": False,
-            "status": status,
+            "status": snapshot["status"],
             "source": "weekly_invoice",
         })
     return {
@@ -5520,7 +5569,10 @@ def client_invoice_ledger_report(db: Session, user: User, date_from: date | None
             "invoice_id": invoice.id,
         })
 
-    ledger_query_rows = db.query(ClientLedger).filter(ClientLedger.category.in_(("Payment", "Adjustment", "FX Adjustment")))
+    ledger_query_rows = db.query(ClientLedger).filter(or_(
+        ClientLedger.category.in_(("Payment", "Adjustment", "FX Adjustment")),
+        ClientLedger.entry_type == "Credit",
+    ))
     if client_scope:
         ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id.in_(client_scope))
     if client_id:
@@ -5530,9 +5582,9 @@ def client_invoice_ledger_report(db: Session, user: User, date_from: date | None
     for row in ledger_query_rows.order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc()).all():
         debit = 0.0
         credit = 0.0
-        event_type = "Payment" if row.category == "Payment" else "Adjustment"
+        event_type = "Payment" if row.category == "Payment" or row.entry_type == "Credit" else "Adjustment"
         if event_type == "Payment":
-            credit = row_credit_inr(row) or row_debit_inr(row) or abs(float(row.amount_inr or 0))
+            credit = payment_inr_amount(row)
         else:
             net = row_debit_inr(row) - row_credit_inr(row)
             if net == 0 and row.amount_inr:
@@ -7092,10 +7144,12 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
     invoice_ledger = list(reversed(client_invoice_ledger_report(db, user, client_id=record_id)))
     data_costs = db.query(DataCost).filter(DataCost.client_id == record_id).order_by(DataCost.entry_date.desc(), DataCost.id.desc()).all()
     weekly_invoices = db.query(WeeklyInvoice).filter(WeeklyInvoice.client_id == record_id).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
+    latest_invoice = weekly_invoices[0] if weekly_invoices else None
+    invoice_snapshot = invoice_outstanding_snapshot(db, latest_invoice)
     total_charges = 0.0
     total_payments = 0.0
-    total_charges_inr = sum(row["debit"] or 0 for row in invoice_ledger)
-    total_payments_inr = sum(row["credit"] or 0 for row in invoice_ledger)
+    total_charges_inr = invoice_snapshot["invoice_amount"]
+    total_payments_inr = invoice_snapshot["payments_after_invoice"]
     return {
         "client": {"id": client.id, "name": client.name, "status": client.status, "notes": client.notes},
         "assigned_clusters": [cluster_assignment_out(cluster) for cluster in clusters],
@@ -7106,7 +7160,8 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         "total_outstanding": round(total_charges - total_payments, 2),
         "total_charges_inr": round(total_charges_inr, 2),
         "total_payments_inr": round(total_payments_inr, 2),
-        "total_outstanding_inr": round(total_charges_inr - total_payments_inr, 2),
+        "total_outstanding_inr": invoice_snapshot["final_outstanding"],
+        "invoice_outstanding": invoice_snapshot,
         "ledger": invoice_ledger,
         "raw_ledger_count": len(raw_ledger),
         "data_costs": data_costs,

@@ -5462,6 +5462,11 @@ function ledgerBalanceText(value) {
   return amount < 0 ? `Advance ${inr(Math.abs(amount))}` : inr(amount);
 }
 
+function invoiceLedgerBalanceText(value) {
+  const amount = Number(value || 0);
+  return amount <= 0 ? `Settled ${inr(0)}` : inr(amount);
+}
+
 function clientLedgerCsvRows(rows) {
   return rows.map((row) => ({
     Date: row.date,
@@ -5469,7 +5474,7 @@ function clientLedgerCsvRows(rows) {
     Description: row.description,
     'Debit (DR)': row.debit || '',
     'Credit (CR)': row.credit || '',
-    Balance: row.balance,
+    Balance: Math.max(0, Number(row.balance || 0)),
     'Download PDF': row.invoice_id ? `weekly-invoice-${row.invoice_id}.pdf` : '',
   }));
 }
@@ -5526,7 +5531,7 @@ function ClientInvoiceLedgerView({ user, pageKey = 'my_reports', title = 'Client
                 <td>{row.description}</td>
                 <td>{row.debit ? inr(row.debit) : '-'}</td>
                 <td className="creditText">{row.credit ? inr(row.credit) : '-'}</td>
-                <td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{ledgerBalanceText(row.balance)}</td>
+                <td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td>
                 <td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td>
               </tr>
             ))}
@@ -6051,12 +6056,11 @@ function inrPrimary(inrValue, usdDifference = 0) {
 
 function moneyEngineOutstandingState(row = {}, toleranceInr = 100) {
   const inrBalance = Number(row.raw_outstanding_inr ?? row.outstanding_inr ?? 0);
-  const tolerance = Math.abs(Number(toleranceInr || 100));
   const status = String(row.status || '').toLowerCase();
   if (status === 'no invoice') {
     return { key: 'noInvoice', label: 'No Invoice', amount: 0 };
   }
-  if (status === 'settled' || inrBalance <= tolerance) {
+  if (status === 'settled' || inrBalance <= 0) {
     return { key: 'settled', label: 'Settled', amount: 0 };
   }
   return { key: 'outstanding', label: 'Final Outstanding', amount: inrBalance };
@@ -6101,23 +6105,21 @@ function BillingCards({ summary }) {
   const totals = clientRows.reduce((acc, row) => {
     const state = moneyEngineOutstandingState(row, fxToleranceInr);
     if (state.key === 'outstanding') acc.outstanding += state.amount;
-    if (state.key === 'advance') acc.advance += state.amount;
     if (state.key === 'settled') acc.settled += 1;
     return acc;
-  }, { outstanding: 0, advance: 0, settled: 0 });
+  }, { outstanding: 0, settled: 0 });
   const cards = [
     ['Today Charges', summary.today_total_charges, summary.today_total_charges_inr],
     ['Today Payments', summary.today_payments, summary.today_payments_inr],
     ['Monthly Charges', summary.monthly_charges, summary.monthly_charges_inr],
     ['Monthly Payments', summary.monthly_payments, summary.monthly_payments_inr],
     ['Total Outstanding INR', totals.outstanding, null, 'outstandingSummary'],
-    ['Total Advance INR', totals.advance, null, 'advanceSummary'],
     ['Settled Clients Count', totals.settled, null, 'settledSummary'],
   ];
   return (
     <div className="cards billingCards">
       {cards.map(([label, value, inrValue, tone]) => {
-        const isSummary = ['outstandingSummary', 'advanceSummary', 'settledSummary'].includes(tone);
+        const isSummary = ['outstandingSummary', 'settledSummary'].includes(tone);
         const metricClass = `${tone || ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`;
         return (
           <div className={`metric ${metricClass}`} key={label}>
@@ -6136,7 +6138,7 @@ function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
   return (
     <div className="panel">
       <h2>Client-wise Outstanding (Invoice Based)</h2>
-      <p className="muted">Outstanding is calculated from saved weekly invoices, not raw daily charge entries.</p>
+      <p className="muted">Outstanding is based on latest saved weekly invoice and payments received after invoice generation.</p>
       <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>Latest Invoice Week</th><th>Final Outstanding INR</th><th>Status</th><th>PDF / View</th></tr></thead><tbody>{rows.map((row) => {
         const state = moneyEngineOutstandingState(row, toleranceInr);
         return (
@@ -6145,9 +6147,9 @@ function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
             <td>{row.latest_invoice_week || <span className="muted">No saved invoice</span>}</td>
             <td>
               {state.key === 'settled' ? (
-                <span className="ledgerStatusBadge settled">SETTLED</span>
+                <span className="settledAmount"><span className="ledgerStatusBadge settled">SETTLED</span><b>{inr(0)}</b></span>
               ) : state.key === 'noInvoice' ? (
-                <span className="muted">No Invoice</span>
+                <span className="settledAmount"><span className="muted">No Invoice</span><b>{inr(0)}</b></span>
               ) : (
                 <span className={`inrOutcome ${state.key}`}>
                   <small>{state.label}</small>
@@ -7282,17 +7284,18 @@ function UserAccessPage({ users, clients, reload, user }) {
 
 function ClientDetailModal({ detail, onClose, canExport = true }) {
   const [viewInvoice, setViewInvoice] = useState(null);
+  const invoiceSummary = detail.invoice_outstanding || {};
   return (
     <div className="modalBackdrop modal-overlay">
       <div className="modal modal-box clientDetailModal">
         <div className="clientHero"><div><span className="eyebrow">Client Command Profile</span><h2>{detail.client.name}</h2><StatusPill value={detail.client.status} /></div><button className="iconButton" onClick={onClose}><X size={18} /></button></div>
         <h2>Billing Summary</h2>
         <div className="cards billingCards">
-          <div className="metric"><span>Status</span><strong>{detail.client.status}</strong></div>
-          <div className="metric"><span>Assigned Clusters</span><strong>{detail.assigned_clusters.length}</strong></div>
-          <div className="metric"><span>Total Charges</span><strong>{dualMoney(detail.total_charges, detail.total_charges_inr)}</strong></div>
-          <div className="metric"><span>Total Payments</span><strong className="creditText">{dualMoney(detail.total_payments, detail.total_payments_inr)}</strong></div>
-          <div className={`metric ${detail.total_outstanding > 0 ? 'metricAlert' : ''}`}><span>Total Outstanding</span><strong>{dualMoney(detail.total_outstanding, detail.total_outstanding_inr)}</strong></div>
+          <div className="metric"><span>Latest Invoice Week</span><strong>{invoiceSummary.latest_invoice_week || 'No Invoice'}</strong></div>
+          <div className="metric"><span>Invoice Amount</span><strong>{inr(invoiceSummary.invoice_amount || 0)}</strong></div>
+          <div className="metric payment"><span>Payments Received After Invoice</span><strong>{inr(invoiceSummary.payments_after_invoice || 0)}</strong></div>
+          <div className={`metric ${Number(invoiceSummary.final_outstanding || 0) > 0 ? 'metricAlert' : 'settledSummary'}`}><span>Final Outstanding</span><strong>{inr(invoiceSummary.final_outstanding || 0)}</strong></div>
+          <div className="metric"><span>Status</span><strong>{invoiceSummary.status || 'No Invoice'}</strong></div>
         </div>
         <div className="panel infraPanel"><h2>Assigned Infrastructure</h2><p><strong>Assigned RDPs:</strong> {detail.assigned_rdps.join(', ') || '-'}</p><p><strong>Routing Gateways:</strong> {detail.routing_gateways.join(', ') || '-'}</p></div>
         <h2>Weekly Invoices</h2>
@@ -7304,7 +7307,7 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
         {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
         <h2>Invoice Ledger</h2>
         <div className="tableWrap"><table><thead><tr><th>Date</th><th>Invoice No / Reference</th><th>Description</th><th>Debit (DR)</th><th>Credit (CR)</th><th>Running Balance</th><th>PDF</th></tr></thead><tbody>{(detail.ledger || []).map((row) => (
-          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{ledgerBalanceText(row.balance)}</td><td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td></tr>
+          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td><td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td></tr>
         ))}
           {(detail.ledger || []).length === 0 && <tr><td colSpan="7" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
         </tbody></table></div>
