@@ -6751,6 +6751,8 @@ function WeeklyInvoiceViewModal({ invoice, canExport, onDownload, onClose }) {
   const ledgerBalance = invoiceDisplayLedgerBalance(invoice);
   const finalOutstanding = invoiceLiveFinalOutstanding(invoice);
   const paymentsAfterInvoice = Number(invoice.payments_after_invoice || 0);
+  const originalInvoiceOutstanding = Number(invoice.saved_final_outstanding ?? invoiceFinalOutstanding(invoice));
+  const liveStatus = invoice.live_status || (finalOutstanding <= 0 ? 'Settled' : 'Outstanding');
   return (
     <div className="modalBackdrop modal-overlay">
       <div className="modal modal-box weeklyInvoiceViewModal">
@@ -6791,10 +6793,13 @@ function WeeklyInvoiceViewModal({ invoice, canExport, onDownload, onClose }) {
             <div className="weeklyInvoiceViewGrid">
               <div><span>Previous Outstanding</span><strong>{inr(invoicePreviousOutstanding(invoice))}</strong></div>
               <div><span>Current Week Payable</span><strong>{inr(currentWeekPayable)}</strong></div>
-              {paymentsAfterInvoice > 0 && <div><span>Payments After Invoice</span><strong className="creditText">- {inr(paymentsAfterInvoice)}</strong></div>}
               <div><span>Ledger Balance</span><strong>{inr(ledgerBalance)}</strong></div>
-              <div className="weeklyInvoiceTotal"><span>{finalPayableLabel(finalOutstanding)}</span><strong className={finalOutstanding > 0 ? 'outstandingText' : 'okText'}>{balanceDisplay(finalOutstanding)}</strong></div>
+              <div><span>Original Invoice Outstanding</span><strong>{inr(originalInvoiceOutstanding)}</strong></div>
+              <div><span>Payments Received After Invoice</span><strong className="creditText">- {inr(paymentsAfterInvoice)}</strong></div>
+              <div><span>Status</span><strong className={liveStatus === 'Settled' ? 'okText' : 'outstandingText'}>{liveStatus}</strong></div>
+              <div className="weeklyInvoiceTotal"><span>Final Outstanding</span><strong className={finalOutstanding > 0 ? 'outstandingText' : 'okText'}>{inr(finalOutstanding)}</strong></div>
             </div>
+            {invoice.live_fx_adjusted && <p className="muted">FX/Rounding adjusted.</p>}
           </section>
         </div>
 

@@ -158,6 +158,7 @@ TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
 DEFAULT_USD_TO_INR = 83.0
 DEFAULT_FX_TOLERANCE_INR = 100.0
+INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR = 1.0
 TERMINAL_RISK_LEVELS = {"Safe", "Medium", "Dangerous"}
 TERMINAL_SECRET_WORDS = {"password", "passwd", "token", "secret", "key"}
 TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "iptables -f", "iptables flush", "ufw reset", "systemctl stop")
@@ -5368,7 +5369,9 @@ def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = Tru
     current_week_payable = weekly_invoice_current_week_payable(invoice)
     final_outstanding = weekly_invoice_final_outstanding(invoice)
     payments_after_generation = payments_after_invoice(db, invoice) if db else 0.0
-    live_final_outstanding = round(max(0.0, final_outstanding - payments_after_generation), 2)
+    raw_live_final_outstanding = round(final_outstanding - payments_after_generation, 2)
+    live_settled = raw_live_final_outstanding <= 0 or abs(raw_live_final_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR
+    live_final_outstanding = 0.0 if live_settled else raw_live_final_outstanding
     data = {
         "id": invoice.id,
         "client_id": invoice.client_id,
@@ -5390,8 +5393,10 @@ def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = Tru
         "final_outstanding": final_outstanding,
         "saved_final_outstanding": final_outstanding,
         "payments_after_invoice": payments_after_generation,
+        "raw_live_final_outstanding": raw_live_final_outstanding,
         "live_final_outstanding": live_final_outstanding,
-        "live_status": "Settled" if live_final_outstanding <= 0 else "Outstanding",
+        "live_status": "Settled" if live_settled else "Outstanding",
+        "live_fx_adjusted": bool(live_settled and raw_live_final_outstanding != 0 and abs(raw_live_final_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR),
         "advance_remaining": round(max(0, -final_outstanding), 2),
         "final_payable": final_outstanding,
         "notes": invoice.notes,
@@ -7309,8 +7314,12 @@ def download_weekly_invoice_pdf(invoice_id: int, db: Session = Depends(get_db), 
     adjustment_amount = float(invoice.adjustment_amount or 0)
     current_week_payable = round(float(invoice.actual_usage_billing or 0) + float(invoice.data_charges or 0) + float(invoice.other_charges or 0), 2)
     ledger_balance = round(previous_outstanding + current_week_payable, 2)
-    final_outstanding = weekly_invoice_final_outstanding(invoice)
-    final_label = "Advance Balance" if final_outstanding < 0 else "Final Outstanding"
+    original_final_outstanding = weekly_invoice_final_outstanding(invoice)
+    payments_after_generation = payments_after_invoice(db, invoice)
+    raw_display_outstanding = round(original_final_outstanding - payments_after_generation, 2)
+    display_settled = raw_display_outstanding <= 0 or abs(raw_display_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR
+    display_final_outstanding = 0.0 if display_settled else raw_display_outstanding
+    display_status = "Settled" if display_settled else "Outstanding"
     lines = [
         "NOC360 Weekly Invoice",
         "",
@@ -7333,8 +7342,13 @@ def download_weekly_invoice_pdf(invoice_id: int, db: Session = Depends(get_db), 
         f"Previous Outstanding: INR {previous_outstanding:,.2f}",
         f"Current Week Payable: INR {current_week_payable:,.2f}",
         f"Ledger Balance: INR {ledger_balance:,.2f}",
-        f"{final_label}: INR {abs(final_outstanding):,.2f}",
+        f"Original Invoice Outstanding: INR {original_final_outstanding:,.2f}",
+        f"Payments Received After Invoice: INR {payments_after_generation:,.2f}",
+        f"Final Outstanding: INR {display_final_outstanding:,.2f}",
+        f"Status: {display_status}",
     ])
+    if display_settled and raw_display_outstanding != 0 and abs(raw_display_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR:
+        lines.append("Note: FX/Rounding adjusted.")
     if invoice.notes:
         lines.extend(["", "Notes:", invoice.notes[:500]])
     pdf = build_simple_invoice_pdf(lines)
