@@ -6049,6 +6049,18 @@ function inrPrimary(inrValue, usdDifference = 0) {
   return <span className="dualMoney"><b>{inr(inrValue)}</b><small>USD Difference: {usd(usdDifference)}</small></span>;
 }
 
+function moneyEngineOutstandingState(row = {}) {
+  const inrBalance = Number(row.outstanding_inr || 0);
+  const status = String(row.status || '').toLowerCase();
+  if (status === 'settled' || Math.abs(inrBalance) < 0.005) {
+    return { key: 'settled', label: 'Settled', amount: 0 };
+  }
+  if (status === 'advance' || inrBalance < 0) {
+    return { key: 'advance', label: 'Advance Balance', amount: Math.abs(inrBalance) };
+  }
+  return { key: 'outstanding', label: 'Final Outstanding', amount: inrBalance };
+}
+
 function exchangeText(rate) {
   return `1 USD = ${inr(rate)}`;
 }
@@ -6083,18 +6095,35 @@ function CustomerDashboard({ billing, user }) {
 }
 
 function BillingCards({ summary }) {
+  const clientRows = Array.isArray(summary.client_outstanding) ? summary.client_outstanding : [];
+  const totals = clientRows.reduce((acc, row) => {
+    const state = moneyEngineOutstandingState(row);
+    if (state.key === 'outstanding') acc.outstanding += state.amount;
+    if (state.key === 'advance') acc.advance += state.amount;
+    if (state.key === 'settled') acc.settled += 1;
+    return acc;
+  }, { outstanding: 0, advance: 0, settled: 0 });
   const cards = [
     ['Today Charges', summary.today_total_charges, summary.today_total_charges_inr],
     ['Today Payments', summary.today_payments, summary.today_payments_inr],
     ['Monthly Charges', summary.monthly_charges, summary.monthly_charges_inr],
     ['Monthly Payments', summary.monthly_payments, summary.monthly_payments_inr],
-    ['Final Outstanding INR', summary.total_outstanding_inr, summary.usd_difference, true],
+    ['Total Outstanding INR', totals.outstanding, null, 'outstandingSummary'],
+    ['Total Advance INR', totals.advance, null, 'advanceSummary'],
+    ['Settled Clients Count', totals.settled, null, 'settledSummary'],
   ];
   return (
     <div className="cards billingCards">
-      {cards.map(([label, value, inrValue, primaryInr]) => (
-        <div className={`metric ${label.includes('Outstanding') && Number(value) > 0 ? 'metricAlert' : ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`} key={label}><span>{label}</span><strong>{primaryInr ? inrPrimary(value, inrValue) : dualMoney(value, inrValue)}</strong></div>
-      ))}
+      {cards.map(([label, value, inrValue, tone]) => {
+        const isSummary = ['outstandingSummary', 'advanceSummary', 'settledSummary'].includes(tone);
+        const metricClass = `${tone || ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`;
+        return (
+          <div className={`metric ${metricClass}`} key={label}>
+            <span>{label}</span>
+            <strong>{isSummary ? (tone === 'settledSummary' ? Number(value || 0).toLocaleString('en-IN') : inr(value)) : dualMoney(value, inrValue)}</strong>
+          </div>
+        );
+      })}
       {summary.fx_adjusted && <div className="metric payment"><span>Status</span><strong>Settled<small>FX difference adjusted</small></strong></div>}
     </div>
   );
@@ -6104,9 +6133,31 @@ function ClientOutstandingTable({ rows }) {
   return (
     <div className="panel">
       <h2>Client-wise Outstanding</h2>
-      <table><thead><tr><th>Client</th><th>Final Outstanding INR</th><th>USD Difference</th><th>Status</th></tr></thead><tbody>{rows.map((row) => (
-        <tr key={row.client}><td>{row.client}</td><td className={row.outstanding_inr > 0 ? 'outstandingText' : 'okText'}>{inr(row.outstanding_inr)}</td><td>{usd(row.usd_difference ?? row.outstanding)}</td><td><StatusPill value={row.status || (Math.abs(Number(row.outstanding_inr || 0)) <= 0 ? 'Settled' : 'Outstanding')} />{row.fx_adjusted && <div className="muted">FX difference adjusted</div>}</td></tr>
-      ))}</tbody></table>
+      <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>INR Ledger Position</th><th>USD Difference</th><th>Status</th></tr></thead><tbody>{rows.map((row) => {
+        const state = moneyEngineOutstandingState(row);
+        const usdDifference = Number(row.usd_difference ?? row.outstanding ?? 0);
+        const tooltip = row.fx_adjusted ? 'USD difference adjusted using FX tolerance.' : 'USD difference is reference only.';
+        return (
+          <tr key={row.client} className={`clientOutstandingRow ${state.key}`}>
+            <td>{row.client}</td>
+            <td>
+              {state.key === 'settled' ? (
+                <span className="ledgerStatusBadge settled">SETTLED</span>
+              ) : (
+                <span className={`inrOutcome ${state.key}`}>
+                  <small>{state.label}</small>
+                  <b>{inr(state.amount)}</b>
+                </span>
+              )}
+            </td>
+            <td><span className={`usdReference ${row.fx_adjusted ? 'fxAdjusted' : ''}`} title={tooltip}>{usd(usdDifference)}</span></td>
+            <td>
+              <span className={`ledgerStatusBadge ${state.key}`}>{state.label.toUpperCase()}</span>
+              {row.fx_adjusted && <div className="fxAdjustmentNote" title="USD difference adjusted using FX tolerance.">FX difference adjusted</div>}
+            </td>
+          </tr>
+        );
+      })}</tbody></table>
     </div>
   );
 }
