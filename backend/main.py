@@ -2320,6 +2320,88 @@ def update_center_process_fallback(error: Exception | str):
     }
 
 
+def update_center_latest_mtime(path: Path):
+    if not path.exists():
+        return None
+    latest = path.stat().st_mtime
+    if path.is_dir():
+        for item in path.rglob("*"):
+            try:
+                latest = max(latest, item.stat().st_mtime)
+            except OSError:
+                continue
+    return datetime.fromtimestamp(latest).isoformat()
+
+
+def update_center_file_contains(path: Path, needle: str):
+    try:
+        if not path.exists() or path.stat().st_size > 5 * 1024 * 1024:
+            return False
+        return needle in path.read_text("utf-8", errors="ignore")
+    except Exception:
+        return False
+
+
+def collect_update_center_troubleshoot():
+    source_main = UPDATE_CENTER_FRONTEND_PATH / "src" / "main.jsx"
+    dist_path = UPDATE_CENTER_FRONTEND_PATH / "dist"
+    dist_assets_path = dist_path / "assets"
+    dist_assets = []
+    if dist_assets_path.exists():
+        for item in sorted(dist_assets_path.iterdir(), key=lambda entry: entry.stat().st_mtime, reverse=True):
+            if item.is_file() and item.suffix.lower() in {".js", ".css"}:
+                dist_assets.append({
+                    "name": item.name,
+                    "size_label": format_update_center_bytes(item.stat().st_size),
+                    "modified_at": datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                })
+    frontend_source_marker = update_center_file_contains(source_main, "Final Outstanding INR")
+    frontend_dist_marker = any(update_center_file_contains(item, "Final Outstanding INR") for item in dist_assets_path.glob("*.js")) if dist_assets_path.exists() else False
+    update_center_marker = update_center_file_contains(Path(__file__), "update_center_status_fallback")
+    git_head = update_center_value(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, timeout=15, fallback="Git not initialized")
+    origin_head = update_center_value(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=15, fallback="Remote not fetched")
+    dirty = update_center_value(["git", "status", "--short"], cwd=PROJECT_ROOT, timeout=15, fallback="")
+    process_info = collect_update_center_process()
+    nginx_status = "Not available locally"
+    if os.name != "nt":
+        nginx = run_update_center_optional(["systemctl", "is-active", "nginx"], cwd=PROJECT_ROOT, timeout=15, unavailable="nginx service not installed")
+        nginx_status = nginx["output"] if nginx["ok"] else "nginx service not installed"
+    checks = [
+        {"label": "Backend has latest Update Center fallback code", "ok": update_center_marker, "detail": "Found update_center_status_fallback" if update_center_marker else "Backend file does not contain latest fallback marker"},
+        {"label": "Frontend source has Money Engine/Update UI changes", "ok": frontend_source_marker, "detail": str(source_main)},
+        {"label": "Frontend dist contains rebuilt changes", "ok": frontend_dist_marker, "detail": "dist assets include latest UI marker" if frontend_dist_marker else "Run npm run build and reload nginx/browser cache"},
+        {"label": "Git working tree clean", "ok": dirty == "", "detail": "Clean" if dirty == "" else dirty},
+        {"label": "Backend service reachable", "ok": process_info.get("backend_status") not in {"Service not installed", "Not available locally", ""}, "detail": process_info.get("backend_status") or "Unknown"},
+        {"label": "Nginx status", "ok": nginx_status in {"active", "Running locally"}, "detail": nginx_status},
+    ]
+    recommendations = []
+    if git_head != origin_head and origin_head not in {"Remote not fetched", "Git not initialized"}:
+        recommendations.append("VPS git checkout is not on origin/main. Run git fetch origin && git reset --hard origin/main.")
+    if not frontend_dist_marker:
+        recommendations.append("Frontend build is stale. Run cd /opt/noc360/frontend && npm install && npm run build.")
+    if process_info.get("backend_status") in {"Service not installed", "Not available locally", ""}:
+        recommendations.append("Backend service status is not available. Check sudo systemctl status noc360.")
+    if nginx_status not in {"active", "Running locally"} and os.name != "nt":
+        recommendations.append("Nginx is not active or not detected. Check sudo systemctl status nginx.")
+    if not recommendations:
+        recommendations.append("Core checks look good. If browser still shows old UI, hard refresh or clear cache.")
+    return {
+        "checked_at": datetime.utcnow().isoformat(),
+        "project_root": str(UPDATE_CENTER_PROJECT_PATH),
+        "backend_file": str(Path(__file__)),
+        "git_head": git_head,
+        "origin_head": origin_head,
+        "dirty_status": dirty,
+        "frontend_source_modified_at": update_center_latest_mtime(source_main),
+        "frontend_dist_modified_at": update_center_latest_mtime(dist_path),
+        "frontend_dist_assets": dist_assets[:8],
+        "service_status": process_info.get("backend_status"),
+        "nginx_status": nginx_status,
+        "checks": checks,
+        "recommendations": recommendations,
+    }
+
+
 def run_update_center_workflow(job_type: str):
     merge_update_center_state({"job_status": "running", "job_type": job_type, "logs": []})
     push_update_center_log(f"Starting {job_type} workflow")
@@ -3258,6 +3340,29 @@ def get_update_center_process(db: Session = Depends(get_db), user: User = Depend
         return collect_update_center_process()
     except Exception as exc:
         return update_center_process_fallback(exc)
+
+
+@app.get("/api/update/troubleshoot")
+def get_update_center_troubleshoot(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
+    try:
+        return collect_update_center_troubleshoot()
+    except Exception as exc:
+        return {
+            "checked_at": datetime.utcnow().isoformat(),
+            "project_root": str(UPDATE_CENTER_PROJECT_PATH),
+            "backend_file": str(Path(__file__)),
+            "git_head": "Not available",
+            "origin_head": "Not available",
+            "dirty_status": "",
+            "frontend_source_modified_at": None,
+            "frontend_dist_modified_at": None,
+            "frontend_dist_assets": [],
+            "service_status": "Not available",
+            "nginx_status": "Not available",
+            "checks": [{"label": "Troubleshoot collector", "ok": False, "detail": str(exc)}],
+            "recommendations": ["Run the SSH deployment commands and restart noc360/nginx."],
+            "error": str(exc),
+        }
 
 
 def start_update_center_job(job_type: str):

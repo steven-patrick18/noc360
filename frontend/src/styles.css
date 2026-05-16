@@ -7160,6 +7160,42 @@ td {
   grid-column: 1 / -1;
 }
 
+.updateTroubleshootCard {
+  grid-column: 1 / -1;
+}
+
+.updateTroubleshootList {
+  display: grid;
+  gap: 10px;
+}
+
+.updateTroubleshootList div {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 0.45fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(9, 16, 28, 0.72);
+}
+
+.updateTroubleshootList div.warn {
+  border-color: rgba(251, 191, 36, 0.24);
+  background: rgba(43, 30, 7, 0.35);
+}
+
+.updateTroubleshootList span {
+  color: #f8fbff;
+  font-weight: 800;
+}
+
+.updateTroubleshootList small {
+  color: rgba(203, 225, 246, 0.74);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .updateCenterLogs {
   max-height: 320px;
   overflow-y: auto;
@@ -7185,6 +7221,10 @@ td {
   }
 
   .updateBackupRow {
+    grid-template-columns: 1fr;
+  }
+
+  .updateTroubleshootList div {
     grid-template-columns: 1fr;
   }
 

@@ -3172,6 +3172,7 @@ function UpdateCenterPage({ user }) {
   const [backups, setBackups] = useState([]);
   const [diskUsage, setDiskUsage] = useState(null);
   const [processInfo, setProcessInfo] = useState(null);
+  const [troubleshoot, setTroubleshoot] = useState(null);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState('');
   const [loading, setLoading] = useState(true);
@@ -3210,6 +3211,12 @@ function UpdateCenterPage({ user }) {
     return result;
   };
 
+  const refreshTroubleshoot = async () => {
+    const result = await updateRequest('/api/update/troubleshoot');
+    setTroubleshoot(result);
+    return result;
+  };
+
   const loadStatus = async (quiet = false) => {
     try {
       const result = await updateRequest('/api/update/status');
@@ -3243,6 +3250,7 @@ function UpdateCenterPage({ user }) {
         refreshBackups().catch((err) => { if (!quiet) throw err; }),
         refreshDiskUsage().catch((err) => { if (!quiet) throw err; }),
         refreshProcessInfo().catch((err) => { if (!quiet) throw err; }),
+        refreshTroubleshoot().catch((err) => { if (!quiet) throw err; }),
       ]);
     } catch (err) {
       if (!quiet) setError(err.message || 'Unable to refresh Update Center.');
@@ -3303,6 +3311,7 @@ function UpdateCenterPage({ user }) {
       refreshBackups().catch(() => {});
       refreshDiskUsage().catch(() => {});
       refreshProcessInfo().catch(() => {});
+      refreshTroubleshoot().catch(() => {});
       setMessage(result.message || 'Update workflow started.');
     } catch (err) {
       setError(err.message);
@@ -3327,6 +3336,7 @@ function UpdateCenterPage({ user }) {
       refreshBackups().catch(() => {});
       refreshDiskUsage().catch(() => {});
       refreshProcessInfo().catch(() => {});
+      refreshTroubleshoot().catch(() => {});
       setMessage(result.message || 'Rollback workflow started.');
     } catch (err) {
       setError(err.message);
@@ -3366,6 +3376,7 @@ function UpdateCenterPage({ user }) {
         refreshBackups().catch(() => {}),
         refreshDiskUsage().catch(() => {}),
         refreshProcessInfo().catch(() => {}),
+        refreshTroubleshoot().catch(() => {}),
       ]);
     } catch (err) {
       setError(err.message);
@@ -3418,6 +3429,8 @@ function UpdateCenterPage({ user }) {
   const updateBadgeLabel = status?.remote_status || (updateAvailable ? 'Update available' : 'Up to date');
   const display = (value, fallback = 'Not available locally') => (value === null || value === undefined || value === '' || value === 'unknown' || value === 'Unknown' ? fallback : value);
   const LoadingRows = ({ count = 4 }) => <div className="updateSkeletonList">{Array.from({ length: count }).map((_, index) => <div className="updateSkeleton" key={index} />)}</div>;
+  const troubleshootChecks = troubleshoot?.checks || [];
+  const failedTroubleshoot = troubleshootChecks.filter((item) => !item.ok).length;
 
   return (
     <section className="updateHealthPage">
@@ -3542,6 +3555,37 @@ function UpdateCenterPage({ user }) {
             <div><span>Install Directory</span><strong>{display(processInfo?.install_directory, 'Not available locally')}</strong></div>
             <div><span>Environment</span><strong>{display(processInfo?.environment)}</strong></div>
           </div>}
+        </div>
+
+        <div className="panel updateHealthCard updateTroubleshootCard">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">Self check</span><h3>VPS Troubleshoot</h3></div>
+            <span className={`updateHealthBadge ${failedTroubleshoot ? 'warning' : 'success'}`}>{failedTroubleshoot ? `${failedTroubleshoot} issue${failedTroubleshoot > 1 ? 's' : ''}` : 'Ready'}</span>
+          </div>
+          {loading ? <LoadingRows /> : <>
+            <div className="updateHealthStats">
+              <div><span>Git HEAD</span><strong>{display(troubleshoot?.git_head, 'Git not initialized')}</strong></div>
+              <div><span>Origin HEAD</span><strong>{display(troubleshoot?.origin_head, 'Remote not fetched')}</strong></div>
+              <div><span>Frontend Source</span><strong>{formatDateTime(troubleshoot?.frontend_source_modified_at)}</strong></div>
+              <div><span>Frontend Build</span><strong>{formatDateTime(troubleshoot?.frontend_dist_modified_at)}</strong></div>
+              <div><span>Nginx</span><strong>{display(troubleshoot?.nginx_status, 'Not available')}</strong></div>
+              <div><span>Project Root</span><strong>{display(troubleshoot?.project_root)}</strong></div>
+            </div>
+            <div className="updateTroubleshootList">
+              {troubleshootChecks.map((item) => (
+                <div className={item.ok ? 'ok' : 'warn'} key={item.label}>
+                  <StatusPill value={item.ok ? 'OK' : 'Check'} />
+                  <span>{item.label}</span>
+                  <small>{item.detail}</small>
+                </div>
+              ))}
+              {!troubleshootChecks.length && <div className="muted">Troubleshoot data is not available yet.</div>}
+            </div>
+            <div className="updateHealthMessage">
+              <span>Recommended Action</span>
+              <strong>{(troubleshoot?.recommendations || ['No recommendation available.']).join(' ')}</strong>
+            </div>
+          </>}
         </div>
 
         <div className="panel updateHealthCard updateHealthLogsCard">
