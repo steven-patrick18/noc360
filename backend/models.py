@@ -306,7 +306,7 @@ class BillingSetting(Base):
 
     id = Column(Integer, primary_key=True, default=1)
     usd_to_inr_rate = Column(Float, default=83.0, nullable=False)
-    fx_tolerance_inr = Column(Float, default=1.0, nullable=False)
+    fx_tolerance_inr = Column(Float, default=100.0, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

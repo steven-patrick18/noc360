@@ -637,7 +637,7 @@ function App() {
   const [data, setData] = useState({ vos: [], vosDesktop: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
   const [billing, setBilling] = useState({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
   const [communicationSummary, setCommunicationSummary] = useState({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 });
-  const [settings, setSettings] = useState({ usd_to_inr_rate: 83, fx_tolerance_inr: 1 });
+  const [settings, setSettings] = useState({ usd_to_inr_rate: 83, fx_tolerance_inr: 100 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
@@ -6049,13 +6049,14 @@ function inrPrimary(inrValue, usdDifference = 0) {
   return <span className="dualMoney"><b>{inr(inrValue)}</b><small>USD Difference: {usd(usdDifference)}</small></span>;
 }
 
-function moneyEngineOutstandingState(row = {}) {
-  const inrBalance = Number(row.outstanding_inr || 0);
+function moneyEngineOutstandingState(row = {}, toleranceInr = 100) {
+  const inrBalance = Number(row.raw_outstanding_inr ?? row.outstanding_inr ?? 0);
+  const tolerance = Math.abs(Number(toleranceInr || 100));
   const status = String(row.status || '').toLowerCase();
-  if (status === 'settled' || Math.abs(inrBalance) < 0.005) {
+  if (status === 'settled' || Math.abs(inrBalance) <= tolerance) {
     return { key: 'settled', label: 'Settled', amount: 0 };
   }
-  if (status === 'advance' || inrBalance < 0) {
+  if (status === 'advance' || inrBalance < -tolerance) {
     return { key: 'advance', label: 'Advance Balance', amount: Math.abs(inrBalance) };
   }
   return { key: 'outstanding', label: 'Final Outstanding', amount: inrBalance };
@@ -6096,8 +6097,9 @@ function CustomerDashboard({ billing, user }) {
 
 function BillingCards({ summary }) {
   const clientRows = Array.isArray(summary.client_outstanding) ? summary.client_outstanding : [];
+  const fxToleranceInr = Number(summary.fx_tolerance_inr || 100);
   const totals = clientRows.reduce((acc, row) => {
-    const state = moneyEngineOutstandingState(row);
+    const state = moneyEngineOutstandingState(row, fxToleranceInr);
     if (state.key === 'outstanding') acc.outstanding += state.amount;
     if (state.key === 'advance') acc.advance += state.amount;
     if (state.key === 'settled') acc.settled += 1;
@@ -6129,12 +6131,12 @@ function BillingCards({ summary }) {
   );
 }
 
-function ClientOutstandingTable({ rows }) {
+function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
   return (
     <div className="panel">
       <h2>Client-wise Outstanding</h2>
       <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>INR Ledger Position</th><th>USD Difference</th><th>Status</th></tr></thead><tbody>{rows.map((row) => {
-        const state = moneyEngineOutstandingState(row);
+        const state = moneyEngineOutstandingState(row, toleranceInr);
         const usdDifference = Number(row.usd_difference ?? row.outstanding ?? 0);
         const tooltip = row.fx_adjusted ? 'USD difference adjusted using FX tolerance.' : 'USD difference is reference only.';
         return (
@@ -6166,7 +6168,7 @@ function OutstandingPage({ billing }) {
   return (
     <section>
       <BillingCards summary={billing.ledgerSummary || {}} />
-      <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} />
+      <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} toleranceInr={billing.ledgerSummary?.fx_tolerance_inr || 100} />
     </section>
   );
 }
@@ -7076,7 +7078,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
         <button disabled={pageInfo.page >= pageInfo.total_pages || filters.page_size === 'all'} onClick={() => applyFilters({ ...filters, page: pageInfo.page + 1 })}>Next</button>
         <button onClick={() => applyFilters({ ...filters, page: 1, page_size: 'all' })}>Load All</button>
       </div>
-      {user.role !== 'customer' && <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} />}
+      {user.role !== 'customer' && <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} toleranceInr={billing.ledgerSummary?.fx_tolerance_inr || 100} />}
       <div className="tableWrap">
         <table>
           <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th><th>Created By</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead>
@@ -7093,9 +7095,9 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
 
 function BillingRateConfig({ settings, reload }) {
   const [rate, setRate] = useState(settings?.usd_to_inr_rate || 83);
-  const [tolerance, setTolerance] = useState(settings?.fx_tolerance_inr ?? 1);
+  const [tolerance, setTolerance] = useState(settings?.fx_tolerance_inr ?? 100);
   useEffect(() => setRate(settings?.usd_to_inr_rate || 83), [settings?.usd_to_inr_rate]);
-  useEffect(() => setTolerance(settings?.fx_tolerance_inr ?? 1), [settings?.fx_tolerance_inr]);
+  useEffect(() => setTolerance(settings?.fx_tolerance_inr ?? 100), [settings?.fx_tolerance_inr]);
   const save = async (event) => {
     event.preventDefault();
     await request('/settings/billing-rate', { method: 'PUT', body: JSON.stringify({ usd_to_inr_rate: Number(rate), fx_tolerance_inr: Number(tolerance) }) });

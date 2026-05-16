@@ -157,7 +157,7 @@ TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
 TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
 DEFAULT_USD_TO_INR = 83.0
-DEFAULT_FX_TOLERANCE_INR = 1.0
+DEFAULT_FX_TOLERANCE_INR = 100.0
 TERMINAL_RISK_LEVELS = {"Safe", "Medium", "Dangerous"}
 TERMINAL_SECRET_WORDS = {"password", "passwd", "token", "secret", "key"}
 TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "iptables -f", "iptables flush", "ufw reset", "systemctl stop")
@@ -1050,7 +1050,7 @@ def get_billing_setting(db: Session):
         db.add(setting)
         db.commit()
         db.refresh(setting)
-    if setting.fx_tolerance_inr is None:
+    if setting.fx_tolerance_inr is None or abs(float(setting.fx_tolerance_inr) - 1.0) < 0.0001:
         setting.fx_tolerance_inr = DEFAULT_FX_TOLERANCE_INR
         db.commit()
         db.refresh(setting)
