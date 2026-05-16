@@ -6053,11 +6053,11 @@ function moneyEngineOutstandingState(row = {}, toleranceInr = 100) {
   const inrBalance = Number(row.raw_outstanding_inr ?? row.outstanding_inr ?? 0);
   const tolerance = Math.abs(Number(toleranceInr || 100));
   const status = String(row.status || '').toLowerCase();
-  if (status === 'settled' || Math.abs(inrBalance) <= tolerance) {
-    return { key: 'settled', label: 'Settled', amount: 0 };
+  if (status === 'no invoice') {
+    return { key: 'noInvoice', label: 'No Invoice', amount: 0 };
   }
-  if (status === 'advance' || inrBalance < -tolerance) {
-    return { key: 'advance', label: 'Advance Balance', amount: Math.abs(inrBalance) };
+  if (status === 'settled' || inrBalance <= tolerance) {
+    return { key: 'settled', label: 'Settled', amount: 0 };
   }
   return { key: 'outstanding', label: 'Final Outstanding', amount: inrBalance };
 }
@@ -6132,19 +6132,22 @@ function BillingCards({ summary }) {
 }
 
 function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
+  const [viewInvoice, setViewInvoice] = useState(null);
   return (
     <div className="panel">
-      <h2>Client-wise Outstanding</h2>
-      <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>INR Ledger Position</th><th>USD Difference</th><th>Status</th></tr></thead><tbody>{rows.map((row) => {
+      <h2>Client-wise Outstanding (Invoice Based)</h2>
+      <p className="muted">Outstanding is calculated from saved weekly invoices, not raw daily charge entries.</p>
+      <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>Latest Invoice Week</th><th>Final Outstanding INR</th><th>Status</th><th>PDF / View</th></tr></thead><tbody>{rows.map((row) => {
         const state = moneyEngineOutstandingState(row, toleranceInr);
-        const usdDifference = Number(row.usd_difference ?? row.outstanding ?? 0);
-        const tooltip = row.fx_adjusted ? 'USD difference adjusted using FX tolerance.' : 'USD difference is reference only.';
         return (
           <tr key={row.client} className={`clientOutstandingRow ${state.key}`}>
             <td>{row.client}</td>
+            <td>{row.latest_invoice_week || <span className="muted">No saved invoice</span>}</td>
             <td>
               {state.key === 'settled' ? (
                 <span className="ledgerStatusBadge settled">SETTLED</span>
+              ) : state.key === 'noInvoice' ? (
+                <span className="muted">No Invoice</span>
               ) : (
                 <span className={`inrOutcome ${state.key}`}>
                   <small>{state.label}</small>
@@ -6152,14 +6155,17 @@ function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
                 </span>
               )}
             </td>
-            <td><span className={`usdReference ${row.fx_adjusted ? 'fxAdjusted' : ''}`} title={tooltip}>{usd(usdDifference)}</span></td>
             <td>
               <span className={`ledgerStatusBadge ${state.key}`}>{state.label.toUpperCase()}</span>
-              {row.fx_adjusted && <div className="fxAdjustmentNote" title="USD difference adjusted using FX tolerance.">FX difference adjusted</div>}
+            </td>
+            <td className="actions">
+              {row.latest_invoice ? <button onClick={() => setViewInvoice(row.latest_invoice)}><Eye size={15} /> View</button> : <span className="muted">-</span>}
+              {row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : null}
             </td>
           </tr>
         );
       })}</tbody></table>
+      {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
     </div>
   );
 }
@@ -7296,10 +7302,12 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
           {(detail.weekly_invoices || []).length === 0 && <tr><td colSpan="8" className="muted">No saved weekly invoices.</td></tr>}
         </tbody></table></div>
         {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
-        <h2>Ledger</h2>
-        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th></tr></thead><tbody>{detail.ledger.map((row) => (
-          <tr key={row.id} className={row.entry_type === 'Credit' ? 'creditRow' : 'debitRow'}><td>{row.entry_date}</td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td className={row.balance_usd > 0 ? 'outstandingText' : ''}>{usd(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td className={row.balance_inr > 0 ? 'outstandingText' : ''}>{inr(row.balance_inr)}</td><td>{exchangeText(row.exchange_rate)}</td></tr>
-        ))}</tbody></table></div>
+        <h2>Invoice Ledger</h2>
+        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Invoice No / Reference</th><th>Description</th><th>Debit (DR)</th><th>Credit (CR)</th><th>Running Balance</th><th>PDF</th></tr></thead><tbody>{(detail.ledger || []).map((row) => (
+          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{ledgerBalanceText(row.balance)}</td><td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td></tr>
+        ))}
+          {(detail.ledger || []).length === 0 && <tr><td colSpan="7" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
+        </tbody></table></div>
         {canExport && <div className="toolbar"><button onClick={() => exportRows(`${detail.client.name}-ledger.csv`, detail.ledger || [])}><Download size={16} /> Export Ledger CSV</button></div>}
         <h2>Data Cost</h2>
         <div className="tableWrap"><table><thead><tr><th>Date</th><th>Quantity</th><th>Rate $</th><th>Total $</th><th>Total ₹</th><th>Description</th></tr></thead><tbody>{(detail.data_costs || []).map((row) => (

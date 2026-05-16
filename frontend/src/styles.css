@@ -2149,6 +2149,10 @@ h2 {
   background: rgba(127, 29, 29, 0.18);
 }
 
+.clientOutstandingRow.noInvoice td {
+  background: rgba(15, 23, 42, 0.54);
+}
+
 .inrOutcome {
   display: inline-grid;
   gap: 3px;
@@ -2208,6 +2212,12 @@ h2 {
   border-color: rgba(248, 113, 113, 0.5);
   background: rgba(127, 29, 29, 0.56);
   color: #fecaca;
+}
+
+.ledgerStatusBadge.noInvoice {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.74);
+  color: #cbd5e1;
 }
 
 .usdReference {

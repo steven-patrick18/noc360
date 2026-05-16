@@ -5420,14 +5420,75 @@ def weekly_invoice_current_week_payable(invoice: WeeklyInvoice):
 
 
 def weekly_invoice_final_outstanding(invoice: WeeklyInvoice):
-    if invoice.final_outstanding is not None and invoice.final_outstanding != 0:
+    if invoice.final_outstanding is not None:
         return float(invoice.final_outstanding)
     if invoice.ledger_balance is not None and invoice.ledger_balance != 0:
         return float(invoice.ledger_balance)
     return float(invoice.final_payable or 0)
 
 
-def client_invoice_ledger_report(db: Session, user: User, date_from: date | None = None, date_to: date | None = None, row_type: str | None = None):
+def invoice_based_client_outstanding(db: Session, user: User, client_id: int | None = None, tolerance_inr: float = DEFAULT_FX_TOLERANCE_INR):
+    client_scope = scoped_client_ids(db, user)
+    client_query = db.query(Client).order_by(Client.name.asc())
+    if client_scope:
+        client_query = client_query.filter(Client.id.in_(client_scope))
+    if client_id:
+        if not can_access_client(db, user, client_id):
+            raise HTTPException(status_code=403, detail="Client access denied")
+        client_query = client_query.filter(Client.id == client_id)
+
+    client_outstanding = []
+    total_outstanding_inr = 0.0
+    settled_count = 0
+    tolerance = abs(float(tolerance_inr or DEFAULT_FX_TOLERANCE_INR))
+    for client in client_query.all():
+        latest_invoice = (
+            db.query(WeeklyInvoice)
+            .filter(WeeklyInvoice.client_id == client.id)
+            .order_by(WeeklyInvoice.week_end_date.desc(), WeeklyInvoice.id.desc())
+            .first()
+        )
+        final_outstanding = round(weekly_invoice_final_outstanding(latest_invoice), 2) if latest_invoice else 0.0
+        settled = not latest_invoice or final_outstanding <= tolerance
+        display_outstanding = 0.0 if settled else final_outstanding
+        if display_outstanding > 0:
+            total_outstanding_inr += display_outstanding
+        if latest_invoice and settled:
+            settled_count += 1
+        latest_invoice_week = None
+        if latest_invoice:
+            latest_invoice_week = f"{latest_invoice.week_start_date.isoformat()} to {latest_invoice.week_end_date.isoformat()}"
+        status = "No Invoice" if not latest_invoice else ("Settled" if settled else "Outstanding")
+        client_outstanding.append({
+            "client": client.name,
+            "client_id": client.id,
+            "latest_invoice_week": latest_invoice_week,
+            "invoice_id": latest_invoice.id if latest_invoice else None,
+            "latest_invoice": weekly_invoice_response(latest_invoice, include_internal=False) if latest_invoice else None,
+            "outstanding": 0.0,
+            "outstanding_inr": display_outstanding,
+            "usd_difference": 0.0,
+            "raw_outstanding": 0.0,
+            "raw_outstanding_inr": final_outstanding,
+            "fx_adjusted": False,
+            "status": status,
+            "source": "weekly_invoice",
+        })
+    return {
+        "total_outstanding": 0.0,
+        "total_outstanding_inr": round(total_outstanding_inr, 2),
+        "usd_difference": 0.0,
+        "raw_total_outstanding": 0.0,
+        "raw_total_outstanding_inr": round(sum(float(row["raw_outstanding_inr"] or 0) for row in client_outstanding), 2),
+        "fx_adjusted": False,
+        "fx_tolerance_inr": round(tolerance, 2),
+        "settled_clients_count": settled_count,
+        "client_outstanding": client_outstanding,
+        "basis": "weekly_invoice",
+    }
+
+
+def client_invoice_ledger_report(db: Session, user: User, date_from: date | None = None, date_to: date | None = None, row_type: str | None = None, client_id: int | None = None):
     normalized_type = (row_type or "All").strip().lower()
     if normalized_type not in {"", "all", "invoice", "payment", "adjustment"}:
         raise HTTPException(status_code=400, detail="type must be All, Invoice, Payment, or Adjustment")
@@ -5437,6 +5498,10 @@ def client_invoice_ledger_report(db: Session, user: User, date_from: date | None
     invoice_query = db.query(WeeklyInvoice)
     if client_scope:
         invoice_query = invoice_query.filter(WeeklyInvoice.client_id.in_(client_scope))
+    if client_id:
+        if not can_access_client(db, user, client_id):
+            raise HTTPException(status_code=403, detail="Client access denied")
+        invoice_query = invoice_query.filter(WeeklyInvoice.client_id == client_id)
     if date_to:
         invoice_query = invoice_query.filter(WeeklyInvoice.week_end_date <= date_to)
     for invoice in invoice_query.order_by(WeeklyInvoice.week_end_date.asc(), WeeklyInvoice.id.asc()).all():
@@ -5458,6 +5523,8 @@ def client_invoice_ledger_report(db: Session, user: User, date_from: date | None
     ledger_query_rows = db.query(ClientLedger).filter(ClientLedger.category.in_(("Payment", "Adjustment", "FX Adjustment")))
     if client_scope:
         ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id.in_(client_scope))
+    if client_id:
+        ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id == client_id)
     if date_to:
         ledger_query_rows = ledger_query_rows.filter(ClientLedger.entry_date <= date_to)
     for row in ledger_query_rows.order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc()).all():
@@ -7021,13 +7088,14 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         media = {normalize(gateway.live_media1_name), normalize(gateway.live_media2_name)}
         if any(rdp in media for rdp in rdps):
             used_gateways.append(gateway.live_gateway_name)
-    ledger = db.query(ClientLedger).filter(ClientLedger.client_id == record_id).order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all()
+    raw_ledger = db.query(ClientLedger).filter(ClientLedger.client_id == record_id).order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all()
+    invoice_ledger = list(reversed(client_invoice_ledger_report(db, user, client_id=record_id)))
     data_costs = db.query(DataCost).filter(DataCost.client_id == record_id).order_by(DataCost.entry_date.desc(), DataCost.id.desc()).all()
     weekly_invoices = db.query(WeeklyInvoice).filter(WeeklyInvoice.client_id == record_id).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
-    total_charges = sum(row.debit_usd or row.debit_amount or 0 for row in ledger)
-    total_payments = sum(row.credit_usd or row.credit_amount or 0 for row in ledger)
-    total_charges_inr = sum(row.debit_inr or 0 for row in ledger)
-    total_payments_inr = sum(row.credit_inr or 0 for row in ledger)
+    total_charges = 0.0
+    total_payments = 0.0
+    total_charges_inr = sum(row["debit"] or 0 for row in invoice_ledger)
+    total_payments_inr = sum(row["credit"] or 0 for row in invoice_ledger)
     return {
         "client": {"id": client.id, "name": client.name, "status": client.status, "notes": client.notes},
         "assigned_clusters": [cluster_assignment_out(cluster) for cluster in clusters],
@@ -7039,7 +7107,8 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         "total_charges_inr": round(total_charges_inr, 2),
         "total_payments_inr": round(total_payments_inr, 2),
         "total_outstanding_inr": round(total_charges_inr - total_payments_inr, 2),
-        "ledger": ledger,
+        "ledger": invoice_ledger,
+        "raw_ledger_count": len(raw_ledger),
         "data_costs": data_costs,
         "weekly_invoices": [weekly_invoice_response(invoice, include_internal=False) for invoice in weekly_invoices],
     }
@@ -7364,9 +7433,7 @@ def delete_ledger(record_id: int, request: Request, db: Session = Depends(get_db
 @app.get("/billing/client-outstanding")
 def get_ledger_summary(client_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view")))):
     tolerance = float(get_billing_setting(db).fx_tolerance_inr or DEFAULT_FX_TOLERANCE_INR)
-    if user.role == "customer":
-        return ledger_summary([], tolerance)
-    return ledger_summary(ledger_query(db, user, client_id).all(), tolerance)
+    return invoice_based_client_outstanding(db, user, client_id, tolerance)
 
 
 @app.get("/api/settings/billing-rate", response_model=BillingSettingOut)
