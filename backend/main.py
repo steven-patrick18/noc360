@@ -5363,10 +5363,12 @@ def weekly_invoice_item_response(item: WeeklyInvoiceItem, include_internal: bool
     return data
 
 
-def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = True):
+def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = True, db: Session | None = None):
     payments_this_week = weekly_invoice_payments_this_week(invoice)
     current_week_payable = weekly_invoice_current_week_payable(invoice)
     final_outstanding = weekly_invoice_final_outstanding(invoice)
+    payments_after_generation = payments_after_invoice(db, invoice) if db else 0.0
+    live_final_outstanding = round(max(0.0, final_outstanding - payments_after_generation), 2)
     data = {
         "id": invoice.id,
         "client_id": invoice.client_id,
@@ -5386,6 +5388,10 @@ def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = Tru
         "total_payments_till_today": invoice.total_payments_till_today,
         "ledger_balance": invoice.ledger_balance or final_outstanding,
         "final_outstanding": final_outstanding,
+        "saved_final_outstanding": final_outstanding,
+        "payments_after_invoice": payments_after_generation,
+        "live_final_outstanding": live_final_outstanding,
+        "live_status": "Settled" if live_final_outstanding <= 0 else "Outstanding",
         "advance_remaining": round(max(0, -final_outstanding), 2),
         "final_payable": final_outstanding,
         "notes": invoice.notes,
@@ -5477,7 +5483,7 @@ def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):
     return {
         "latest_invoice_week": f"{invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
         "invoice_id": invoice.id,
-        "latest_invoice": weekly_invoice_response(invoice, include_internal=False),
+        "latest_invoice": weekly_invoice_response(invoice, include_internal=False, db=db),
         "invoice_amount": invoice_amount,
         "payments_after_invoice": later_payments,
         "final_outstanding": 0.0 if settled else raw_final,
@@ -7219,7 +7225,7 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         "ledger": invoice_ledger,
         "raw_ledger_count": len(raw_ledger),
         "data_costs": data_costs,
-        "weekly_invoices": [weekly_invoice_response(invoice, include_internal=False) for invoice in weekly_invoices],
+        "weekly_invoices": [weekly_invoice_response(invoice, include_internal=False, db=db) for invoice in weekly_invoices],
     }
 
 
@@ -7234,7 +7240,7 @@ def get_weekly_invoices(
 ):
     include_internal = user.role != "customer"
     invoices = weekly_invoice_query(db, user, client_id, date_from, date_to).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
-    return [weekly_invoice_response(invoice, include_internal=include_internal) for invoice in invoices]
+    return [weekly_invoice_response(invoice, include_internal=include_internal, db=db) for invoice in invoices]
 
 
 @app.post("/api/billing/weekly-invoices/preview", response_model=WeeklyInvoicePreviewOut)

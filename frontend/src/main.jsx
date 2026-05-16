@@ -6320,6 +6320,10 @@ function invoiceFinalOutstanding(invoice) {
   return Number(invoice?.final_outstanding ?? invoice?.ledger_balance ?? invoice?.final_payable ?? 0);
 }
 
+function invoiceLiveFinalOutstanding(invoice) {
+  return Number(invoice?.live_final_outstanding ?? invoiceFinalOutstanding(invoice));
+}
+
 function invoiceLedgerBalance(invoice) {
   return Number(invoice?.ledger_balance ?? invoiceFinalOutstanding(invoice));
 }
@@ -6745,7 +6749,8 @@ function WeeklyInvoiceViewModal({ invoice, canExport, onDownload, onClose }) {
   const adjustmentAmount = invoiceAdjustmentAmount(invoice);
   const currentWeekPayable = invoiceDisplayCurrentWeekPayable(invoice);
   const ledgerBalance = invoiceDisplayLedgerBalance(invoice);
-  const finalOutstanding = invoiceFinalOutstanding(invoice);
+  const finalOutstanding = invoiceLiveFinalOutstanding(invoice);
+  const paymentsAfterInvoice = Number(invoice.payments_after_invoice || 0);
   return (
     <div className="modalBackdrop modal-overlay">
       <div className="modal modal-box weeklyInvoiceViewModal">
@@ -6786,6 +6791,7 @@ function WeeklyInvoiceViewModal({ invoice, canExport, onDownload, onClose }) {
             <div className="weeklyInvoiceViewGrid">
               <div><span>Previous Outstanding</span><strong>{inr(invoicePreviousOutstanding(invoice))}</strong></div>
               <div><span>Current Week Payable</span><strong>{inr(currentWeekPayable)}</strong></div>
+              {paymentsAfterInvoice > 0 && <div><span>Payments After Invoice</span><strong className="creditText">- {inr(paymentsAfterInvoice)}</strong></div>}
               <div><span>Ledger Balance</span><strong>{inr(ledgerBalance)}</strong></div>
               <div className="weeklyInvoiceTotal"><span>{finalPayableLabel(finalOutstanding)}</span><strong className={finalOutstanding > 0 ? 'outstandingText' : 'okText'}>{balanceDisplay(finalOutstanding)}</strong></div>
             </div>
