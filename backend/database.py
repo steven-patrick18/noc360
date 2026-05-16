@@ -1,10 +1,13 @@
+import os
+import platform
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
-DATABASE_PATH = Path("/opt/noc360/backend/noc360.db")
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().parent / "noc360.db" if platform.system() == "Windows" else Path("/opt/noc360/backend/noc360.db")
+DATABASE_PATH = Path(os.getenv("NOC360_DATABASE_PATH", DEFAULT_DATABASE_PATH))
 DB_PROTECTED_MARKER = DATABASE_PATH.parent / ".db_protected"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH.as_posix()}"
 

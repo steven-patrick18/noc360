@@ -12,6 +12,8 @@ frontend/.env.local
 # DB
 *.db
 *.sqlite
+.db_protected
+*.startup_state.json
 
 # Logs
 *.log
