@@ -2025,8 +2025,10 @@ def update_center_backup_name(backup_path: Path):
 
 
 def get_update_center_backup_rows():
-    require_update_center_project()
-    UPDATE_CENTER_BACKUPS_PATH.mkdir(parents=True, exist_ok=True)
+    try:
+        UPDATE_CENTER_BACKUPS_PATH.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return []
     rows = []
     for entry in sorted(UPDATE_CENTER_BACKUPS_PATH.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
         if not (entry.is_dir() or entry.is_file()):
@@ -2060,7 +2062,6 @@ def resolve_update_center_backup(name: str):
 
 
 def collect_update_center_disk_usage():
-    require_update_center_project()
     db_path = UPDATE_CENTER_BACKEND_PATH / "noc360.db"
     uploads_path = UPDATE_CENTER_PROJECT_PATH / "uploads"
     backups_path = UPDATE_CENTER_BACKUPS_PATH
@@ -2085,7 +2086,6 @@ def collect_update_center_disk_usage():
 
 
 def collect_update_center_process():
-    require_update_center_project()
     is_windows = os.name == "nt"
     environment_name = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or ("local-windows" if is_windows else "production")
     python_version = update_center_value(["python", "--version"], cwd=PROJECT_ROOT, timeout=20, fallback="Python not available")
@@ -2148,7 +2148,6 @@ def summarize_update_center_commits(lines: list[str]):
 
 
 def collect_update_center_status():
-    require_update_center_project()
     git_check = run_update_center_optional(["git", "rev-parse", "--is-inside-work-tree"], cwd=PROJECT_ROOT, timeout=20, unavailable="Git not available")
     if not git_check["ok"]:
         last_checked = datetime.utcnow().isoformat()
@@ -2242,7 +2241,6 @@ def restore_update_center_backup(backup_path: Path):
 
 
 def perform_update_center_check():
-    require_update_center_project()
     push_update_center_log("Fetching latest code from origin")
     fetch = run_update_center_optional(["git", "fetch", "origin"], cwd=PROJECT_ROOT, timeout=120, unavailable="Git not available")
     if not fetch["ok"]:
@@ -2259,6 +2257,67 @@ def perform_update_center_check():
         "new_commits": commit_lines,
         "feature_summary": summarize_update_center_commits(commit_lines),
     })
+
+
+def update_center_status_fallback(error: Exception | str):
+    message = str(error) or "Update Center status is not available"
+    last_checked = datetime.utcnow().isoformat()
+    return merge_update_center_state({
+        "current_branch": "Git not initialized",
+        "current_commit": "Git not initialized",
+        "remote_commit": "Remote not fetched",
+        "last_commit_message": message,
+        "commit_author": "Not available",
+        "commit_date": "Not available",
+        "service_status": "Service not installed" if os.name != "nt" else "Not available locally",
+        "update_available": False,
+        "ahead": 0,
+        "behind": 0,
+        "remote_status": "Not available",
+        "last_checked": last_checked,
+        "current_local_branch": "Git not initialized",
+        "current_local_commit": "Git not initialized",
+        "latest_remote_commit": "Remote not fetched",
+        "last_checked_at": last_checked,
+        "error": message,
+    })
+
+
+def update_center_disk_usage_fallback(error: Exception | str):
+    message = str(error) or "Disk usage is not available"
+    return {
+        "database_size": 0,
+        "database_size_label": "0.00 B",
+        "uploaded_files_size": 0,
+        "uploaded_files_size_label": "0.00 B",
+        "backup_archive_size": 0,
+        "backup_archive_size_label": "0.00 B",
+        "total_size": 0,
+        "total_size_label": "0.00 B",
+        "database_path": str(UPDATE_CENTER_BACKEND_PATH / "noc360.db"),
+        "uploads_path": str(UPDATE_CENTER_PROJECT_PATH / "uploads"),
+        "backups_path": str(UPDATE_CENTER_BACKUPS_PATH),
+        "project_path": str(UPDATE_CENTER_PROJECT_PATH),
+        "error": message,
+    }
+
+
+def update_center_process_fallback(error: Exception | str):
+    message = str(error) or "Process information is not available"
+    return {
+        "backend_status": "Service not installed" if os.name != "nt" else "Not available locally",
+        "service_uptime": "Not available locally",
+        "memory_usage": "0.00 B",
+        "memory_usage_bytes": 0,
+        "pid": None,
+        "python_version": update_center_value(["python3" if os.name != "nt" else "python", "--version"], cwd=PROJECT_ROOT, timeout=10, fallback="Python not available"),
+        "node_version": update_center_value(["node", "-v"], cwd=PROJECT_ROOT, timeout=10, fallback="Node not available"),
+        "install_directory": str(UPDATE_CENTER_PROJECT_PATH),
+        "environment": os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or ("local-windows" if os.name == "nt" else "production"),
+        "platform": platform.platform(),
+        "service_name": UPDATE_CENTER_SERVICE_NAME,
+        "error": message,
+    }
 
 
 def run_update_center_workflow(job_type: str):
@@ -3095,20 +3154,18 @@ def install_bare_metal_os(payload: IPMIRequestIn, request: Request, db: Session 
 def get_update_center_status(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
     try:
         return collect_update_center_status()
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        push_update_center_log(str(exc), "error")
+        return update_center_status_fallback(exc)
 
 
 @app.post("/api/update/check")
 def check_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
     try:
         result = perform_update_center_check()
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        push_update_center_log(str(exc), "error")
+        result = update_center_status_fallback(exc)
     log_activity(db, user, "check_update_center", "update_center", "System", None, "Checked GitHub updates for NOC360", new_value={"update_available": result.get("update_available"), "latest_remote_commit": result.get("latest_remote_commit")}, request=request, commit=True)
     return result
 
@@ -3117,10 +3174,8 @@ def check_update_center(request: Request, db: Session = Depends(get_db), user: U
 def list_update_center_backups(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
     try:
         return {"items": get_update_center_backup_rows(), "last_backup_path": read_update_center_state().get("last_backup_path")}
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"items": [], "last_backup_path": None, "error": str(exc), "message": "Backups not available"}
 
 
 @app.post("/api/update/backup/run")
@@ -3193,20 +3248,16 @@ def download_update_center_backup(backup_name: str, user: User = Depends(require
 def get_update_center_disk_usage(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
     try:
         return collect_update_center_disk_usage()
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return update_center_disk_usage_fallback(exc)
 
 
 @app.get("/api/update/process")
 def get_update_center_process(db: Session = Depends(get_db), user: User = Depends(require_update_center())):
     try:
         return collect_update_center_process()
-    except HTTPException:
-        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return update_center_process_fallback(exc)
 
 
 def start_update_center_job(job_type: str):
