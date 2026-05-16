@@ -53,18 +53,19 @@ import './themes.css';
 const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
-const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment'];
+const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
 const themeOptions = [
-  { id: 'executive', name: 'Executive NOC', description: 'Dark luxury command center', colors: ['#06080f', '#00e5ff', '#d6b46a'] },
-  { id: 'cyber', name: 'Cyber Neon', description: 'High-energy cyber operations', colors: ['#020617', '#00f0ff', '#ff2bd6'] },
-  { id: 'minimal', name: 'Dark Minimal', description: 'Quiet enterprise workspace', colors: ['#09090b', '#d4d4d8', '#71717a'] },
-  { id: 'deep-blue', name: 'Deep Blue Command', description: 'Oceanic telecom control', colors: ['#04111f', '#38bdf8', '#2563eb'] },
-  { id: 'purple', name: 'Purple Matrix', description: 'Violet intelligence grid', colors: ['#10081f', '#a855f7', '#22d3ee'] },
-  { id: 'emerald', name: 'Emerald Ops', description: 'Green uptime operations', colors: ['#03140d', '#00ff9c', '#a3e635'] },
-  { id: 'amber', name: 'Amber Terminal', description: 'Classic operator console', colors: ['#120d05', '#ffb800', '#f97316'] },
-  { id: 'red-alert', name: 'Red Alert', description: 'Incident response mode', colors: ['#140609', '#ff4d4d', '#f97316'] },
-  { id: 'light', name: 'Light Professional', description: 'Clean daytime SaaS', colors: ['#f7fafc', '#0369a1', '#0f766e'] },
-  { id: 'glass-ultra', name: 'Glass Ultra', description: 'Transparent premium glass', colors: ['#030712', '#7dd3fc', '#c084fc'] },
+  { id: 'executive-noc', name: 'Executive NOC', description: 'Premium dark navy with cyan control-room accents.', colors: ['#0b1320', '#17d9e6', '#5cf0c4'] },
+  { id: 'dark-minimal', name: 'Dark Minimal', description: 'Low-glow dark gray tuned for long reading sessions.', colors: ['#12151b', '#7dd3fc', '#d4d4d8'] },
+  { id: 'slate-enterprise', name: 'Slate Enterprise', description: 'Soft slate business dashboard with quiet contrast.', colors: ['#16202b', '#38bdf8', '#94a3b8'] },
+  { id: 'cyber-neon', name: 'Cyber Neon', description: 'Command-center neon cyan and magenta.', colors: ['#050816', '#00f5ff', '#ff3cc7'] },
+  { id: 'telecom-ops', name: 'Telecom Ops', description: 'Telecom NOC blue surfaces with uptime green.', colors: ['#0a1830', '#3abff8', '#34d399'] },
+  { id: 'devops-dark', name: 'DevOps Dark', description: 'Grafana-inspired monitoring theme for infra work.', colors: ['#111827', '#60a5fa', '#22c55e'] },
+  { id: 'trading-terminal', name: 'Trading Terminal', description: 'Compact market-terminal look with data accents.', colors: ['#0b0e13', '#facc15', '#22c55e'] },
+  { id: 'military-command', name: 'Military Command', description: 'Tactical deep green and subdued operations color.', colors: ['#0a120d', '#7ddf7a', '#d4b46b'] },
+  { id: 'amoled-black', name: 'AMOLED Black', description: 'Pure black OLED surfaces with restrained contrast.', colors: ['#000000', '#22d3ee', '#a3e635'] },
+  { id: 'glass-ultra', name: 'Glass Ultra', description: 'Transparent glass cards for premium demos.', colors: ['#09111f', '#93c5fd', '#d8b4fe'] },
+  { id: 'light-professional', name: 'Light Professional', description: 'Clean light workspace for daytime ops.', colors: ['#f8fafc', '#0f766e', '#0284c7'] },
 ];
 const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
 const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
@@ -72,9 +73,9 @@ const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
 const defaultCustomBackground = { image: '', opacity: 55, blur: 0, overlayColor: '#000000' };
 
 function resolveTheme(themeId) {
-  if (themeId !== 'auto') return themeId || 'executive';
+  if (themeId !== 'auto') return themeId || 'executive-noc';
   const hour = new Date().getHours();
-  return hour >= 7 && hour < 18 ? 'light' : 'executive';
+  return hour >= 7 && hour < 18 ? 'light-professional' : 'executive-noc';
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -636,12 +637,12 @@ function App() {
   const [data, setData] = useState({ vos: [], vosDesktop: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
   const [billing, setBilling] = useState({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
   const [communicationSummary, setCommunicationSummary] = useState({ direct_unread: 0, group_unread: 0, chat_unread: 0, open_tickets: 0 });
-  const [settings, setSettings] = useState({ usd_to_inr_rate: 83 });
+  const [settings, setSettings] = useState({ usd_to_inr_rate: 83, fx_tolerance_inr: 1 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive');
+  const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive-noc');
   const [customBackground, setCustomBackground] = useState(loadCustomBackground);
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
@@ -745,7 +746,13 @@ function App() {
 
   useEffect(() => {
     const applyTheme = () => {
-      document.body.setAttribute('data-theme', resolveTheme(theme));
+      const resolvedTheme = resolveTheme(theme);
+      const themeClasses = Array.from(document.body.classList).filter((className) => className.startsWith('theme-') || className.startsWith('theme-choice-'));
+      if (themeClasses.length) {
+        document.body.classList.remove(...themeClasses);
+      }
+      document.body.classList.add(`theme-${resolvedTheme}`, `theme-choice-${theme}`);
+      document.body.setAttribute('data-theme', resolvedTheme);
       document.body.setAttribute('data-theme-choice', theme);
       applyCustomBackground(customBackground);
     };
@@ -845,7 +852,7 @@ function App() {
   const activeKey = activeModules[active] ? active : Object.keys(activeModules)[0];
   const ActiveIcon = activeModules[activeKey]?.icon || Activity;
   const alertCount = dashboard?.summary?.alerts ?? management.summary?.duplicate_alerts ?? 0;
-  const outstandingValue = billing.ledgerSummary?.total_outstanding ? usd(billing.ledgerSummary.total_outstanding) : '$0.00';
+  const outstandingValue = billing.ledgerSummary?.total_outstanding_inr ? inr(billing.ledgerSummary.total_outstanding_inr) : inr(0);
   const groupedKeys = new Set(sidebarGroups.flatMap((group) => group.keys));
   const visibleSidebarGroups = sidebarGroups
     .map((group) => ({
@@ -3167,6 +3174,7 @@ function UpdateCenterPage({ user }) {
   const [processInfo, setProcessInfo] = useState(null);
   const [logs, setLogs] = useState([]);
   const [busy, setBusy] = useState('');
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const logsRef = useRef(null);
@@ -3223,13 +3231,31 @@ function UpdateCenterPage({ user }) {
     }
   };
 
+  const refreshAll = async (quiet = false) => {
+    if (!quiet) {
+      setLoading(true);
+      setBusy('refresh');
+      setError('');
+    }
+    try {
+      await Promise.all([
+        loadStatus(quiet).catch((err) => { if (!quiet) throw err; }),
+        refreshBackups().catch((err) => { if (!quiet) throw err; }),
+        refreshDiskUsage().catch((err) => { if (!quiet) throw err; }),
+        refreshProcessInfo().catch((err) => { if (!quiet) throw err; }),
+      ]);
+    } catch (err) {
+      if (!quiet) setError(err.message || 'Unable to refresh Update Center.');
+    } finally {
+      if (!quiet) {
+        setBusy('');
+        setLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
-    Promise.all([
-      loadStatus().catch(() => {}),
-      refreshBackups().catch(() => {}),
-      refreshDiskUsage().catch(() => {}),
-      refreshProcessInfo().catch(() => {}),
-    ]).catch(() => {});
+    refreshAll().catch(() => {});
     pollingRef.current = window.setInterval(() => loadStatus(true).catch(() => {}), 4000);
     return () => {
       if (pollingRef.current) window.clearInterval(pollingRef.current);
@@ -3387,9 +3413,11 @@ function UpdateCenterPage({ user }) {
 
   const updateAvailable = Boolean(status?.update_available);
   const commits = status?.commits || status?.new_commits || [];
-  const serviceStatus = processInfo?.backend_status || status?.service_status || 'unknown';
+  const serviceStatus = processInfo?.backend_status || status?.service_status || 'Not available locally';
   const latestBackup = backups[0] || null;
-  const updateBadgeLabel = updateAvailable ? 'Update available' : 'Up to date';
+  const updateBadgeLabel = status?.remote_status || (updateAvailable ? 'Update available' : 'Up to date');
+  const display = (value, fallback = 'Not available locally') => (value === null || value === undefined || value === '' || value === 'unknown' || value === 'Unknown' ? fallback : value);
+  const LoadingRows = ({ count = 4 }) => <div className="updateSkeletonList">{Array.from({ length: count }).map((_, index) => <div className="updateSkeleton" key={index} />)}</div>;
 
   return (
     <section className="updateHealthPage">
@@ -3400,7 +3428,7 @@ function UpdateCenterPage({ user }) {
           <p className="muted">Pull updates from git, run backup, see disk usage - all without SSH.</p>
         </div>
         <div className="updateHealthHeaderActions">
-          <button type="button" onClick={() => loadStatus()} disabled={busy === 'refresh'}><RefreshCcw size={16} /> Refresh</button>
+          <button type="button" onClick={() => refreshAll()} disabled={busy === 'refresh'}><RefreshCcw size={16} /> {busy === 'refresh' ? 'Refreshing...' : 'Refresh'}</button>
           <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run' || busy === 'rollback' || busy === 'backup'}>{busy === 'check' ? 'Checking...' : 'Check Now'}</button>
           <button type="button" className="primary" onClick={runUpdate} disabled={!canEdit || busy === 'check' || busy === 'run' || busy === 'rollback' || busy === 'backup'}>{busy === 'run' ? 'Updating...' : 'Update Now'}</button>
           <button type="button" onClick={runBackupNow} disabled={!canEdit || busy === 'backup' || busy === 'run' || busy === 'rollback'}>{busy === 'backup' ? 'Backing up...' : 'Run Backup Now'}</button>
@@ -3420,16 +3448,18 @@ function UpdateCenterPage({ user }) {
               <button type="button" onClick={runCheck} disabled={busy === 'check' || busy === 'run'}>{busy === 'check' ? 'Checking...' : 'Check Now'}</button>
             </div>
           </div>
-          <div className="updateHealthStats">
-            <div><span>Current Commit</span><strong>{status?.current_commit || status?.current_local_commit || '-'}</strong></div>
-            <div><span>Branch</span><strong>{status?.current_branch || status?.current_local_branch || '-'}</strong></div>
-            <div><span>Author</span><strong>{status?.commit_author || '-'}</strong></div>
-            <div><span>Date</span><strong>{formatDateTime(status?.commit_date)}</strong></div>
-          </div>
-          <div className="updateHealthMessage">
-            <span>Commit Message</span>
-            <strong>{status?.last_commit_message || '-'}</strong>
-          </div>
+          {loading ? <LoadingRows /> : <>
+            <div className="updateHealthStats">
+              <div><span>Current Commit</span><strong>{display(status?.current_commit || status?.current_local_commit, 'Git not initialized')}</strong></div>
+              <div><span>Branch</span><strong>{display(status?.current_branch || status?.current_local_branch, 'Git not initialized')}</strong></div>
+              <div><span>Author</span><strong>{display(status?.commit_author, 'Git not initialized')}</strong></div>
+              <div><span>Date</span><strong>{formatDateTime(display(status?.commit_date, 'Git not initialized'))}</strong></div>
+            </div>
+            <div className="updateHealthMessage">
+              <span>Commit Message</span>
+              <strong>{display(status?.last_commit_message, 'Git not initialized')}</strong>
+            </div>
+          </>}
         </div>
 
         <div className="panel updateHealthCard">
@@ -3437,10 +3467,11 @@ function UpdateCenterPage({ user }) {
             <div><span className="eyebrow">Remote status</span><h3>Update Status</h3></div>
             <span className={`updateHealthBadge ${updateAvailable ? 'warning' : 'success'}`}>{updateBadgeLabel}</span>
           </div>
-          {updateAvailable ? (
+          {loading ? <LoadingRows /> : updateAvailable ? (
             <>
               <div className="updateHealthStats">
-                <div><span>Latest Remote</span><strong>{status?.remote_commit || status?.latest_remote_commit || '-'}</strong></div>
+                <div><span>Latest Remote</span><strong>{display(status?.remote_commit || status?.latest_remote_commit, 'Remote not fetched')}</strong></div>
+                <div><span>Ahead / Behind</span><strong>{Number(status?.ahead || 0)} ahead / {Number(status?.behind || 0)} behind</strong></div>
                 <div><span>Last Checked</span><strong>{formatDateTime(status?.last_checked || status?.last_checked_at)}</strong></div>
               </div>
               <div className="updateCenterList healthCommitList">
@@ -3452,8 +3483,9 @@ function UpdateCenterPage({ user }) {
             </>
           ) : (
             <div className="updateHealthEmpty">
-              <span className="updateHealthBadge success">Up to date</span>
-              <p className="muted">Your local checkout is already up to date with origin/main.</p>
+              <span className="updateHealthBadge success">{updateBadgeLabel}</span>
+              <p className="muted">{status?.remote_status === 'Remote not fetched' ? 'Remote status is not available yet. Run Check Now to fetch origin.' : 'Your local checkout is already up to date with origin/main.'}</p>
+              <div className="updateHealthStats"><div><span>Ahead / Behind</span><strong>{Number(status?.ahead || 0)} ahead / {Number(status?.behind || 0)} behind</strong></div></div>
             </div>
           )}
         </div>
@@ -3464,7 +3496,8 @@ function UpdateCenterPage({ user }) {
             <button type="button" onClick={runBackupNow} disabled={!canEdit || busy === 'backup'}>{busy === 'backup' ? 'Backing up...' : 'Run Backup Now'}</button>
           </div>
           <div className="updateBackupsList">
-            {backups.length ? backups.map((item) => (
+            {loading && <LoadingRows count={3} />}
+            {!loading && backups.length ? backups.map((item) => (
               <div className="updateBackupRow" key={item.name}>
                 <div>
                   <strong>{item.name}</strong>
@@ -3477,7 +3510,7 @@ function UpdateCenterPage({ user }) {
                   <button type="button" className="danger" onClick={() => deleteBackup(item.name)} disabled={!canEdit || busy === `delete-${item.name}`}>{busy === `delete-${item.name}` ? 'Deleting...' : 'Delete'}</button>
                 </div>
               </div>
-            )) : <div className="muted">No backups created yet.</div>}
+            )) : !loading && <div className="muted">No backups found in backend/backups.</div>}
           </div>
           {latestBackup && <p className="muted">Latest backup: <code>{latestBackup.name}</code></p>}
         </div>
@@ -3486,12 +3519,12 @@ function UpdateCenterPage({ user }) {
           <div className="sectionHeader">
             <div><span className="eyebrow">Storage</span><h3>Disk Usage</h3></div>
           </div>
-          <div className="updateHealthStats">
-            <div><span>Database Size</span><strong>{diskUsage?.database_size_label || '-'}</strong></div>
-            <div><span>Uploaded Files</span><strong>{diskUsage?.uploaded_files_size_label || '-'}</strong></div>
-            <div><span>Backup Archive</span><strong>{diskUsage?.backup_archive_size_label || '-'}</strong></div>
-            <div><span>Total Size</span><strong>{diskUsage?.total_size_label || '-'}</strong></div>
-          </div>
+          {loading ? <LoadingRows /> : <div className="updateHealthStats">
+            <div><span>Database Size</span><strong>{display(diskUsage?.database_size_label, '0.00 B')}</strong></div>
+            <div><span>Uploaded Files</span><strong>{display(diskUsage?.uploaded_files_size_label, '0.00 B')}</strong></div>
+            <div><span>Backup Archive</span><strong>{display(diskUsage?.backup_archive_size_label, '0.00 B')}</strong></div>
+            <div><span>Total Project Size</span><strong>{display(diskUsage?.total_size_label, '0.00 B')}</strong></div>
+          </div>}
         </div>
 
         <div className="panel updateHealthCard">
@@ -3499,16 +3532,16 @@ function UpdateCenterPage({ user }) {
             <div><span className="eyebrow">Runtime</span><h3>App Process</h3></div>
             <StatusPill value={serviceStatus} />
           </div>
-          <div className="updateHealthStats">
-            <div><span>Backend Status</span><strong>{serviceStatus || '-'}</strong></div>
-            <div><span>Service Uptime</span><strong>{processInfo?.service_uptime || '-'}</strong></div>
-            <div><span>Memory Usage</span><strong>{processInfo?.memory_usage || '-'}</strong></div>
-            <div><span>PID</span><strong>{processInfo?.pid || '-'}</strong></div>
-            <div><span>Python Version</span><strong>{processInfo?.python_version || '-'}</strong></div>
-            <div><span>Node Version</span><strong>{processInfo?.node_version || '-'}</strong></div>
-            <div><span>Install Directory</span><strong>{processInfo?.install_directory || '/opt/noc360'}</strong></div>
-            <div><span>Environment</span><strong>{processInfo?.environment || '-'}</strong></div>
-          </div>
+          {loading ? <LoadingRows /> : <div className="updateHealthStats">
+            <div><span>Backend Status</span><strong>{display(serviceStatus)}</strong></div>
+            <div><span>Service Uptime</span><strong>{display(processInfo?.service_uptime)}</strong></div>
+            <div><span>Memory Usage</span><strong>{display(processInfo?.memory_usage, '0.00 B')}</strong></div>
+            <div><span>PID</span><strong>{display(processInfo?.pid)}</strong></div>
+            <div><span>Python Version</span><strong>{display(processInfo?.python_version, 'Python not available')}</strong></div>
+            <div><span>Node Version</span><strong>{display(processInfo?.node_version, 'Node not available')}</strong></div>
+            <div><span>Install Directory</span><strong>{display(processInfo?.install_directory, 'Not available locally')}</strong></div>
+            <div><span>Environment</span><strong>{display(processInfo?.environment)}</strong></div>
+          </div>}
         </div>
 
         <div className="panel updateHealthCard updateHealthLogsCard">
@@ -5968,6 +6001,10 @@ function dualMoney(usdValue, inrValue) {
   return <span className="dualMoney"><b>{usd(usdValue)}</b><small>{inr(inrValue)}</small></span>;
 }
 
+function inrPrimary(inrValue, usdDifference = 0) {
+  return <span className="dualMoney"><b>{inr(inrValue)}</b><small>USD Difference: {usd(usdDifference)}</small></span>;
+}
+
 function exchangeText(rate) {
   return `1 USD = ${inr(rate)}`;
 }
@@ -6007,13 +6044,14 @@ function BillingCards({ summary }) {
     ['Today Payments', summary.today_payments, summary.today_payments_inr],
     ['Monthly Charges', summary.monthly_charges, summary.monthly_charges_inr],
     ['Monthly Payments', summary.monthly_payments, summary.monthly_payments_inr],
-    ['Total Outstanding', summary.total_outstanding, summary.total_outstanding_inr],
+    ['Final Outstanding INR', summary.total_outstanding_inr, summary.usd_difference, true],
   ];
   return (
     <div className="cards billingCards">
-      {cards.map(([label, value, inrValue]) => (
-        <div className={`metric ${label.includes('Outstanding') && Number(value) > 0 ? 'metricAlert' : ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`} key={label}><span>{label}</span><strong>{dualMoney(value, inrValue)}</strong></div>
+      {cards.map(([label, value, inrValue, primaryInr]) => (
+        <div className={`metric ${label.includes('Outstanding') && Number(value) > 0 ? 'metricAlert' : ''} ${label.includes('Payments') ? 'payment' : ''} ${label.includes('Charges') ? 'revenue' : ''}`} key={label}><span>{label}</span><strong>{primaryInr ? inrPrimary(value, inrValue) : dualMoney(value, inrValue)}</strong></div>
       ))}
+      {summary.fx_adjusted && <div className="metric payment"><span>Status</span><strong>Settled<small>FX difference adjusted</small></strong></div>}
     </div>
   );
 }
@@ -6022,8 +6060,8 @@ function ClientOutstandingTable({ rows }) {
   return (
     <div className="panel">
       <h2>Client-wise Outstanding</h2>
-      <table><thead><tr><th>Client</th><th>Outstanding USD</th><th>Outstanding INR</th></tr></thead><tbody>{rows.map((row) => (
-        <tr key={row.client}><td>{row.client}</td><td className={row.outstanding > 0 ? 'outstandingText' : 'okText'}>{usd(row.outstanding)}</td><td className={row.outstanding_inr > 0 ? 'outstandingText' : 'okText'}>{inr(row.outstanding_inr)}</td></tr>
+      <table><thead><tr><th>Client</th><th>Final Outstanding INR</th><th>USD Difference</th><th>Status</th></tr></thead><tbody>{rows.map((row) => (
+        <tr key={row.client}><td>{row.client}</td><td className={row.outstanding_inr > 0 ? 'outstandingText' : 'okText'}>{inr(row.outstanding_inr)}</td><td>{usd(row.usd_difference ?? row.outstanding)}</td><td><StatusPill value={row.status || (Math.abs(Number(row.outstanding_inr || 0)) <= 0 ? 'Settled' : 'Outstanding')} />{row.fx_adjusted && <div className="muted">FX difference adjusted</div>}</td></tr>
       ))}</tbody></table>
     </div>
   );
@@ -6856,7 +6894,8 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
   return (
     <section>
       <BillingCards summary={billing.ledgerSummary || {}} />
-      {Number(billing.ledgerSummary?.total_outstanding || 0) > 0 && <div className="alert billingAlert">Payment follow-up required for outstanding balance.</div>}
+      {Number(billing.ledgerSummary?.total_outstanding_inr || 0) > 0 && <div className="alert billingAlert">Payment follow-up required for outstanding INR balance.</div>}
+      {billing.ledgerSummary?.fx_adjusted && <div className="alert billingAlert">FX difference adjusted.</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
       <WeeklyInvoicePanel user={user} clients={data.clients} canCreate={canCreate} canExport={canExport} canDelete={canDelete} />
       {false && (
@@ -6894,34 +6933,47 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
         </div>
       )}
       {entryMessage && <div className="toastSuccess">{entryMessage}</div>}
-      <div className="toolbar">
-        {user.role !== 'customer' && <ClientSelect value={filters.client_id} clients={data.clients} onChange={(value) => setFilters({ ...filters, client_id: value, page: 1 })} />}
-        <input type="date" title="From Date" value={filters.from_date} onChange={(event) => setFilters({ ...filters, from_date: event.target.value, page: 1 })} />
-        <input type="date" title="To Date" value={filters.to_date} onChange={(event) => setFilters({ ...filters, to_date: event.target.value, page: 1 })} />
-        <select value={filters.entry_type} onChange={(event) => setFilters({ ...filters, entry_type: event.target.value, page: 1 })}>
-          <option value="">All types</option>
-          <option>Debit</option>
-          <option>Credit</option>
-        </select>
-        <select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value, page: 1 })}>
-          <option value="">All categories</option>
-          {ledgerCategories.map((type) => <option key={type}>{type}</option>)}
-        </select>
-        <input placeholder="Search description" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value, page: 1 })} />
-        {user.role !== 'customer' && <input placeholder="Created By" value={filters.created_by} onChange={(event) => setFilters({ ...filters, created_by: event.target.value, page: 1 })} />}
-        <select value={filters.page_size} onChange={(event) => applyFilters({ ...filters, page_size: event.target.value, page: 1 })}>
-          <option value="25">25</option>
-          <option value="50">50</option>
-          <option value="100">100</option>
-          <option value="all">All</option>
-        </select>
-        <button onClick={() => applyFilters({ ...filters, page: 1 })}>Run</button>
-        <button onClick={() => quickFilter('today')}>Today</button>
-        <button onClick={() => quickFilter('week')}>This Week</button>
-        <button onClick={() => quickFilter('month')}>This Month</button>
-        <button onClick={() => quickFilter('lastMonth')}>Last Month</button>
-        <button onClick={() => quickFilter('all')}>All Time</button>
-        {canExport && <button onClick={() => exportRows('ledger.csv', filteredRows)}><Download size={16} /> Export CSV</button>}
+      <div className="panel moneyEngineFilterPanel">
+        <div className="moneyEngineFilterHeader">
+          <div>
+            <span className="eyebrow">Ledger Explorer</span>
+            <h2>Filter & Search</h2>
+          </div>
+          <p className="muted">Refine Money Engine ledger entries by client, dates, type, category, and source details.</p>
+        </div>
+        <div className="moneyEngineFilterGrid">
+          {user.role !== 'customer' && <label className="fieldLabel">Client / Group<ClientSelect value={filters.client_id} clients={data.clients} onChange={(value) => setFilters({ ...filters, client_id: value, page: 1 })} /></label>}
+          <label className="fieldLabel">From Date<input type="date" title="From Date" value={filters.from_date} onChange={(event) => setFilters({ ...filters, from_date: event.target.value, page: 1 })} /></label>
+          <label className="fieldLabel">To Date<input type="date" title="To Date" value={filters.to_date} onChange={(event) => setFilters({ ...filters, to_date: event.target.value, page: 1 })} /></label>
+          <label className="fieldLabel">Entry Type<select value={filters.entry_type} onChange={(event) => setFilters({ ...filters, entry_type: event.target.value, page: 1 })}>
+            <option value="">All types</option>
+            <option>Debit</option>
+            <option>Credit</option>
+          </select></label>
+          <label className="fieldLabel">Category<select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value, page: 1 })}>
+            <option value="">All categories</option>
+            {ledgerCategories.map((type) => <option key={type}>{type}</option>)}
+          </select></label>
+          <label className="fieldLabel">Search Description<input placeholder="Search description" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value, page: 1 })} /></label>
+          {user.role !== 'customer' && <label className="fieldLabel">Created By<input placeholder="Created By" value={filters.created_by} onChange={(event) => setFilters({ ...filters, created_by: event.target.value, page: 1 })} /></label>}
+          <label className="fieldLabel">Rows Per Page<select value={filters.page_size} onChange={(event) => applyFilters({ ...filters, page_size: event.target.value, page: 1 })}>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="all">All</option>
+          </select></label>
+        </div>
+        <div className="moneyEngineFilterActions">
+          <div className="moneyEngineQuickFilters">
+            <button className="primary" onClick={() => applyFilters({ ...filters, page: 1 })}>Run</button>
+            <button onClick={() => quickFilter('today')}>Today</button>
+            <button onClick={() => quickFilter('week')}>This Week</button>
+            <button onClick={() => quickFilter('month')}>This Month</button>
+            <button onClick={() => quickFilter('lastMonth')}>Last Month</button>
+            <button onClick={() => quickFilter('all')}>All Time</button>
+          </div>
+          {canExport && <button className="moneyEngineExportButton" onClick={() => exportRows('ledger.csv', filteredRows)}><Download size={16} /> Export CSV</button>}
+        </div>
       </div>
       <div className="paginationBar">
         <span>{pageInfo.total} ledger entries • Page {pageInfo.page} of {pageInfo.total_pages}</span>
@@ -6946,16 +6998,19 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
 
 function BillingRateConfig({ settings, reload }) {
   const [rate, setRate] = useState(settings?.usd_to_inr_rate || 83);
+  const [tolerance, setTolerance] = useState(settings?.fx_tolerance_inr ?? 1);
   useEffect(() => setRate(settings?.usd_to_inr_rate || 83), [settings?.usd_to_inr_rate]);
+  useEffect(() => setTolerance(settings?.fx_tolerance_inr ?? 1), [settings?.fx_tolerance_inr]);
   const save = async (event) => {
     event.preventDefault();
-    await request('/settings/billing-rate', { method: 'PUT', body: JSON.stringify({ usd_to_inr_rate: Number(rate) }) });
+    await request('/settings/billing-rate', { method: 'PUT', body: JSON.stringify({ usd_to_inr_rate: Number(rate), fx_tolerance_inr: Number(tolerance) }) });
     await reload();
   };
   return (
     <form className="inlineForm settingsForm" onSubmit={save}>
       <strong>Billing Rate</strong>
       <label className="fieldLabel">USD to INR<input type="number" step="0.0001" value={rate} onChange={(event) => setRate(event.target.value)} /></label>
+      <label className="fieldLabel">FX Tolerance INR<input type="number" min="0" step="0.01" value={tolerance} onChange={(event) => setTolerance(event.target.value)} /></label>
       <span className="ratePreview">{exchangeText(rate)}</span>
       <button className="primary">Save Rate</button>
     </form>
@@ -7008,8 +7063,8 @@ function ClientsPage({ clients, reload, user }) {
         <input type="password" placeholder="Confirm password" value={form.confirm_password} onChange={(event) => setForm({ ...form, confirm_password: event.target.value })} />
         <button className="primary"><Plus size={16} /> Add Client</button>
       </form>}
-      <div className="tableWrap"><table><thead><tr><th>Client</th><th>Status</th><th>Username</th><th>Outstanding USD</th><th>Outstanding INR</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead><tbody>{clients.map((client) => (
-        <tr key={client.id}><td><button className="linkButton" onClick={() => openDetail(client.id)}>{client.name}</button></td><td><StatusPill value={client.status} /></td><td>{client.username || '-'}</td><td className={client.outstanding_usd > 0 ? 'outstandingText' : ''}>{usd(client.outstanding_usd)}</td><td className={client.outstanding_inr > 0 ? 'outstandingText' : ''}>{inr(client.outstanding_inr)}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button onClick={() => setResetClient(client)}>Reset Login Password</button>}{canDelete && <button className="iconButton danger" onClick={() => remove(client.id)}><Trash2 size={16} /></button>}</td>}</tr>
+      <div className="tableWrap"><table><thead><tr><th>Client</th><th>Status</th><th>Username</th><th>Final Outstanding INR</th><th>USD Difference</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead><tbody>{clients.map((client) => (
+        <tr key={client.id}><td><button className="linkButton" onClick={() => openDetail(client.id)}>{client.name}</button></td><td><StatusPill value={client.ledger_status || client.status} /></td><td>{client.username || '-'}</td><td className={client.outstanding_inr > 0 ? 'outstandingText' : 'okText'}>{inr(client.outstanding_inr)}</td><td>{usd(client.usd_difference ?? client.outstanding_usd)}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button onClick={() => setResetClient(client)}>Reset Login Password</button>}{canDelete && <button className="iconButton danger" onClick={() => remove(client.id)}><Trash2 size={16} /></button>}</td>}</tr>
       ))}</tbody></table></div>
       {resetClient && <div className="modalBackdrop modal-overlay"><div className="modal modal-box"><div className="modalHeader"><h2>Reset {resetClient.name}</h2><button className="iconButton" onClick={() => setResetClient(null)}><X size={18} /></button></div><input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /><button className="primary" onClick={resetPassword}>Reset Password</button></div></div>}
       {detail && <ClientDetailModal detail={detail} onClose={() => setDetail(null)} canExport={canExport} />}

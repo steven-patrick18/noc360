@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import platform
 import posixpath
 import re
 import secrets
@@ -149,13 +150,14 @@ CHARGE_TYPES = {
     "Setup Charges",
     "Other Charges",
 }
-LEDGER_CATEGORIES = CHARGE_TYPES | {"Payment", "Adjustment"}
+LEDGER_CATEGORIES = CHARGE_TYPES | {"Payment", "Adjustment", "FX Adjustment"}
 DEFAULT_WEEKLY_DAILY_EXPECTED_INR = float(os.getenv("WEEKLY_INVOICE_DAILY_EXPECTED_INR", "800000"))
 WEEKLY_PROFIT_ELIGIBLE_CATEGORIES = {"Usage Charges", "DID Charges", "Server Charges", "Port Charges", "Setup Charges"}
 TICKET_CATEGORIES = {"Billing", "Routing", "VOS", "RDP", "DID", "Other"}
 TICKET_PRIORITIES = {"Low", "Medium", "High", "Critical"}
 TICKET_STATUSES = {"Open", "In Progress", "Waiting Client", "Resolved", "Closed"}
 DEFAULT_USD_TO_INR = 83.0
+DEFAULT_FX_TOLERANCE_INR = 1.0
 TERMINAL_RISK_LEVELS = {"Safe", "Medium", "Dangerous"}
 TERMINAL_SECRET_WORDS = {"password", "passwd", "token", "secret", "key"}
 TERMINAL_DANGEROUS_PATTERNS = ("rm -rf", "reboot", "shutdown", "mkfs", "dd ", "iptables -f", "iptables flush", "ufw reset", "systemctl stop")
@@ -292,11 +294,11 @@ ROLE_DEFAULT_PAGES = {
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
 
-PROJECT_ROOT = "/opt/noc360"
+PROJECT_ROOT = os.getenv("NOC360_PROJECT_ROOT") or str(Path(__file__).resolve().parent.parent)
 UPDATE_CENTER_PROJECT_PATH = Path(PROJECT_ROOT)
 UPDATE_CENTER_BACKEND_PATH = UPDATE_CENTER_PROJECT_PATH / "backend"
 UPDATE_CENTER_FRONTEND_PATH = UPDATE_CENTER_PROJECT_PATH / "frontend"
-UPDATE_CENTER_BACKUPS_PATH = UPDATE_CENTER_PROJECT_PATH / "backups"
+UPDATE_CENTER_BACKUPS_PATH = UPDATE_CENTER_BACKEND_PATH / "backups"
 UPDATE_CENTER_SERVICE_NAME = "noc360"
 UPDATE_CENTER_BRANCH = "main"
 UPDATE_CENTER_LOCK = threading.Lock()
@@ -1044,8 +1046,12 @@ def seed_terminal_default_commands(db: Session):
 def get_billing_setting(db: Session):
     setting = db.get(BillingSetting, 1)
     if not setting:
-        setting = BillingSetting(id=1, usd_to_inr_rate=DEFAULT_USD_TO_INR)
+        setting = BillingSetting(id=1, usd_to_inr_rate=DEFAULT_USD_TO_INR, fx_tolerance_inr=DEFAULT_FX_TOLERANCE_INR)
         db.add(setting)
+        db.commit()
+        db.refresh(setting)
+    if setting.fx_tolerance_inr is None:
+        setting.fx_tolerance_inr = DEFAULT_FX_TOLERANCE_INR
         db.commit()
         db.refresh(setting)
     return setting
@@ -1952,6 +1958,38 @@ def run_update_center_checked(args: list[str], *, cwd: str | Path = PROJECT_ROOT
     return stdout
 
 
+def run_update_center_optional(args: list[str], *, cwd: str | Path = PROJECT_ROOT, timeout: int = 30, unavailable: str | None = None):
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "output": unavailable or f"{args[0]} not available locally", "returncode": 127}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "output": f"{args[0]} timed out", "returncode": 124}
+    except Exception as exc:
+        return {"ok": False, "output": str(exc), "returncode": 1}
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    return {
+        "ok": completed.returncode == 0,
+        "output": stdout or stderr,
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": completed.returncode,
+    }
+
+
+def update_center_value(args: list[str], *, cwd: str | Path = PROJECT_ROOT, timeout: int = 30, fallback: str = "Not available locally"):
+    result = run_update_center_optional(args, cwd=cwd, timeout=timeout, unavailable=fallback)
+    return result["output"] if result["ok"] and result.get("output") else fallback
+
+
 def require_update_center_project():
     if not update_center_project_exists():
         raise HTTPException(status_code=400, detail=f"Update Center project path is missing: {UPDATE_CENTER_PROJECT_PATH}")
@@ -1991,7 +2029,7 @@ def get_update_center_backup_rows():
     UPDATE_CENTER_BACKUPS_PATH.mkdir(parents=True, exist_ok=True)
     rows = []
     for entry in sorted(UPDATE_CENTER_BACKUPS_PATH.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
-        if not entry.is_dir():
+        if not (entry.is_dir() or entry.is_file()):
             continue
         stamp = datetime.fromtimestamp(entry.stat().st_mtime)
         size_bytes = update_center_path_size(entry)
@@ -1999,20 +2037,24 @@ def get_update_center_backup_rows():
             "name": update_center_backup_name(entry),
             "path": str(entry),
             "created_at": stamp.isoformat(),
+            "date": stamp.isoformat(),
             "size_bytes": size_bytes,
             "size_label": format_update_center_bytes(size_bytes),
+            "type": "directory" if entry.is_dir() else "file",
         })
     return rows
 
 
 def resolve_update_center_backup(name: str):
     require_update_center_project()
-    safe_name = re.sub(r"[^A-Za-z0-9_-]", "", str(name or ""))
+    safe_name = Path(str(name or "")).name
+    if not re.match(r"^[A-Za-z0-9_.-]+$", safe_name):
+        safe_name = ""
     if not safe_name:
         raise HTTPException(status_code=400, detail="Backup name is required")
     backup_path = (UPDATE_CENTER_BACKUPS_PATH / safe_name).resolve()
     backups_root = UPDATE_CENTER_BACKUPS_PATH.resolve()
-    if backups_root not in backup_path.parents or not backup_path.exists() or not backup_path.is_dir():
+    if backups_root not in backup_path.parents or not backup_path.exists() or not (backup_path.is_dir() or backup_path.is_file()):
         raise HTTPException(status_code=404, detail="Backup not found")
     return backup_path
 
@@ -2025,7 +2067,7 @@ def collect_update_center_disk_usage():
     database_size = update_center_path_size(db_path)
     uploads_size = update_center_path_size(uploads_path)
     backups_size = update_center_path_size(backups_path)
-    total_size = database_size + uploads_size + backups_size
+    total_size = update_center_path_size(UPDATE_CENTER_PROJECT_PATH)
     return {
         "database_size": database_size,
         "database_size_label": format_update_center_bytes(database_size),
@@ -2035,20 +2077,51 @@ def collect_update_center_disk_usage():
         "backup_archive_size_label": format_update_center_bytes(backups_size),
         "total_size": total_size,
         "total_size_label": format_update_center_bytes(total_size),
+        "database_path": str(db_path),
+        "uploads_path": str(uploads_path),
+        "backups_path": str(backups_path),
+        "project_path": str(UPDATE_CENTER_PROJECT_PATH),
     }
 
 
 def collect_update_center_process():
     require_update_center_project()
-    service_status = run_update_center_checked(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20)
-    pid = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MainPID", "--value"], cwd=PROJECT_ROOT, timeout=20)
-    uptime = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "ActiveEnterTimestamp", "--value"], cwd=PROJECT_ROOT, timeout=20)
-    memory = run_update_center_checked(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MemoryCurrent", "--value"], cwd=PROJECT_ROOT, timeout=20)
-    python_version = run_update_center_checked(["python3", "--version"], cwd=PROJECT_ROOT, timeout=20)
-    node_version = run_update_center_checked(["node", "--version"], cwd=PROJECT_ROOT, timeout=20)
-    environment_name = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or "production"
-    pid_value = int(pid or "0") if str(pid or "").strip().isdigit() else 0
-    memory_bytes = int(memory or "0") if str(memory or "").strip().isdigit() else 0
+    is_windows = os.name == "nt"
+    environment_name = os.getenv("ENVIRONMENT") or os.getenv("APP_ENV") or os.getenv("NODE_ENV") or ("local-windows" if is_windows else "production")
+    python_version = update_center_value(["python", "--version"], cwd=PROJECT_ROOT, timeout=20, fallback="Python not available")
+    if python_version == "Python not available" and not is_windows:
+        python_version = update_center_value(["python3", "--version"], cwd=PROJECT_ROOT, timeout=20, fallback="Python not available")
+    node_version = update_center_value(["node", "-v"], cwd=PROJECT_ROOT, timeout=20, fallback="Node not available")
+    pid_value = None
+    memory_bytes = 0
+    uptime = "Not available locally"
+    service_status = "Not available locally"
+    if is_windows:
+        current_pid = os.getpid()
+        proc = run_update_center_optional([
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            f"$p=Get-Process -Id {current_pid}; [pscustomobject]@{{Id=$p.Id;WorkingSet64=$p.WorkingSet64;StartTime=$p.StartTime.ToString('o')}} | ConvertTo-Json -Compress",
+        ], cwd=PROJECT_ROOT, timeout=20, unavailable="PowerShell not available")
+        if proc["ok"] and proc.get("output"):
+            try:
+                info = json.loads(proc["output"])
+                pid_value = int(info.get("Id") or current_pid)
+                memory_bytes = int(info.get("WorkingSet64") or 0)
+                uptime = info.get("StartTime") or "Not available locally"
+                service_status = "Running locally"
+            except Exception:
+                pid_value = current_pid
+                service_status = "Running locally"
+    else:
+        service_result = run_update_center_optional(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20, unavailable="Service not installed")
+        service_status = service_result["output"] if service_result["ok"] else "Service not installed"
+        pid = update_center_value(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MainPID", "--value"], cwd=PROJECT_ROOT, timeout=20, fallback="0")
+        uptime = update_center_value(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "ActiveEnterTimestamp", "--value"], cwd=PROJECT_ROOT, timeout=20, fallback="Service not installed")
+        memory = update_center_value(["systemctl", "show", UPDATE_CENTER_SERVICE_NAME, "--property", "MemoryCurrent", "--value"], cwd=PROJECT_ROOT, timeout=20, fallback="0")
+        pid_value = int(pid or "0") if str(pid or "").strip().isdigit() and int(pid or "0") > 0 else None
+        memory_bytes = int(memory or "0") if str(memory or "").strip().isdigit() else 0
     return {
         "backend_status": service_status,
         "service_uptime": uptime or "-",
@@ -2059,6 +2132,8 @@ def collect_update_center_process():
         "node_version": node_version,
         "install_directory": str(UPDATE_CENTER_PROJECT_PATH),
         "environment": environment_name,
+        "platform": platform.platform(),
+        "service_name": UPDATE_CENTER_SERVICE_NAME,
     }
 
 
@@ -2074,13 +2149,43 @@ def summarize_update_center_commits(lines: list[str]):
 
 def collect_update_center_status():
     require_update_center_project()
-    current_branch = run_update_center_checked(["git", "branch", "--show-current"], cwd=PROJECT_ROOT, timeout=20)
-    current_commit = run_update_center_checked(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, timeout=20)
-    remote_commit = run_update_center_checked(["git", "rev-parse", "--short", f"origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=20)
-    last_commit_message = run_update_center_checked(["git", "log", "-1", "--pretty=%s"], cwd=PROJECT_ROOT, timeout=20)
-    commit_author = run_update_center_checked(["git", "log", "-1", "--pretty=%an"], cwd=PROJECT_ROOT, timeout=20)
-    commit_date = run_update_center_checked(["git", "log", "-1", "--date=iso-strict", "--pretty=%ad"], cwd=PROJECT_ROOT, timeout=20)
-    service_status = run_update_center_checked(["systemctl", "is-active", UPDATE_CENTER_SERVICE_NAME], cwd=PROJECT_ROOT, timeout=20)
+    git_check = run_update_center_optional(["git", "rev-parse", "--is-inside-work-tree"], cwd=PROJECT_ROOT, timeout=20, unavailable="Git not available")
+    if not git_check["ok"]:
+        last_checked = datetime.utcnow().isoformat()
+        return merge_update_center_state({
+            "current_branch": "Git not initialized",
+            "current_commit": "Git not initialized",
+            "remote_commit": "Git not initialized",
+            "last_commit_message": "Git not initialized",
+            "commit_author": "Git not initialized",
+            "commit_date": "Git not initialized",
+            "service_status": collect_update_center_process().get("backend_status"),
+            "update_available": False,
+            "ahead": 0,
+            "behind": 0,
+            "remote_status": "Git not initialized",
+            "last_checked": last_checked,
+            "current_local_branch": "Git not initialized",
+            "current_local_commit": "Git not initialized",
+            "latest_remote_commit": "Git not initialized",
+            "last_checked_at": last_checked,
+        })
+    current_branch = update_center_value(["git", "branch", "--show-current"], cwd=PROJECT_ROOT, timeout=20, fallback="Detached HEAD")
+    current_commit = update_center_value(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT, timeout=20, fallback="Git not initialized")
+    remote_ref = f"origin/{UPDATE_CENTER_BRANCH}"
+    remote_commit = update_center_value(["git", "rev-parse", "--short", remote_ref], cwd=PROJECT_ROOT, timeout=20, fallback="Remote not fetched")
+    last_commit_message = update_center_value(["git", "log", "-1", "--pretty=%s"], cwd=PROJECT_ROOT, timeout=20, fallback="No commits")
+    commit_author = update_center_value(["git", "log", "-1", "--pretty=%an"], cwd=PROJECT_ROOT, timeout=20, fallback="No commits")
+    commit_date = update_center_value(["git", "log", "-1", "--pretty=%ad", "--date=iso"], cwd=PROJECT_ROOT, timeout=20, fallback="No commits")
+    ahead = behind = 0
+    remote_status = "Remote not fetched"
+    compare = run_update_center_optional(["git", "rev-list", "--left-right", "--count", f"HEAD...{remote_ref}"], cwd=PROJECT_ROOT, timeout=20)
+    if compare["ok"] and compare.get("output"):
+        parts = compare["output"].split()
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            ahead, behind = int(parts[0]), int(parts[1])
+            remote_status = "Update available" if behind else ("Local commits ahead" if ahead else "Up to date")
+    service_status = collect_update_center_process().get("backend_status")
     last_checked = datetime.utcnow().isoformat()
     return merge_update_center_state({
         "current_branch": current_branch,
@@ -2090,7 +2195,10 @@ def collect_update_center_status():
         "commit_author": commit_author,
         "commit_date": commit_date,
         "service_status": service_status,
-        "update_available": current_commit != remote_commit,
+        "update_available": behind > 0 if remote_status != "Remote not fetched" else current_commit != remote_commit and remote_commit != "Remote not fetched",
+        "ahead": ahead,
+        "behind": behind,
+        "remote_status": remote_status,
         "last_checked": last_checked,
         # Keep the existing frontend cards happy while the backend shape evolves.
         "current_local_branch": current_branch,
@@ -2119,6 +2227,10 @@ def build_update_center_backup():
 
 def restore_update_center_backup(backup_path: Path):
     push_update_center_log(f"Restoring backup from {backup_path}")
+    if backup_path.is_file():
+        if backup_path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
+            shutil.copy2(backup_path, UPDATE_CENTER_BACKEND_PATH / "noc360.db")
+        return
     restore_map = [
         (backup_path / "noc360.db", UPDATE_CENTER_BACKEND_PATH / "noc360.db"),
         (backup_path / "main.py", UPDATE_CENTER_BACKEND_PATH / "main.py"),
@@ -2132,10 +2244,12 @@ def restore_update_center_backup(backup_path: Path):
 def perform_update_center_check():
     require_update_center_project()
     push_update_center_log("Fetching latest code from origin")
-    run_update_center_checked(["git", "fetch", "origin"], cwd=PROJECT_ROOT, timeout=120)
+    fetch = run_update_center_optional(["git", "fetch", "origin"], cwd=PROJECT_ROOT, timeout=120, unavailable="Git not available")
+    if not fetch["ok"]:
+        push_update_center_log(fetch["output"] or "Unable to fetch origin", "error")
     status = collect_update_center_status()
-    commit_log = run_update_center_checked(["git", "log", f"HEAD..origin/{UPDATE_CENTER_BRANCH}", "--oneline"], cwd=PROJECT_ROOT, timeout=30)
-    diff_stat = run_update_center_checked(["git", "diff", "--stat", f"HEAD..origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=30)
+    commit_log = update_center_value(["git", "log", f"HEAD..origin/{UPDATE_CENTER_BRANCH}", "--oneline"], cwd=PROJECT_ROOT, timeout=30, fallback="")
+    diff_stat = update_center_value(["git", "diff", "--stat", f"HEAD..origin/{UPDATE_CENTER_BRANCH}"], cwd=PROJECT_ROOT, timeout=30, fallback="")
     commit_lines = [line.strip() for line in commit_log.splitlines() if line.strip()]
     diff_lines = [line.strip() for line in diff_stat.splitlines() if line.strip()]
     return merge_update_center_state({
@@ -3040,7 +3154,10 @@ def restore_update_center_backup_route(backup_name: str = Query(...), request: R
 def delete_update_center_backup(backup_name: str, request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
     try:
         backup_path = resolve_update_center_backup(backup_name)
-        shutil.rmtree(backup_path)
+        if backup_path.is_dir():
+            shutil.rmtree(backup_path)
+        else:
+            backup_path.unlink()
         rows = get_update_center_backup_rows()
     except HTTPException:
         raise
@@ -3061,9 +3178,12 @@ def download_update_center_backup(backup_name: str, user: User = Depends(require
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for file_path in backup_path.rglob("*"):
-            if file_path.is_file():
-                archive.write(file_path, arcname=str(Path(backup_name) / file_path.relative_to(backup_path)))
+        if backup_path.is_file():
+            archive.write(backup_path, arcname=backup_path.name)
+        else:
+            for file_path in backup_path.rglob("*"):
+                if file_path.is_file():
+                    archive.write(file_path, arcname=str(Path(backup_name) / file_path.relative_to(backup_path)))
     buffer.seek(0)
     headers = {"Content-Disposition": f'attachment; filename="{backup_name}.zip"'}
     return StreamingResponse(buffer, media_type="application/zip", headers=headers)
@@ -3109,6 +3229,11 @@ def run_update_center(request: Request, db: Session = Depends(get_db), user: Use
 def rollback_update_center(request: Request, db: Session = Depends(get_db), user: User = Depends(require_update_center("can_edit"))):
     require_update_center_project()
     last_backup = read_update_center_state().get("last_backup_path")
+    if not last_backup or not Path(last_backup).exists():
+        latest = get_update_center_backup_rows()
+        last_backup = latest[0]["path"] if latest else None
+        if last_backup:
+            merge_update_center_state({"last_backup_path": last_backup})
     if not last_backup or not Path(last_backup).exists():
         raise HTTPException(status_code=400, detail="No backup is available for rollback")
     start_update_center_job("rollback")
@@ -4500,9 +4625,24 @@ def client_financial_totals(db: Session, client_id: int):
     credit_usd = sum(row.credit_usd or row.credit_amount or 0 for row in rows)
     debit_inr = sum(row.debit_inr or 0 for row in rows)
     credit_inr = sum(row.credit_inr or 0 for row in rows)
+    tolerance = float(get_billing_setting(db).fx_tolerance_inr or DEFAULT_FX_TOLERANCE_INR)
+    return ledger_settlement_totals(debit_usd - credit_usd, debit_inr - credit_inr, tolerance)
+
+
+def ledger_settlement_totals(outstanding_usd: float, outstanding_inr: float, tolerance_inr: float = DEFAULT_FX_TOLERANCE_INR):
+    usd_balance = round(float(outstanding_usd or 0), 2)
+    inr_balance = round(float(outstanding_inr or 0), 2)
+    tolerance = abs(float(tolerance_inr or DEFAULT_FX_TOLERANCE_INR))
+    inr_settled = abs(inr_balance) <= tolerance
+    usd_difference = usd_balance if inr_settled else 0.0
     return {
-        "outstanding_usd": round(debit_usd - credit_usd, 2),
-        "outstanding_inr": round(debit_inr - credit_inr, 2),
+        "outstanding_usd": 0.0 if inr_settled else usd_balance,
+        "outstanding_inr": 0.0 if inr_settled else inr_balance,
+        "usd_difference": round(usd_difference, 2),
+        "raw_outstanding_usd": usd_balance,
+        "raw_outstanding_inr": inr_balance,
+        "fx_adjusted": bool(inr_settled and abs(usd_balance) >= 0.01),
+        "ledger_status": "Settled" if inr_settled else ("Outstanding" if inr_balance > 0 else "Advance"),
     }
 
 
@@ -4756,37 +4896,66 @@ def recalc_client_ledger(db: Session, client_id: int):
     db.flush()
 
 
-def ledger_summary(rows):
+def ledger_summary(rows, tolerance_inr: float = DEFAULT_FX_TOLERANCE_INR):
     today = date.today()
     month_start = today.replace(day=1)
     today_charges = sum(row.debit_usd or row.debit_amount or 0 for row in rows if row.entry_date == today)
     today_payments = sum(row.credit_usd or row.credit_amount or 0 for row in rows if row.entry_date == today)
     monthly_charges = sum(row.debit_usd or row.debit_amount or 0 for row in rows if row.entry_date >= month_start)
     monthly_payments = sum(row.credit_usd or row.credit_amount or 0 for row in rows if row.entry_date >= month_start)
-    outstanding = sum((row.debit_usd or row.debit_amount or 0) - (row.credit_usd or row.credit_amount or 0) for row in rows)
     today_charges_inr = sum(row.debit_inr or 0 for row in rows if row.entry_date == today)
     today_payments_inr = sum(row.credit_inr or 0 for row in rows if row.entry_date == today)
     monthly_charges_inr = sum(row.debit_inr or 0 for row in rows if row.entry_date >= month_start)
     monthly_payments_inr = sum(row.credit_inr or 0 for row in rows if row.entry_date >= month_start)
-    outstanding_inr = sum((row.debit_inr or 0) - (row.credit_inr or 0) for row in rows)
     by_client = {}
     by_client_inr = {}
     for row in rows:
         name = row.client_name or "Unassigned"
         by_client[name] = by_client.get(name, 0) + (row.debit_usd or row.debit_amount or 0) - (row.credit_usd or row.credit_amount or 0)
         by_client_inr[name] = by_client_inr.get(name, 0) + (row.debit_inr or 0) - (row.credit_inr or 0)
+    client_outstanding = []
+    total_outstanding = 0.0
+    total_outstanding_inr = 0.0
+    total_usd_difference = 0.0
+    raw_outstanding = 0.0
+    raw_outstanding_inr = 0.0
+    fx_adjusted = False
+    for key in sorted(by_client):
+        totals = ledger_settlement_totals(by_client.get(key, 0), by_client_inr.get(key, 0), tolerance_inr)
+        total_outstanding += totals["outstanding_usd"]
+        total_outstanding_inr += totals["outstanding_inr"]
+        total_usd_difference += totals["usd_difference"]
+        raw_outstanding += totals["raw_outstanding_usd"]
+        raw_outstanding_inr += totals["raw_outstanding_inr"]
+        fx_adjusted = fx_adjusted or totals["fx_adjusted"]
+        client_outstanding.append({
+            "client": key,
+            "outstanding": totals["outstanding_usd"],
+            "outstanding_inr": totals["outstanding_inr"],
+            "usd_difference": totals["usd_difference"],
+            "raw_outstanding": totals["raw_outstanding_usd"],
+            "raw_outstanding_inr": totals["raw_outstanding_inr"],
+            "fx_adjusted": totals["fx_adjusted"],
+            "status": totals["ledger_status"],
+        })
     return {
         "today_total_charges": round(today_charges, 2),
         "today_payments": round(today_payments, 2),
         "monthly_charges": round(monthly_charges, 2),
         "monthly_payments": round(monthly_payments, 2),
-        "total_outstanding": round(outstanding, 2),
+        "total_outstanding": round(total_outstanding, 2),
         "today_total_charges_inr": round(today_charges_inr, 2),
         "today_payments_inr": round(today_payments_inr, 2),
         "monthly_charges_inr": round(monthly_charges_inr, 2),
         "monthly_payments_inr": round(monthly_payments_inr, 2),
-        "total_outstanding_inr": round(outstanding_inr, 2),
-        "client_outstanding": [{"client": key, "outstanding": round(value, 2), "outstanding_inr": round(by_client_inr.get(key, 0), 2)} for key, value in sorted(by_client.items())],
+        "total_outstanding_inr": round(total_outstanding_inr, 2),
+        "usd_difference": round(total_usd_difference, 2),
+        "raw_total_outstanding": round(raw_outstanding, 2),
+        "raw_total_outstanding_inr": round(raw_outstanding_inr, 2),
+        "fx_adjusted": fx_adjusted,
+        "fx_adjustment_message": "FX difference adjusted" if fx_adjusted else "",
+        "fx_tolerance_inr": round(abs(float(tolerance_inr or DEFAULT_FX_TOLERANCE_INR)), 2),
+        "client_outstanding": client_outstanding,
     }
 
 
@@ -4921,7 +5090,7 @@ def weekly_invoice_charge_preview(db: Session, payload: WeeklyInvoiceCreate, cli
             data_charges += amount_inr
         elif is_credit and row.category == "Payment":
             payment_amount += amount_inr
-        elif row.category == "Adjustment":
+        elif row.category in {"Adjustment", "FX Adjustment"}:
             adjustment_amount += -amount_inr if is_credit else amount_inr
         else:
             other_charges += amount_inr if not is_credit else -amount_inr
@@ -5130,7 +5299,7 @@ def client_invoice_ledger_report(db: Session, user: User, date_from: date | None
             "invoice_id": invoice.id,
         })
 
-    ledger_query_rows = db.query(ClientLedger).filter(ClientLedger.category.in_(("Payment", "Adjustment")))
+    ledger_query_rows = db.query(ClientLedger).filter(ClientLedger.category.in_(("Payment", "Adjustment", "FX Adjustment")))
     if client_scope:
         ledger_query_rows = ledger_query_rows.filter(ClientLedger.client_id.in_(client_scope))
     if date_to:
@@ -5413,7 +5582,7 @@ def client_financials(db: Session, user: User, client_ids=None, date_from=None, 
         elif row.category in {"Server Charges", "Port Charges", "Setup Charges"}:
             item["server_cost"] += debit
             item["server_cost_inr"] += debit_inr
-        elif row.category in {"Other Charges", "Adjustment"}:
+        elif row.category in {"Other Charges", "Adjustment", "FX Adjustment"}:
             item["other_cost"] += debit
             item["other_cost_inr"] += debit_inr
     for cost in data_costs:
@@ -7038,9 +7207,10 @@ def delete_ledger(record_id: int, request: Request, db: Session = Depends(get_db
 @app.get("/api/billing/client-outstanding")
 @app.get("/billing/client-outstanding")
 def get_ledger_summary(client_id: int | None = None, db: Session = Depends(get_db), user: User = Depends(require_any_page(("billing", "can_view"), ("my_ledger", "can_view")))):
+    tolerance = float(get_billing_setting(db).fx_tolerance_inr or DEFAULT_FX_TOLERANCE_INR)
     if user.role == "customer":
-        return ledger_summary([])
-    return ledger_summary(ledger_query(db, user, client_id).all())
+        return ledger_summary([], tolerance)
+    return ledger_summary(ledger_query(db, user, client_id).all(), tolerance)
 
 
 @app.get("/api/settings/billing-rate", response_model=BillingSettingOut)
@@ -7058,8 +7228,11 @@ def get_billing_rate(db: Session = Depends(get_db), user: User = Depends(current
 def update_billing_rate(payload: BillingSettingUpdate, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
     if payload.usd_to_inr_rate <= 0:
         raise HTTPException(status_code=400, detail="USD to INR rate must be greater than zero")
+    if payload.fx_tolerance_inr < 0:
+        raise HTTPException(status_code=400, detail="FX tolerance must be zero or greater")
     setting = get_billing_setting(db)
     setting.usd_to_inr_rate = round(payload.usd_to_inr_rate, 4)
+    setting.fx_tolerance_inr = round(payload.fx_tolerance_inr, 2)
     return save_record(db, setting)
 
 

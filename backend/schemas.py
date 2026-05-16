@@ -149,6 +149,9 @@ class ClientOut(ClientBase, OrmModel):
     username: Optional[str] = None
     outstanding_usd: float = 0
     outstanding_inr: float = 0
+    usd_difference: float = 0
+    fx_adjusted: bool = False
+    ledger_status: str = "Settled"
 
 
 class LoginIn(BaseModel):
@@ -504,10 +507,12 @@ class TerminalCommandHistoryOut(OrmModel):
 class BillingSettingOut(OrmModel):
     id: int
     usd_to_inr_rate: float = 83.0
+    fx_tolerance_inr: float = 1.0
 
 
 class BillingSettingUpdate(BaseModel):
     usd_to_inr_rate: float
+    fx_tolerance_inr: float = 1.0
 
 
 class TokenOut(BaseModel):
