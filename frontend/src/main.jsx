@@ -54,7 +54,6 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
-const ALLOW_ADVANCE_BALANCE = false;
 const themeOptions = [
   { id: 'executive-noc', name: 'Executive NOC', description: 'Premium dark navy with cyan control-room accents.', colors: ['#0b1320', '#17d9e6', '#5cf0c4'] },
   { id: 'dark-minimal', name: 'Dark Minimal', description: 'Low-glow dark gray tuned for long reading sessions.', colors: ['#12151b', '#7dd3fc', '#d4d4d8'] },
@@ -5441,9 +5440,20 @@ function MultiSelect({ values, options, labelKey = 'name', onChange }) {
 function reportValue(header, value) {
   if (typeof value !== 'number') return String(value ?? '-');
   const key = header.toLowerCase();
+  if (key.includes('invoice amount') || key.includes('payments after invoice') || key.includes('final outstanding')) return inr(value);
   if (key.includes('inr') || key.includes('₹')) return inr(value);
   if (key.includes('usd') || key.includes('$')) return usd(value);
   return Number(value).toFixed(2);
+}
+
+function reportCellClass(header, value) {
+  const key = String(header || '').toLowerCase();
+  const amount = Number(value || 0);
+  if (key.includes('raw ledger net inr')) return amount > 0 ? 'outstandingText' : amount < 0 ? 'creditText' : '';
+  if (key.includes('final outstanding')) return amount > 0 ? 'outstandingText' : 'okText';
+  if (key === 'status' && String(value).toLowerCase() === 'settled') return 'okText';
+  if (key === 'status' && String(value).toLowerCase() === 'outstanding') return 'outstandingText';
+  return '';
 }
 
 function formatReportDateValue(value) {
@@ -5470,14 +5480,8 @@ function invoiceLedgerBalanceText(value) {
 
 function rawLedgerBalanceDisplay(value, toleranceInr = 100) {
   const amount = Number(value || 0);
-  const tolerance = Math.abs(Number(toleranceInr || 100));
-  if (amount < 0 && !ALLOW_ADVANCE_BALANCE) {
-    return <span className="rawBalance settled" title={`Raw internal balance: ${inr(amount)}`}><b>{inr(0)}</b><small>Settled</small></span>;
-  }
-  if (Math.abs(amount) <= tolerance) {
-    return <span className="rawBalance settled" title={`Raw internal balance: ${inr(amount)}`}><b>{inr(0)}</b><small>Settled / FX adjusted</small></span>;
-  }
-  return <span className={amount > 0 ? 'outstandingText' : 'rawBalance'}>{inr(amount)}</span>;
+  const tone = amount > 0 ? 'outstanding' : amount < 0 ? 'credit' : 'neutral';
+  return <span className={`rawBalance ${tone}`} title="Raw ledger balance for audit"><b>{inr(amount)}</b></span>;
 }
 
 function rawUsdReference(value) {
@@ -5490,6 +5494,17 @@ function clientListLedgerState(client = {}) {
   if (status === 'no invoice') return { status: 'No Invoice', amount: 0 };
   if (amount <= 0 || status === 'settled' || status === 'advance') return { status: 'Settled', amount: 0 };
   return { status: 'Outstanding', amount };
+}
+
+function invoiceOutstandingDisplayRows(rows = []) {
+  return rows.map((row) => ({
+    Client: row.client,
+    'Latest Invoice Week': row.latest_invoice_week || 'No Invoice',
+    'Invoice Amount': Number(row.invoice_amount || 0),
+    'Payments After Invoice': Number(row.payments_after_invoice || 0),
+    'Final Outstanding': Number(row.outstanding_inr || 0),
+    Status: row.status || 'No Invoice',
+  }));
 }
 
 function clientLedgerCsvRows(rows) {
@@ -5576,7 +5591,9 @@ function ReportsPage({ data, user }) {
   const chargeOptions = ['All Charges', ...ledgerCategories];
   const [filters, setFilters] = useState({ date_from: '', date_to: '', client_ids: [], category: 'All Charges', search: '' });
   const [reportView, setReportView] = useState('detail');
+  const [summaryMode, setSummaryMode] = useState('raw');
   const [rows, setRows] = useState([]);
+  const [invoiceSummaryRows, setInvoiceSummaryRows] = useState([]);
   const [summary, setSummary] = useState({});
   const [message, setMessage] = useState('');
   const [appliedFilters, setAppliedFilters] = useState({});
@@ -5600,7 +5617,10 @@ function ReportsPage({ data, user }) {
         baseQuery.set('entry_type', 'Credit');
       }
       const endpoint = `/billing/ledger?${baseQuery.toString()}`;
-      const result = await request(endpoint);
+      const [result, invoiceOutstanding] = await Promise.all([
+        request(endpoint),
+        request('/billing/client-outstanding').catch(() => ({ client_outstanding: [] })),
+      ]);
       const sourceRows = Array.isArray(result) ? result : (result.items || []);
       const selectedIds = new Set((filters.client_ids || []).map((value) => String(value)));
       const nextRows = sourceRows
@@ -5635,12 +5655,15 @@ function ReportsPage({ data, user }) {
         net_inr: nextRows.reduce((sum, row) => sum + Number(row.debit_inr || 0) - Number(row.credit_inr || 0), 0),
       };
       setRows(nextRows);
+      const selectedInvoiceRows = (invoiceOutstanding.client_outstanding || []).filter((row) => !selectedIds.size || selectedIds.has(String(row.client_id)));
+      setInvoiceSummaryRows(invoiceOutstandingDisplayRows(selectedInvoiceRows));
       setSummary(nextSummary);
       setAppliedFilters({ source: 'billing/ledger', client_ids: [...selectedIds], date_from: filters.date_from, date_to: filters.date_to, category: filters.category, search: filters.search });
       setMessage(nextRows.length ? '' : 'No ledger entries found for selected filters.');
       setDebugInfo({ endpoint, applied_filters: { source: 'billing/ledger', client_ids: [...selectedIds], date_from: filters.date_from, date_to: filters.date_to, category: filters.category, search: filters.search }, rows_returned: nextRows.length });
     } catch (err) {
       setRows([]);
+      setInvoiceSummaryRows([]);
       setSummary({});
       setAppliedFilters(filters);
       setMessage('');
@@ -5666,7 +5689,7 @@ function ReportsPage({ data, user }) {
     'USD Credit': row.credit_usd || '',
     'INR Debit': row.debit_inr || '',
     'INR Credit': row.credit_inr || '',
-    'Balance INR': row.balance_inr || '',
+    'Raw Balance INR': row.balance_inr || '',
   }));
   const daySummaryRows = useMemo(() => {
     const grouped = new Map();
@@ -5695,9 +5718,11 @@ function ReportsPage({ data, user }) {
     return Array.from(grouped.values()).sort((a, b) => String(a.client).localeCompare(String(b.client)));
   }, [filteredRows]);
   const visibleRows = reportView === 'day'
-    ? daySummaryRows.map((row) => ({ Date: row.date, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Net INR': row.net_inr, 'Entry Count': row.entry_count }))
+    ? daySummaryRows.map((row) => ({ Date: row.date, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Raw Ledger Net INR': row.net_inr, 'Entry Count': row.entry_count }))
     : reportView === 'client'
-      ? clientSummaryRows.map((row) => ({ Client: row.client, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Net INR': row.net_inr, 'Entry Count': row.entry_count }))
+      ? (summaryMode === 'invoice'
+        ? invoiceSummaryRows
+        : clientSummaryRows.map((row) => ({ Client: row.client, 'Total Debit INR': row.total_debit_inr, 'Total Credit INR': row.total_credit_inr, 'Raw Ledger Net INR': row.net_inr, 'Entry Count': row.entry_count })))
       : detailRows;
   const reportFilename = `${slugifyReportName(`${filters.category || 'all-charges'}-${reportView}-report`)}_${filters.date_from || 'all'}_to_${filters.date_to || 'all'}.csv`;
   const headers = visibleRows[0] ? Object.keys(visibleRows[0]) : [];
@@ -5708,7 +5733,12 @@ function ReportsPage({ data, user }) {
     total_debit_inr: filteredRows.reduce((sum, row) => sum + Number(row.debit_inr || 0), 0),
     total_credit_inr: filteredRows.reduce((sum, row) => sum + Number(row.credit_inr || 0), 0),
     net_inr: filteredRows.reduce((sum, row) => sum + Number(row.debit_inr || 0) - Number(row.credit_inr || 0), 0),
-  }), [filteredRows]);
+    invoice_clients: invoiceSummaryRows.length,
+    invoice_amount_inr: invoiceSummaryRows.reduce((sum, row) => sum + Number(row['Invoice Amount'] || 0), 0),
+    payments_after_invoice_inr: invoiceSummaryRows.reduce((sum, row) => sum + Number(row['Payments After Invoice'] || 0), 0),
+    invoice_outstanding_inr: invoiceSummaryRows.reduce((sum, row) => sum + Number(row['Final Outstanding'] || 0), 0),
+  }), [filteredRows, invoiceSummaryRows]);
+  const showInvoiceSummaryCards = reportView === 'client' && summaryMode === 'invoice';
   return (
     <section>
       <div className="sectionTitle">
@@ -5727,6 +5757,10 @@ function ReportsPage({ data, user }) {
           <option value="day">Day-wise Summary</option>
           <option value="client">Client-wise Summary</option>
         </select></label>
+        {reportView === 'client' && <label className="fieldLabel">Summary Mode<select value={summaryMode} onChange={(e) => setSummaryMode(e.target.value)}>
+          <option value="raw">Raw Ledger Summary</option>
+          <option value="invoice">Invoice Outstanding Summary</option>
+        </select></label>}
         <label className="fieldLabel">Search Description<input type="search" placeholder="Search description" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} /></label>
         <button onClick={() => load()}><RefreshCcw size={16} /> Run Report</button>
         {canExport && <button onClick={() => exportRows(reportFilename, visibleRows)} disabled={!visibleRows.length}><Download size={16} /> Export CSV</button>}
@@ -5734,12 +5768,23 @@ function ReportsPage({ data, user }) {
       </div>
       <div className="muted">Selected dates use inclusive day range. Display format: {formatReportDateValue(filters.date_from) || 'All'} to {formatReportDateValue(filters.date_to) || 'All'}.</div>
       <div className="cards billingCards">
-        <div className="metric"><span>Total Entries</span><strong>{totals.total_entries}</strong></div>
-        <div className="metric"><span>Total Debit INR</span><strong>{inr(totals.total_debit_inr)}</strong></div>
-        <div className="metric"><span>Total Credit INR</span><strong>{inr(totals.total_credit_inr)}</strong></div>
-        <div className="metric"><span>Net INR</span><strong>{inr(totals.net_inr)}</strong></div>
-        <div className="metric"><span>Total Debit USD</span><strong>{usd(totals.total_debit_usd)}</strong></div>
-        <div className="metric"><span>Total Credit USD</span><strong>{usd(totals.total_credit_usd)}</strong></div>
+        {showInvoiceSummaryCards ? (
+          <>
+            <div className="metric"><span>Invoice Clients</span><strong>{totals.invoice_clients}</strong></div>
+            <div className="metric"><span>Invoice Amount INR</span><strong>{inr(totals.invoice_amount_inr)}</strong></div>
+            <div className="metric"><span>Payments After Invoice</span><strong>{inr(totals.payments_after_invoice_inr)}</strong></div>
+            <div className="metric outstandingSummary"><span>Final Outstanding INR</span><strong>{inr(totals.invoice_outstanding_inr)}</strong></div>
+          </>
+        ) : (
+          <>
+            <div className="metric"><span>Total Entries</span><strong>{totals.total_entries}</strong></div>
+            <div className="metric"><span>Total Debit INR</span><strong>{inr(totals.total_debit_inr)}</strong></div>
+            <div className="metric"><span>Total Credit INR</span><strong>{inr(totals.total_credit_inr)}</strong></div>
+            <div className="metric"><span>Raw Ledger Net INR</span><strong>{inr(totals.net_inr)}</strong></div>
+            <div className="metric"><span>Total Debit USD</span><strong>{usd(totals.total_debit_usd)}</strong></div>
+            <div className="metric"><span>Total Credit USD</span><strong>{usd(totals.total_credit_usd)}</strong></div>
+          </>
+        )}
       </div>
       {user?.role === 'admin' && showDebug && (
         <div className="panel">
@@ -5758,7 +5803,7 @@ function ReportsPage({ data, user }) {
         <div className="tableWrap">
           <table>
             <thead><tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr></thead>
-            <tbody>{visibleRows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody>
+            <tbody>{visibleRows.map((row, index) => <tr key={index}>{headers.map((header) => <td key={header} className={reportCellClass(header, row[header])}>{reportValue(header, row[header])}</td>)}</tr>)}</tbody>
           </table>
         </div>
       ) : (
@@ -6164,12 +6209,14 @@ function ClientOutstandingTable({ rows, toleranceInr = 100 }) {
     <div className="panel">
       <h2>Client-wise Outstanding (Invoice Based)</h2>
       <p className="muted">Outstanding is based on latest saved weekly invoice and payments received after invoice generation.</p>
-      <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>Latest Invoice Week</th><th>Final Outstanding INR</th><th>Status</th><th>PDF / View</th></tr></thead><tbody>{rows.map((row) => {
+      <table className="clientOutstandingTable"><thead><tr><th>Client</th><th>Latest Invoice Week</th><th>Invoice Outstanding</th><th>Payments After Invoice</th><th>Final Outstanding</th><th>Status</th><th>PDF / View</th></tr></thead><tbody>{rows.map((row) => {
         const state = moneyEngineOutstandingState(row, toleranceInr);
         return (
           <tr key={row.client} className={`clientOutstandingRow ${state.key}`}>
             <td>{row.client}</td>
             <td>{row.latest_invoice_week || <span className="muted">No saved invoice</span>}</td>
+            <td>{inr(row.invoice_amount || 0)}</td>
+            <td className="creditText">{inr(row.payments_after_invoice || 0)}</td>
             <td>
               {state.key === 'settled' ? (
                 <span className="settledAmount"><span className="ledgerStatusBadge settled">SETTLED</span><b>{inr(0)}</b></span>
@@ -7125,7 +7172,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       {user.role !== 'customer' && <ClientOutstandingTable rows={billing.ledgerSummary?.client_outstanding || []} toleranceInr={billing.ledgerSummary?.fx_tolerance_inr || 100} />}
       <div className="tableWrap">
         <table>
-          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th><th>Created By</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead>
+          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>USD Balance Ref</th><th>Debit ₹</th><th>Credit ₹</th><th>Raw Balance ₹</th><th>Rate</th><th>Created By</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead>
           <tbody>{filteredRows.map((row) => (
             <tr key={row.id} className={row.entry_type === 'Credit' ? 'creditRow' : 'debitRow'}>
               <td>{row.entry_date}</td><td><button className="linkButton" onClick={() => goToClientLedger(row)}>{row.client_name}</button></td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td>{rawUsdReference(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td>{rawLedgerBalanceDisplay(row.balance_inr, billing.ledgerSummary?.fx_tolerance_inr || settings?.fx_tolerance_inr || 100)}</td><td>{exchangeText(row.exchange_rate)}</td><td>{row.created_by}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button className="iconButton" onClick={() => startEdit(row)} title="Edit ledger entry"><Edit3 size={16} /></button>}{canDelete && <button className="iconButton danger" onClick={() => deleteLedger(row)} title="Delete ledger entry"><Trash2 size={16} /></button>}</td>}

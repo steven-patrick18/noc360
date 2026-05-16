@@ -2262,6 +2262,14 @@ h2 {
   color: #bbf7d0;
 }
 
+.rawBalance.credit b {
+  color: #bbf7d0;
+}
+
+.rawBalance.outstanding b {
+  color: #fecaca;
+}
+
 .usdReference.fxAdjusted {
   cursor: help;
   border-bottom: 1px dotted rgba(125, 211, 252, 0.46);
