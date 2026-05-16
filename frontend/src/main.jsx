@@ -5484,6 +5484,14 @@ function rawUsdReference(value) {
   return <span className="usdReference">{usd(value)}</span>;
 }
 
+function clientListLedgerState(client = {}) {
+  const amount = Number(client.outstanding_inr || 0);
+  const status = String(client.ledger_status || '').toLowerCase();
+  if (status === 'no invoice') return { status: 'No Invoice', amount: 0 };
+  if (amount <= 0 || status === 'settled' || status === 'advance') return { status: 'Settled', amount: 0 };
+  return { status: 'Outstanding', amount };
+}
+
 function clientLedgerCsvRows(rows) {
   return rows.map((row) => ({
     Date: row.date,
@@ -7185,9 +7193,12 @@ function ClientsPage({ clients, reload, user }) {
         <input type="password" placeholder="Confirm password" value={form.confirm_password} onChange={(event) => setForm({ ...form, confirm_password: event.target.value })} />
         <button className="primary"><Plus size={16} /> Add Client</button>
       </form>}
-      <div className="tableWrap"><table><thead><tr><th>Client</th><th>Status</th><th>Username</th><th>Final Outstanding INR</th><th>USD Difference</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead><tbody>{clients.map((client) => (
-        <tr key={client.id}><td><button className="linkButton" onClick={() => openDetail(client.id)}>{client.name}</button></td><td><StatusPill value={client.ledger_status || client.status} /></td><td>{client.username || '-'}</td><td className={client.outstanding_inr > 0 ? 'outstandingText' : 'okText'}>{inr(client.outstanding_inr)}</td><td>{usd(client.usd_difference ?? client.outstanding_usd)}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button onClick={() => setResetClient(client)}>Reset Login Password</button>}{canDelete && <button className="iconButton danger" onClick={() => remove(client.id)}><Trash2 size={16} /></button>}</td>}</tr>
-      ))}</tbody></table></div>
+      <div className="tableWrap"><table><thead><tr><th>Client</th><th>Status</th><th>Username</th><th>Final Outstanding INR</th><th>USD Difference</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead><tbody>{clients.map((client) => {
+        const ledgerState = clientListLedgerState(client);
+        return (
+          <tr key={client.id}><td><button className="linkButton" onClick={() => openDetail(client.id)}>{client.name}</button></td><td><StatusPill value={ledgerState.status} /></td><td>{client.username || '-'}</td><td>{ledgerState.amount > 0 ? <span className="outstandingText">{inr(ledgerState.amount)}</span> : <span className="settledAmount"><span className="ledgerStatusBadge settled">SETTLED</span><b>{inr(0)}</b></span>}</td><td>{rawUsdReference(client.usd_difference ?? client.outstanding_usd ?? 0)}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button onClick={() => setResetClient(client)}>Reset Login Password</button>}{canDelete && <button className="iconButton danger" onClick={() => remove(client.id)}><Trash2 size={16} /></button>}</td>}</tr>
+        );
+      })}</tbody></table></div>
       {resetClient && <div className="modalBackdrop modal-overlay"><div className="modal modal-box"><div className="modalHeader"><h2>Reset {resetClient.name}</h2><button className="iconButton" onClick={() => setResetClient(null)}><X size={18} /></button></div><input type="password" placeholder="New password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /><button className="primary" onClick={resetPassword}>Reset Password</button></div></div>}
       {detail && <ClientDetailModal detail={detail} onClose={() => setDetail(null)} canExport={canExport} />}
     </section>
