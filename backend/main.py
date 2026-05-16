@@ -5439,6 +5439,12 @@ def payment_inr_amount(row: ClientLedger):
 def payments_after_invoice(db: Session, invoice: WeeklyInvoice | None):
     if not invoice or not invoice.created_at:
         return 0.0
+    return round(sum(payment_inr_amount(row) for row in payment_rows_after_invoice(db, invoice)), 2)
+
+
+def payment_rows_after_invoice(db: Session, invoice: WeeklyInvoice | None):
+    if not invoice or not invoice.created_at:
+        return []
     rows = (
         db.query(ClientLedger)
         .filter(
@@ -5446,9 +5452,10 @@ def payments_after_invoice(db: Session, invoice: WeeklyInvoice | None):
             ClientLedger.created_at > invoice.created_at,
             or_(ClientLedger.category == "Payment", ClientLedger.entry_type == "Credit"),
         )
+        .order_by(ClientLedger.created_at.asc(), ClientLedger.id.asc())
         .all()
     )
-    return round(sum(payment_inr_amount(row) for row in rows), 2)
+    return rows
 
 
 def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):
@@ -5477,6 +5484,53 @@ def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):
         "raw_final_outstanding": raw_final,
         "status": "Settled" if settled else "Outstanding",
     }
+
+
+def latest_invoice_ledger_rows(db: Session, invoice: WeeklyInvoice | None):
+    if not invoice:
+        return []
+    invoice_amount = round(weekly_invoice_final_outstanding(invoice), 2)
+    events = [{
+        "date": invoice.week_end_date,
+        "priority": 0,
+        "id": invoice.id,
+        "type": "Debit",
+        "reference": f"WINV-{invoice.id:05d}",
+        "description": f"Weekly Invoice {invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
+        "debit": invoice_amount,
+        "credit": 0.0,
+        "invoice_id": invoice.id,
+    }]
+    for row in payment_rows_after_invoice(db, invoice):
+        amount = payment_inr_amount(row)
+        if amount <= 0:
+            continue
+        events.append({
+            "date": row.entry_date,
+            "priority": 1,
+            "id": row.id,
+            "type": "Credit",
+            "reference": f"PAY-{row.id:05d}",
+            "description": "Payment received",
+            "debit": 0.0,
+            "credit": round(amount, 2),
+            "invoice_id": None,
+        })
+    balance = 0.0
+    result = []
+    for event in sorted(events, key=lambda item: (item["date"], item["priority"], item["id"])):
+        balance = round(balance + event["debit"] - event["credit"], 2)
+        result.append({
+            "date": event["date"].isoformat(),
+            "reference": event["reference"],
+            "description": event["description"],
+            "debit": event["debit"],
+            "credit": event["credit"],
+            "balance": balance,
+            "type": event["type"],
+            "invoice_id": event["invoice_id"],
+        })
+    return result
 
 
 def invoice_based_client_outstanding(db: Session, user: User, client_id: int | None = None, tolerance_inr: float = DEFAULT_FX_TOLERANCE_INR):
@@ -7141,11 +7195,11 @@ def get_client_detail(record_id: int, db: Session = Depends(get_db), user: User 
         if any(rdp in media for rdp in rdps):
             used_gateways.append(gateway.live_gateway_name)
     raw_ledger = db.query(ClientLedger).filter(ClientLedger.client_id == record_id).order_by(ClientLedger.entry_date.desc(), ClientLedger.id.desc()).all()
-    invoice_ledger = list(reversed(client_invoice_ledger_report(db, user, client_id=record_id)))
     data_costs = db.query(DataCost).filter(DataCost.client_id == record_id).order_by(DataCost.entry_date.desc(), DataCost.id.desc()).all()
     weekly_invoices = db.query(WeeklyInvoice).filter(WeeklyInvoice.client_id == record_id).order_by(WeeklyInvoice.week_start_date.desc(), WeeklyInvoice.id.desc()).all()
     latest_invoice = weekly_invoices[0] if weekly_invoices else None
     invoice_snapshot = invoice_outstanding_snapshot(db, latest_invoice)
+    invoice_ledger = latest_invoice_ledger_rows(db, latest_invoice)
     total_charges = 0.0
     total_payments = 0.0
     total_charges_inr = invoice_snapshot["invoice_amount"]

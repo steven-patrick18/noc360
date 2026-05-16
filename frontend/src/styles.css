@@ -2239,6 +2239,29 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+.rawBalance {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(203, 213, 225, 0.82);
+  font-variant-numeric: tabular-nums;
+}
+
+.rawBalance b {
+  color: #dbeafe;
+}
+
+.rawBalance small {
+  color: rgba(203, 213, 225, 0.6);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.rawBalance.settled b {
+  color: #bbf7d0;
+}
+
 .usdReference.fxAdjusted {
   cursor: help;
   border-bottom: 1px dotted rgba(125, 211, 252, 0.46);

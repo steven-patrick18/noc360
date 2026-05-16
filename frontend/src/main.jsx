@@ -54,6 +54,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '')
 const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
+const ALLOW_ADVANCE_BALANCE = false;
 const themeOptions = [
   { id: 'executive-noc', name: 'Executive NOC', description: 'Premium dark navy with cyan control-room accents.', colors: ['#0b1320', '#17d9e6', '#5cf0c4'] },
   { id: 'dark-minimal', name: 'Dark Minimal', description: 'Low-glow dark gray tuned for long reading sessions.', colors: ['#12151b', '#7dd3fc', '#d4d4d8'] },
@@ -5467,6 +5468,22 @@ function invoiceLedgerBalanceText(value) {
   return amount <= 0 ? `Settled ${inr(0)}` : inr(amount);
 }
 
+function rawLedgerBalanceDisplay(value, toleranceInr = 100) {
+  const amount = Number(value || 0);
+  const tolerance = Math.abs(Number(toleranceInr || 100));
+  if (amount < 0 && !ALLOW_ADVANCE_BALANCE) {
+    return <span className="rawBalance settled" title={`Raw internal balance: ${inr(amount)}`}><b>{inr(0)}</b><small>Settled</small></span>;
+  }
+  if (Math.abs(amount) <= tolerance) {
+    return <span className="rawBalance settled" title={`Raw internal balance: ${inr(amount)}`}><b>{inr(0)}</b><small>Settled / FX adjusted</small></span>;
+  }
+  return <span className={amount > 0 ? 'outstandingText' : 'rawBalance'}>{inr(amount)}</span>;
+}
+
+function rawUsdReference(value) {
+  return <span className="usdReference">{usd(value)}</span>;
+}
+
 function clientLedgerCsvRows(rows) {
   return rows.map((row) => ({
     Date: row.date,
@@ -7092,7 +7109,7 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
           <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Category</th><th>Description</th><th>Debit $</th><th>Credit $</th><th>Balance $</th><th>Debit ₹</th><th>Credit ₹</th><th>Balance ₹</th><th>Rate</th><th>Created By</th>{(canEdit || canDelete) && <th>Actions</th>}</tr></thead>
           <tbody>{filteredRows.map((row) => (
             <tr key={row.id} className={row.entry_type === 'Credit' ? 'creditRow' : 'debitRow'}>
-              <td>{row.entry_date}</td><td><button className="linkButton" onClick={() => goToClientLedger(row)}>{row.client_name}</button></td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td className={row.balance_usd > 0 ? 'outstandingText' : 'okText'}>{usd(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td className={row.balance_inr > 0 ? 'outstandingText' : 'okText'}>{inr(row.balance_inr)}</td><td>{exchangeText(row.exchange_rate)}</td><td>{row.created_by}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button className="iconButton" onClick={() => startEdit(row)} title="Edit ledger entry"><Edit3 size={16} /></button>}{canDelete && <button className="iconButton danger" onClick={() => deleteLedger(row)} title="Delete ledger entry"><Trash2 size={16} /></button>}</td>}
+              <td>{row.entry_date}</td><td><button className="linkButton" onClick={() => goToClientLedger(row)}>{row.client_name}</button></td><td>{row.entry_type}</td><td>{row.category}</td><td>{row.description}</td><td>{usd(row.debit_usd ?? row.debit_amount)}</td><td>{usd(row.credit_usd ?? row.credit_amount)}</td><td>{rawUsdReference(row.balance_usd ?? row.balance_after_entry)}</td><td>{inr(row.debit_inr)}</td><td>{inr(row.credit_inr)}</td><td>{rawLedgerBalanceDisplay(row.balance_inr, billing.ledgerSummary?.fx_tolerance_inr || settings?.fx_tolerance_inr || 100)}</td><td>{exchangeText(row.exchange_rate)}</td><td>{row.created_by}</td>{(canEdit || canDelete) && <td className="actions">{canEdit && <button className="iconButton" onClick={() => startEdit(row)} title="Edit ledger entry"><Edit3 size={16} /></button>}{canDelete && <button className="iconButton danger" onClick={() => deleteLedger(row)} title="Delete ledger entry"><Trash2 size={16} /></button>}</td>}
             </tr>
           ))}</tbody>
         </table>
@@ -7306,10 +7323,10 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
         </tbody></table></div>
         {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
         <h2>Invoice Ledger</h2>
-        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Invoice No / Reference</th><th>Description</th><th>Debit (DR)</th><th>Credit (CR)</th><th>Running Balance</th><th>PDF</th></tr></thead><tbody>{(detail.ledger || []).map((row) => (
-          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td><td>{row.invoice_id ? <button onClick={() => downloadWeeklyInvoicePdf({ id: row.invoice_id })}><Download size={15} /> PDF</button> : <span className="muted">-</span>}</td></tr>
+        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>DR ₹</th><th>CR ₹</th><th>Balance ₹</th></tr></thead><tbody>{(detail.ledger || []).map((row) => (
+          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td></tr>
         ))}
-          {(detail.ledger || []).length === 0 && <tr><td colSpan="7" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
+          {(detail.ledger || []).length === 0 && <tr><td colSpan="6" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
         </tbody></table></div>
         {canExport && <div className="toolbar"><button onClick={() => exportRows(`${detail.client.name}-ledger.csv`, detail.ledger || [])}><Download size={16} /> Export Ledger CSV</button></div>}
         <h2>Data Cost</h2>
