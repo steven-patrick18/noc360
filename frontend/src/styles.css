@@ -8558,3 +8558,29 @@ body[data-theme] .webphonePage .eyebeamPhone .eyebeamAudioUnlock {
 @media (max-width: 640px) {
   body[data-theme] .webphonePage .eyebeamPhone .eyebeamDevice { max-width: 100% !important; }
 }
+
+/* FAS (False Answer Supervision) detail panel */
+body[data-theme] .webphonePage .fasPanel {
+  margin: 14px 0 !important;
+  padding: 12px 14px !important;
+  border-radius: 10px !important;
+  border: 1px solid var(--ax-edge, #2a3340) !important;
+}
+body[data-theme] .webphonePage .fasPanel.fasOk {
+  background: rgba(40, 224, 138, 0.07) !important;
+  border-color: rgba(40, 224, 138, 0.35) !important;
+}
+body[data-theme] .webphonePage .fasPanel.fasBad {
+  background: rgba(255, 86, 86, 0.08) !important;
+  border-color: rgba(255, 86, 86, 0.45) !important;
+}
+body[data-theme] .webphonePage .fasPanel h3 { margin: 2px 0 0 !important; }
+body[data-theme] .webphonePage .fasPanel.fasBad h3 { color: #ff8b8b !important; }
+body[data-theme] .webphonePage .fasPanel.fasOk h3 { color: #4fe0a0 !important; }
+body[data-theme] .webphonePage .fasPanel h3 small { font-weight: 500 !important; opacity: 0.7 !important; }
+body[data-theme] .webphonePage .fasReasons {
+  margin: 8px 0 6px !important; padding-left: 18px !important;
+}
+body[data-theme] .webphonePage .fasReasons li {
+  color: #e6b3b3 !important; margin: 4px 0 !important; font-size: 13px !important;
+}

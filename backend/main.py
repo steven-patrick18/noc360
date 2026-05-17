@@ -2874,9 +2874,51 @@ def webphone_profile_out(record: WebphoneProfile):
     }
 
 
+def fas_assessment(record: WebphoneCallLog):
+    """Heuristic False-Answer-Supervision detector from captured CDR/RTP signals.
+
+    FAS = the carrier sends a billable 'answer' that isn't the real callee
+    (media server / instant connect / no ring / silent audio). Only assessed
+    for answered calls; conservative thresholds to limit false positives.
+    """
+    answered = (record.answer_seconds or 0) > 0 or (record.status or "").lower() in ("connected", "answered")
+    if not answered:
+        return {"suspect": False, "score": 0, "label": "n/a", "reasons": []}
+    score = 0
+    reasons = []
+    ring = record.ring_ms
+    pdd = record.pdd_ms
+    rx = record.packets_received
+    mos = record.mos
+    loss = record.packet_loss_pct or 0
+    dur = record.answer_seconds or 0
+    if ring is not None and ring < 1500:
+        score += 3
+        reasons.append(f"Answered after only {ring} ms of ringing — little/no real alerting (classic false answer).")
+    if rx is not None and rx < 10:
+        score += 3
+        reasons.append("Billed as answered but almost no inbound RTP — silent / one-way (recording or dead air, not a real callee).")
+    elif mos is not None and mos < 2.5 and loss < 3:
+        score += 2
+        reasons.append(f"Answered with very low MOS ({mos}) despite low packet loss — likely a recording/dead air, not a live person.")
+    if pdd is not None and 0 < pdd < 250:
+        score += 2
+        reasons.append(f"Near-instant answer (PDD {pdd} ms) — a media server answered, not the real destination.")
+    if dur and dur <= 6 and score >= 2:
+        score += 1
+        reasons.append(f"Very short billed duration ({dur}s), consistent with a false-answer disconnect.")
+    label = "Likely FAS" if score >= 5 else "FAS suspect" if score >= 3 else "Clean"
+    return {"suspect": score >= 3, "score": score, "label": label, "reasons": reasons}
+
+
 def webphone_call_log_out(record: WebphoneCallLog):
+    _fas = fas_assessment(record)
     return {
         "id": record.id,
+        "fas_suspect": _fas["suspect"],
+        "fas_score": _fas["score"],
+        "fas_label": _fas["label"],
+        "fas_reasons": _fas["reasons"],
         "profile_id": record.profile_id,
         "profile_name": record.profile.profile_name if record.profile else None,
         "cli": record.cli,

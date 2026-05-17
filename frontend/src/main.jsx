@@ -3695,7 +3695,7 @@ function WebphonePage({ user }) {
           </div>
           <div className="tableWrap carrierTestTable">
             <table>
-              <thead><tr><th>Time</th><th>Profile</th><th>CLI</th><th>DID</th><th>Status</th><th>Dur</th><th>MOS</th><th>Jitter</th><th>Loss</th><th>RTT</th><th>Codec</th><th>PDD</th><th>Cause</th><th></th></tr></thead>
+              <thead><tr><th>Time</th><th>Profile</th><th>CLI</th><th>DID</th><th>Status</th><th>Dur</th><th>MOS</th><th>Jitter</th><th>Loss</th><th>RTT</th><th>Codec</th><th>PDD</th><th>Cause</th><th>FAS</th><th></th></tr></thead>
               <tbody>{filteredLogs.map((log) => {
                 const mosTone = log.mos == null ? '' : log.mos < 3.6 ? 'badText' : log.mos < 4 ? 'warnText' : 'okText';
                 return (
@@ -3713,11 +3713,14 @@ function WebphonePage({ user }) {
                     <td>{log.audio_codec || '-'}</td>
                     <td>{log.pdd_ms != null ? `${log.pdd_ms}ms` : '-'}</td>
                     <td>{log.hangup_cause || log.sip_response || '-'}</td>
+                    <td>{log.fas_label && log.fas_label !== 'n/a'
+                      ? <span className={log.fas_suspect ? 'badText' : 'okText'} title={(log.fas_reasons || []).join(' ') || 'No false-answer indicators'}>{log.fas_suspect ? `⚠ ${log.fas_label}` : 'Clean'}</span>
+                      : <span className="muted">-</span>}</td>
                     <td><button className="iconButton" onClick={(e) => { e.stopPropagation(); setDetailLog(log); }} title="Details"><Eye size={15} /></button></td>
                   </tr>
                 );
               })}
-              {!filteredLogs.length && <tr><td colSpan="14" className="muted">No test calls match the filters.</td></tr>}
+              {!filteredLogs.length && <tr><td colSpan="15" className="muted">No test calls match the filters.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -3774,6 +3777,15 @@ function WebphonePage({ user }) {
                 <div className="qualityCell" key={label}><span>{label}</span><strong>{value}</strong></div>
               ))}
             </div>
+            {detailLog.fas_label && detailLog.fas_label !== 'n/a' && (
+              <div className={`fasPanel ${detailLog.fas_suspect ? 'fasBad' : 'fasOk'}`}>
+                <div className="sectionHeader"><div><span className="eyebrow">False Answer Supervision</span><h3>{detailLog.fas_suspect ? `⚠ ${detailLog.fas_label}` : 'Clean — no FAS indicators'} <small>(score {detailLog.fas_score})</small></h3></div></div>
+                {detailLog.fas_reasons && detailLog.fas_reasons.length > 0
+                  ? <ul className="fasReasons">{detailLog.fas_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
+                  : <p className="muted">Ring, answer timing and inbound audio look consistent with a genuine answered call.</p>}
+                <p className="muted">FAS = the carrier bills an "answer" that isn't the real callee (media server, instant connect, no ring, or silent/one-way audio). This is a heuristic from this call's ring/PDD/RTP/MOS — corroborate with a few calls per route before judging the carrier.</p>
+              </div>
+            )}
             {detailLog.notes && <p className="muted">Notes: {detailLog.notes}</p>}
             <div className="metricHelp">
               <span className="eyebrow">What these mean</span>

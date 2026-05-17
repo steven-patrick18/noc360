@@ -399,6 +399,10 @@ class WebphoneCallLogOut(WebphoneCallLogCreate, OrmModel):
     profile_name: Optional[str] = None
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
+    fas_suspect: Optional[bool] = None
+    fas_score: Optional[int] = None
+    fas_label: Optional[str] = None
+    fas_reasons: Optional[list[str]] = None
 
 
 class WebphoneCarrierBase(BaseModel):
