@@ -39,8 +39,23 @@ log "Host=$PBX_HOST"
 export DEBIAN_FRONTEND=noninteractive
 log "Installing Asterisk + certbot ..."
 apt-get update -y
-apt-get install -y asterisk certbot \
-  asterisk-modules || apt-get install -y asterisk certbot
+# asterisk-modules carries res_pjsip_transport_websocket (WSS for the
+# browser softphone). It must NOT be dropped, so install it explicitly and
+# fail loudly rather than silently falling back without it.
+apt-get install -y asterisk asterisk-modules certbot
+if ! dpkg -s asterisk-modules >/dev/null 2>&1; then
+  err "asterisk-modules failed to install; the browser softphone (WSS) will not work."
+fi
+
+log "Hardening modules.conf for WebRTC (PJSIP WSS) ..."
+MODCONF="/etc/asterisk/modules.conf"
+if [ -f "$MODCONF" ]; then
+  # chan_sip grabs the 'sip' WebSocket subprotocol first, making
+  # res_pjsip_transport_websocket decline to load. NOC360 is PJSIP-only,
+  # so disable chan_sip and preload the websocket deps for clean ordering.
+  grep -q '^noload => chan_sip.so' "$MODCONF"            || sed -i '/^\[modules\]/a noload => chan_sip.so' "$MODCONF"
+  grep -q '^preload => res_http_websocket.so' "$MODCONF" || sed -i '/^\[modules\]/a preload => res_http_websocket.so' "$MODCONF"
+fi
 
 log "Issuing TLS certificate for $PBX_HOST ..."
 if [ ! -f "/etc/letsencrypt/live/$PBX_HOST/fullchain.pem" ]; then
