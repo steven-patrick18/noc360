@@ -2778,6 +2778,9 @@ password={config['sip_password']}
 [webphone-test]
 exten => _X.,1,NoOp(NOC360 Webphone DID Test)
  same => n,Set(NOC360UUID=${{PJSIP_HEADER(read,X-NOC360-Call-ID)}})
+ same => n,Set(NOC360CLI=${{FILTER(0-9+,${{PJSIP_HEADER(read,X-NOC360-CLI)}})}})
+ same => n,ExecIf($["${{NOC360CLI}}"!=""]?Set(CALLERID(num)=${{NOC360CLI}}))
+ same => n,ExecIf($["${{NOC360CLI}}"!=""]?Set(CALLERID(name)=${{NOC360CLI}}))
  same => n,Set(CARRIER=${{FILTER(0-9,${{PJSIP_HEADER(read,X-NOC360-Carrier)}})}})
  same => n,Set(CHANNEL(hangup_handler_push)=noc360-cdr,s,1)
  same => n,GotoIf($["${{CARRIER}}"=""]?def)
@@ -2810,7 +2813,11 @@ disallow=all
 allow={','.join([p for p in (c.codecs or 'ulaw,alaw').lower().replace('pcmu', 'ulaw').replace('pcma', 'alaw').split(',') if p.strip() and 'opus' not in p]) or 'ulaw,alaw'}
 aors={ep}
 direct_media=no
-from_user={normalize(c.username) or 'noc360'}
+rpid_immediate=yes
+send_rpid=yes
+send_pai=yes
+trust_id_outbound=yes
+{f'from_user={normalize(c.username)}' if normalize(c.username) else ''}
 {f'outbound_auth={ep}-auth' if (c.auth_type == 'user' and c.username and c.password) else ''}
 
 [{ep}]

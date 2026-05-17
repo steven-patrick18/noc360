@@ -3448,6 +3448,7 @@ function WebphonePage({ user }) {
         `P-Asserted-Identity: <sip:${callerId}@${selectedProfile.sip_domain}>`,
         `Remote-Party-ID: <sip:${callerId}@${selectedProfile.sip_domain}>;party=calling;privacy=off;screen=no`,
         `X-NOC360-Call-ID: ${callUuidRef.current}`,
+        `X-NOC360-CLI: ${callerId}`,
         ...(selectedCarrierId ? [`X-NOC360-Carrier: ${selectedCarrierId}`] : []),
       ],
       eventHandlers: {
