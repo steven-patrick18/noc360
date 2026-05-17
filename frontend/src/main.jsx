@@ -2784,6 +2784,7 @@ function WebphonePage({ user }) {
   const [enableSteps, setEnableSteps] = useState([]);
   const [held, setHeld] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(false);
+  const [audioBlocked, setAudioBlocked] = useState(false);
   const [volume, setVolume] = useState(1);
   const [audioInputs, setAudioInputs] = useState([]);
   const [audioOutputs, setAudioOutputs] = useState([]);
@@ -3106,6 +3107,18 @@ function WebphonePage({ user }) {
     }
   };
 
+  const enableAudioOutput = async () => {
+    const el = remoteAudioRef.current;
+    if (!el) return;
+    try {
+      await applyAudioOutput();
+      await el.play();
+      setAudioBlocked(false);
+    } catch {
+      setAudioBlocked(true);
+    }
+  };
+
   useEffect(() => {
     refreshDevices();
     if (navigator.mediaDevices?.addEventListener) {
@@ -3396,8 +3409,8 @@ function WebphonePage({ user }) {
       const [remoteStream] = event.streams || [];
       if (remoteStream && remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
-        remoteAudioRef.current.play?.().catch(() => {});
         applyAudioOutput();
+        remoteAudioRef.current.play?.().then(() => setAudioBlocked(false)).catch(() => setAudioBlocked(true));
       }
     });
   };
@@ -3525,7 +3538,7 @@ function WebphonePage({ user }) {
       </div>
 
       {activeTab === 'dialer' && (
-        <div className="panel webphoneDialerPanel">
+        <div className="panel webphoneDialerPanel eyebeamPhone">
           <div className="sectionHeader">
             <div><span className="eyebrow">DID Test Dialer &amp; Carrier Test</span><h2>Browser WebRTC Softphone</h2></div>
             <span className={`agentStatus ${registrationClass}`}>{registrationDisplay}</span>
@@ -3555,18 +3568,30 @@ function WebphonePage({ user }) {
               <button onClick={blindTransfer} disabled={!transferTo.trim()}><Send size={15} /> Transfer</button>
             </div>
           )}
-          <div className="dialpadWrap">
-            <div className="dialpadDisplay">
-              <span className="dialpadHint">{inCall ? 'In call — keys send DTMF' : 'Type on your keyboard or tap the pad · Enter to call · Backspace to delete'}</span>
+          <div className="dialpadWrap eyebeamDevice">
+            <div className="eyebeamBrand"><span>eyeBeam</span><small>NOC360 softphone</small></div>
+            <div className="dialpadDisplay eyebeamLcd">
+              <div className="eyebeamLcdTop">
+                <span className={`eyebeamLed ${isRegistered ? 'on' : ''}`} />
+                <span className="eyebeamState">{inCall ? lastCallStatus || 'In call' : (isRegistered ? 'Ready' : 'Offline')}</span>
+                <span className="eyebeamTimer">{durationText(callSeconds)}</span>
+              </div>
               <strong>{destination || <em>Enter number</em>}</strong>
+              <span className="dialpadHint">{inCall ? 'In call — keys send DTMF' : 'Type on keyboard or tap · Enter = call · Backspace = delete'}</span>
             </div>
+            {audioBlocked && (
+              <button className="eyebeamAudioUnlock" onClick={enableAudioOutput}>🔊 Tap to enable speaker audio</button>
+            )}
             <div className="dtmfPad">
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((d) => (
-                <button key={d} className="dtmfKey" onClick={() => dialKey(d)} title={inCall ? `Send DTMF ${d}` : `Add ${d}`}>{d}</button>
+              {[['1', ''], ['2', 'ABC'], ['3', 'DEF'], ['4', 'GHI'], ['5', 'JKL'], ['6', 'MNO'], ['7', 'PQRS'], ['8', 'TUV'], ['9', 'WXYZ'], ['*', ''], ['0', '+'], ['#', '']].map(([d, ltr]) => (
+                <button key={d} className="dtmfKey" onClick={() => dialKey(d)} title={inCall ? `Send DTMF ${d}` : `Add ${d}`}>
+                  <span className="kDigit">{d}</span>
+                  <span className="kLetters">{ltr || ' '}</span>
+                </button>
               ))}
-              <button className="dtmfKey dtmfAux" onClick={dialBackspace} disabled={inCall} title="Backspace">⌫</button>
-              <button className="dtmfKey dtmfCall" onClick={() => (inCall ? hangup() : callDid())} disabled={!isRegistered || (!inCall && !destination.trim())} title={inCall ? 'Hang up' : 'Call'}>{inCall ? <PhoneOff size={16} /> : <Phone size={16} />}</button>
-              <button className="dtmfKey dtmfAux" onClick={() => setDestination('')} disabled={inCall || !destination} title="Clear">C</button>
+              <button className="dtmfKey dtmfAux" onClick={dialBackspace} disabled={inCall} title="Backspace"><span className="kDigit">⌫</span></button>
+              <button className="dtmfKey dtmfCall" onClick={() => (inCall ? hangup() : callDid())} disabled={!isRegistered || (!inCall && !destination.trim())} title={inCall ? 'Hang up' : 'Call'}>{inCall ? <PhoneOff size={18} /> : <Phone size={18} />}</button>
+              <button className="dtmfKey dtmfAux" onClick={() => setDestination('')} disabled={inCall || !destination} title="Clear"><span className="kDigit">C</span></button>
             </div>
           </div>
           <div className="qualityPanel">

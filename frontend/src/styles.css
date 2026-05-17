@@ -8429,3 +8429,132 @@ body[data-theme] .webphonePage .callPath {
 
 body[data-theme] .webphonePage .callPathFlow .hopArrow { color: var(--ax) !important; }
 body[data-theme] .webphonePage .metricHelp p b { color: var(--ax) !important; }
+
+/* ============================================================
+   eyeBeam-style softphone skin (dialer tab only; tabs kept).
+   Selectors lead with body[data-theme] so they out-specify the
+   alien webphone skin; scoped to .eyebeamPhone so other tabs
+   are untouched.
+   ============================================================ */
+body[data-theme] .webphonePage .eyebeamPhone {
+  background: linear-gradient(180deg, #2b3138 0%, #1c2025 55%, #15181c 100%) !important;
+  border: 1px solid #0c0e10 !important;
+  border-radius: 16px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 24px 60px rgba(0,0,0,0.6) !important;
+  padding: 20px !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dialerForm label > span { color: #8b97a3 !important; }
+body[data-theme] .webphonePage .eyebeamPhone .dialerForm input,
+body[data-theme] .webphonePage .eyebeamPhone .dialerForm select {
+  background: #14171b !important;
+  border: 1px solid #3a4048 !important;
+  color: #d6dde4 !important;
+  border-radius: 8px !important;
+  clip-path: none !important;
+}
+
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamDevice {
+  max-width: 340px !important;
+  margin: 18px auto 6px !important;
+  background: linear-gradient(180deg, #3a4149 0%, #23272d 60%, #181b1f 100%) !important;
+  border: 1px solid #0b0d0f !important;
+  border-radius: 22px !important;
+  padding: 16px 16px 20px !important;
+  box-shadow: inset 0 2px 0 rgba(255,255,255,0.08), inset 0 -2px 6px rgba(0,0,0,0.5), 0 18px 40px rgba(0,0,0,0.55) !important;
+  clip-path: none !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamBrand {
+  display: flex !important; align-items: baseline !important; justify-content: center !important; gap: 8px !important;
+  margin-bottom: 12px !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamBrand span {
+  font: 700 18px/1 "Segoe UI", system-ui, sans-serif !important;
+  letter-spacing: 0.5px !important;
+  color: #36c6d6 !important; text-shadow: 0 0 10px rgba(54,198,214,0.5) !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamBrand small { color: #6b7681 !important; font-size: 10px !important; text-transform: uppercase !important; letter-spacing: 1px !important; }
+
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLcd {
+  background: linear-gradient(180deg, #0c2230 0%, #0a2b34 100%) !important;
+  border: 1px solid #04323b !important;
+  border-radius: 10px !important;
+  padding: 12px 14px !important;
+  margin-bottom: 16px !important;
+  box-shadow: inset 0 0 18px rgba(0,0,0,0.7), 0 0 0 1px rgba(54,198,214,0.12) !important;
+  clip-path: none !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLcdTop {
+  display: flex !important; align-items: center !important; gap: 8px !important;
+  font: 600 11px/1 "Consolas", ui-monospace, monospace !important;
+  color: #4fd6c6 !important; letter-spacing: 1px !important; margin-bottom: 8px !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLed {
+  width: 8px !important; height: 8px !important; border-radius: 50% !important; background: #5a2330 !important;
+  box-shadow: 0 0 4px #5a2330 !important; flex: 0 0 auto !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLed.on { background: #28e08a !important; box-shadow: 0 0 8px #28e08a !important; }
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamState { flex: 1 !important; text-transform: uppercase !important; }
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamTimer { color: #7fe9dc !important; font-variant-numeric: tabular-nums !important; }
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLcd strong {
+  display: block !important;
+  font: 700 26px/1.2 "Consolas", ui-monospace, monospace !important;
+  color: #6cf2e0 !important;
+  text-shadow: 0 0 10px rgba(108,242,224,0.55) !important;
+  word-break: break-all !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLcd em { color: #3f7d77 !important; font-style: normal !important; font-size: 18px !important; }
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamLcd .dialpadHint {
+  display: block !important; margin-top: 6px !important;
+  color: #3f8a82 !important; font-size: 10px !important; letter-spacing: 0.3px !important;
+}
+
+body[data-theme] .webphonePage .eyebeamPhone .dtmfPad {
+  display: grid !important;
+  grid-template-columns: repeat(3, 1fr) !important;
+  gap: 9px !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey {
+  display: flex !important; flex-direction: column !important;
+  align-items: center !important; justify-content: center !important;
+  gap: 1px !important;
+  min-height: 52px !important;
+  background: linear-gradient(180deg, #4a525b 0%, #2c3137 55%, #21262b 100%) !important;
+  border: 1px solid #14171a !important;
+  border-radius: 10px !important;
+  clip-path: none !important;
+  color: #eef3f7 !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14), 0 2px 4px rgba(0,0,0,0.45) !important;
+  transition: transform .05s ease, filter .1s ease !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey:hover:not(:disabled) { filter: brightness(1.18) !important; }
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey:active:not(:disabled) {
+  transform: translateY(1px) !important;
+  box-shadow: inset 0 2px 5px rgba(0,0,0,0.6) !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey .kDigit { font: 700 20px/1 "Segoe UI", system-ui, sans-serif !important; color: inherit !important; }
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey .kLetters {
+  font: 600 9px/1 "Segoe UI", system-ui, sans-serif !important;
+  letter-spacing: 1.5px !important; color: #95a2ad !important; min-height: 9px !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey.dtmfCall {
+  background: linear-gradient(180deg, #34d97a 0%, #1f9e57 60%, #178246 100%) !important;
+  border-color: #0c5a30 !important; color: #062b16 !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey.dtmfCall:disabled { filter: grayscale(0.6) brightness(0.7) !important; }
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey.dtmfAux {
+  background: linear-gradient(180deg, #3a4149 0%, #23272d 100%) !important;
+  color: #c7d0d8 !important;
+}
+body[data-theme] .webphonePage .eyebeamPhone .dtmfKey.dtmfAux .kDigit { font-size: 16px !important; }
+
+body[data-theme] .webphonePage .eyebeamPhone .eyebeamAudioUnlock {
+  display: block !important; width: 100% !important; margin: 0 0 14px !important;
+  padding: 9px !important; border-radius: 8px !important; cursor: pointer !important;
+  background: linear-gradient(180deg, #f0a52e, #d2861a) !important; color: #2a1900 !important;
+  border: 1px solid #a9690f !important; font-weight: 700 !important; font-size: 12px !important;
+  clip-path: none !important;
+}
+
+@media (max-width: 640px) {
+  body[data-theme] .webphonePage .eyebeamPhone .eyebeamDevice { max-width: 100% !important; }
+}
