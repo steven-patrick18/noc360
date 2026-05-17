@@ -381,7 +381,7 @@ function useGlobalModalInteractivity() {
     const enhanceModal = (modal) => {
       if (!modal || modal.dataset.modalEnhanced === '1') return;
       modal.dataset.modalEnhanced = '1';
-      let header = modal.querySelector('.modalHeader, .weeklyInvoiceViewHeader');
+      let header = modal.querySelector('.modalHeader, .weeklyInvoiceViewHeader, .clientHero');
       if (!header) {
         header = document.createElement('div');
         header.className = 'modalHeader modalGeneratedDragHandle';

@@ -8584,3 +8584,30 @@ body[data-theme] .webphonePage .fasReasons {
 body[data-theme] .webphonePage .fasReasons li {
   color: #e6b3b3 !important; margin: 4px 0 !important; font-size: 13px !important;
 }
+
+/* Client profile modal: keep billing card values readable (no clip) and
+   responsive; the real .clientHero is now the drag handle (no injected bar). */
+.modal-box.clientDetailModal .billingCards {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important;
+  gap: 12px !important;
+}
+.modal-box.clientDetailModal .billingCards .metric {
+  overflow: visible !important;
+  min-height: 92px !important;
+}
+.modal-box.clientDetailModal .billingCards .metric span {
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+.modal-box.clientDetailModal .billingCards .metric strong {
+  font-size: clamp(17px, 1.4vw, 24px) !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  line-height: 1.2 !important;
+}
+.modal-box.clientDetailModal .clientHero {
+  cursor: grab;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
