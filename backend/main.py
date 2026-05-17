@@ -2646,11 +2646,34 @@ def ensure_asterisk_include(file_name: str, include_name: str):
         path.write_text(f"{existing}{separator}{include_line}\n")
 
 
+def sync_asterisk_tls_cert(fullchain: Path, privkey: Path):
+    """Copy the Let's Encrypt cert/key into an Asterisk-readable location.
+
+    LE keeps /etc/letsencrypt/{live,archive} at 0700 root, but Asterisk runs as
+    the 'asterisk' user and otherwise cannot read the key -> the TLS/WSS server
+    silently fails to start and the browser softphone can never register.
+    """
+    keys_dir = ASTERISK_DIR / "keys"
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    dst_chain = keys_dir / "noc360-fullchain.pem"
+    dst_key = keys_dir / "noc360-privkey.pem"
+    shutil.copyfile(fullchain, dst_chain)
+    shutil.copyfile(privkey, dst_key)
+    for path, mode in ((keys_dir, 0o750), (dst_chain, 0o644), (dst_key, 0o640)):
+        try:
+            shutil.chown(path, user="asterisk", group="asterisk")
+            os.chmod(path, mode)
+        except (LookupError, PermissionError, OSError):
+            pass
+    return dst_chain, dst_key
+
+
 def write_pbx_config_files(config: dict, carriers=None):
     fullchain, privkey = pbx_cert_paths(config["pbx_domain"])
     if not fullchain.exists() or not privkey.exists():
         raise HTTPException(status_code=400, detail=f"SSL certificate missing. Run certbot manually for {config['pbx_domain']}.")
     ASTERISK_DIR.mkdir(parents=True, exist_ok=True)
+    cert_file, key_file = sync_asterisk_tls_cert(fullchain, privkey)
     backup_dir = backup_asterisk_configs()
     trunk_auth_line = f"outbound_auth={config['trunk_name']}-auth" if config["trunk_username"] and config["trunk_password"] else ""
     trunk_auth_block = ""
@@ -2691,8 +2714,8 @@ bindaddr=0.0.0.0
 bindport={config['http_port']}
 tlsenable=yes
 tlsbindaddr=0.0.0.0:{config['wss_port']}
-tlscertfile={fullchain}
-tlsprivatekey={privkey}
+tlscertfile={cert_file}
+tlsprivatekey={key_file}
 """)
     (ASTERISK_DIR / "rtp.conf").write_text(f"""[general]
 rtpstart={config['rtp_start']}

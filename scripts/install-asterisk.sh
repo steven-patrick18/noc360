@@ -69,6 +69,26 @@ if [ ! -f "/etc/letsencrypt/live/$PBX_HOST/fullchain.pem" ]; then
   fi
 fi
 
+log "Installing certbot deploy hook (keeps Asterisk's cert copy fresh on renewal) ..."
+HOOK_DIR="/etc/letsencrypt/renewal-hooks/deploy"
+mkdir -p "$HOOK_DIR"
+cat > "$HOOK_DIR/noc360-asterisk.sh" <<HOOK
+#!/usr/bin/env bash
+# Managed by NOC360. Copies the renewed LE cert into an asterisk-readable
+# location and reloads Asterisk so WSS keeps working after renewals.
+set -e
+LIVE="/etc/letsencrypt/live/$PBX_HOST"
+KEYS="/etc/asterisk/keys"
+[ -f "\$LIVE/fullchain.pem" ] || exit 0
+mkdir -p "\$KEYS"
+cp "\$LIVE/fullchain.pem" "\$KEYS/noc360-fullchain.pem"
+cp "\$LIVE/privkey.pem"   "\$KEYS/noc360-privkey.pem"
+chown -R asterisk:asterisk "\$KEYS" 2>/dev/null || true
+chmod 750 "\$KEYS"; chmod 644 "\$KEYS/noc360-fullchain.pem"; chmod 640 "\$KEYS/noc360-privkey.pem"
+systemctl reload asterisk 2>/dev/null || systemctl restart asterisk 2>/dev/null || true
+HOOK
+chmod +x "$HOOK_DIR/noc360-asterisk.sh"
+
 log "Opening firewall (ufw) for WSS + RTP ..."
 if command -v ufw >/dev/null 2>&1; then
   ufw allow 8089/tcp            || true
