@@ -2744,7 +2744,7 @@ context=webphone-test
 disallow=all
 allow=opus,ulaw,alaw
 auth={config['sip_username']}-auth
-aors={config['sip_username']}-aor
+aors={config['sip_username']}
 webrtc=yes
 use_avpf=yes
 media_encryption=dtls
@@ -2759,7 +2759,7 @@ rewrite_contact=yes
 media_use_received_transport=yes
 rtp_symmetric=yes
 
-[{config['sip_username']}-aor]
+[{config['sip_username']}]
 type=aor
 max_contacts=5
 remove_existing=yes
