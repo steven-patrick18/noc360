@@ -26,6 +26,30 @@ class VOSPortal(Base):
     vos_port = Column(Integer, default=80)
     vos_desktop_enabled = Column(Boolean, default=False)
     vos_notes = Column(Text, nullable=True)
+    system_tag = Column(String, nullable=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class VOSLauncherVersion(Base):
+    __tablename__ = "vos_launcher_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    install_path = Column(Text, nullable=False)
+    args_template = Column(Text, nullable=True)
+    login_wait_seconds = Column(Integer, default=5, nullable=False)
+    field_sequence = Column(String, default="server_ip,username,password,system_tag", nullable=False)
+    field_gap = Column(Integer, default=1, nullable=False)
+    focus_strategy = Column(String, default="vos_window", nullable=False)
+    initial_tab_count = Column(Integer, default=0, nullable=False)
+    press_enter_after_fill = Column(Boolean, default=True, nullable=False)
+    anti_hack_method = Column(String, default="http", nullable=False)
+    anti_hack_wait_seconds = Column(Integer, default=2, nullable=False)
+    status = Column(String, default="Active", nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Client(Base):
@@ -216,11 +240,54 @@ class WebphoneCallLog(Base):
     notes = Column(Text, nullable=True)
     created_by = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    # Call correlation + carrier-test quality (browser-leg via getStats,
+    # carrier-leg via FreeSWITCH CDR ingest). All additive/nullable.
+    call_uuid = Column(String, nullable=True, index=True)
+    direction = Column(String, default="outbound", index=True)
+    quality_source = Column(String, nullable=True)
+    mos = Column(Float, nullable=True)
+    jitter_ms = Column(Float, nullable=True)
+    packet_loss_pct = Column(Float, nullable=True)
+    rtt_ms = Column(Float, nullable=True)
+    audio_codec = Column(String, nullable=True)
+    packets_sent = Column(Integer, nullable=True)
+    packets_received = Column(Integer, nullable=True)
+    packets_lost = Column(Integer, nullable=True)
+    pdd_ms = Column(Integer, nullable=True)
+    ring_ms = Column(Integer, nullable=True)
+    answer_seconds = Column(Integer, nullable=True)
+    sip_response = Column(String, nullable=True)
+    hangup_cause = Column(String, nullable=True)
+    carrier_route = Column(String, nullable=True)
+    remote_media_ip = Column(String, nullable=True)
+    route_path = Column(Text, nullable=True)
     profile = relationship("WebphoneProfile")
 
     @property
     def profile_name(self):
         return self.profile.profile_name if self.profile else None
+
+
+class WebphoneCarrier(Base):
+    __tablename__ = "webphone_carriers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False, index=True)
+    auth_type = Column(String, default="ip", nullable=False)  # 'ip' or 'user'
+    host = Column(String, nullable=False)
+    port = Column(Integer, default=5060, nullable=False)
+    username = Column(String, nullable=True)
+    password = Column(String, nullable=True)
+    prefix = Column(String, nullable=True)
+    codecs = Column(String, default="OPUS,PCMU,PCMA", nullable=False)
+    status = Column(String, default="Active", nullable=False, index=True)
+    conn_status = Column(String, nullable=True)
+    conn_detail = Column(Text, nullable=True)
+    conn_checked_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class SSHConnection(Base):

@@ -61,14 +61,14 @@ Edit `C:\NOC360\config.json`:
   "versions": [
     {
       "name": "V2.1.8.00",
-      "path": "C:\\Program Files (x86)\\VOS300021800\\V2.1.8.00\\bin\\VOS3000.exe",
+      "path": "C:\\Program Files (x86)\\VOS300021800\\V2.1.8.00\\bin\\vos3000client.exe",
   "args_template": "",
       "login_wait_seconds": 5,
       "tab_sequence": ["server_ip", "username", "password", "system_tag"]
     },
     {
       "name": "V2.1.8.05",
-      "path": "C:\\Program Files (x86)\\VOS300021805\\V2.1.8.05\\bin\\VOS3000.exe",
+      "path": "C:\\Program Files (x86)\\VOS300021805\\V2.1.8.05\\bin\\vos3000client.exe",
       "args_template": "",
       "login_wait_seconds": 5,
       "tab_sequence": ["server_ip", "username", "password", "system_tag"]
@@ -141,6 +141,29 @@ C:\NOC360\config.json
 ```
 
 Add the VOS executable path manually, save, then click `Refresh Agent` in NOC360.
+
+## Java Access Bridge (auto-login reliability)
+
+VOS3000 is a Java (Swing) application, so its login fields cannot be filled
+reliably with blind keyboard automation across different builds/languages.
+The launcher uses the **Java Access Bridge** to set the real fields and click
+Login directly — independent of language (English or Chinese) and field layout.
+
+The launcher **auto-enables** Java Access Bridge for the VOS JRE on first launch
+(it writes `accessibility.properties` into the VOS install's bundled `jre/lib/`),
+so no manual step is normally required. If the launch progress shows
+"Java Access Bridge unavailable ... using keyboard fallback":
+
+1. Confirm VOS has a bundled JRE near its `bin` folder.
+2. As a fallback, open an admin Command Prompt and run:
+   ```text
+   "<VOS install>\jre\bin\jabswitch" -enable
+   ```
+3. Restart the VOS client and relaunch from NOC360.
+
+If Java Access Bridge cannot be used, the launcher automatically falls back to
+keyboard auto-fill so launching never breaks — it just may need the per-version
+"Tabs Between Fields" tuning in **VOS Launcher Versions**.
 
 ## Antivirus Warning
 

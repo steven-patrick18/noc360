@@ -3535,8 +3535,8 @@ main {
 }
 
 @keyframes pageRise {
-  from { opacity: 0; transform: translateY(12px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .cards {
@@ -4566,6 +4566,78 @@ tbody tr:hover {
   font-size: 20px;
 }
 
+.launcherSteps {
+  padding: 16px !important;
+}
+
+.launcherSteps h3 {
+  margin: 0 0 12px;
+  color: var(--text-main);
+}
+
+.launchStepList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.launchStepList li {
+  display: grid;
+  grid-template-columns: 22px 150px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius, 8px);
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, 0.16));
+}
+
+.launchStepList .stepMark {
+  font-weight: 800;
+  text-align: center;
+}
+
+.launchStepList li.stepOk .stepMark {
+  color: var(--accent-success, #16a34a);
+}
+
+.launchStepList li.stepFail .stepMark {
+  color: var(--accent-danger, #dc2626);
+}
+
+.launchStepList .stepLabel {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.launchStepList .stepMessage {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.vosLauncherVersionsModal {
+  width: min(960px, calc(100vw - 40px)) !important;
+  max-width: 960px !important;
+}
+
+.vosLauncherVersionForm {
+  margin-top: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.vosLauncherVersionForm h3 {
+  margin: 0;
+  color: var(--text-main);
+}
+
+.checkboxField {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+
 .launcherAgentPanel code {
   color: #e0fbff;
   border: 1px solid rgba(0, 240, 255, 0.16);
@@ -4864,6 +4936,260 @@ tbody tr:hover {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+}
+
+.webphoneTransfer {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.webphoneTransfer input {
+  flex: 1;
+}
+
+.dtmfPad {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  max-width: 260px;
+}
+
+.dtmfKey {
+  font-size: 18px;
+  font-weight: 700;
+  padding: 12px 0;
+}
+
+.qualityPanel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, 0.16));
+  border-radius: var(--radius, 10px);
+}
+
+.qualityPanel h3 {
+  margin: 2px 0 0;
+  color: var(--text-main);
+}
+
+.qualityGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.qualityCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius, 8px);
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, 0.16));
+}
+
+.qualityCell span {
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.qualityCell strong {
+  font-size: 18px;
+  color: var(--text-main);
+}
+
+.qualityCell.good strong {
+  color: var(--accent-success, #16a34a);
+}
+
+.qualityCell.warn strong {
+  color: var(--accent-warning, #d97706);
+}
+
+.qualityCell.bad strong {
+  color: var(--accent-danger, #dc2626);
+}
+
+.carrierRow {
+  cursor: pointer;
+}
+
+.carrierTestTable td.badText {
+  color: var(--accent-danger, #dc2626);
+  font-weight: 700;
+}
+
+.carrierTestTable td.warnText {
+  color: var(--accent-warning, #d97706);
+  font-weight: 700;
+}
+
+.carrierTestTable td.okText {
+  color: var(--accent-success, #16a34a);
+  font-weight: 700;
+}
+
+.carrierFilters {
+  margin-top: 12px;
+}
+
+/* High-tech NOC console look for the webphone */
+.webphonePage .webphoneDialerPanel,
+.webphonePage .qualityPanel {
+  position: relative;
+  overflow: hidden;
+}
+
+.webphonePage .webphoneDialerPanel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent-primary, #4f46e5) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-primary, #4f46e5) 7%, transparent) 1px, transparent 1px);
+  background-size: 26px 26px;
+  opacity: 0.5;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent 70%);
+}
+
+.webphonePage .sectionHeader .eyebrow {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.dialpadWrap {
+  margin-top: 16px;
+  max-width: 320px;
+}
+
+.dialpadDisplay {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius, 10px);
+  border: 1px solid var(--border-glow, rgba(99, 102, 241, 0.4));
+  background: color-mix(in srgb, var(--accent-primary, #4f46e5) 6%, transparent);
+  margin-bottom: 12px;
+}
+
+.dialpadDisplay .dialpadHint {
+  font-size: 11px;
+  color: var(--text-soft);
+  letter-spacing: 0.04em;
+}
+
+.dialpadDisplay strong {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 26px;
+  letter-spacing: 0.06em;
+  color: var(--text-main);
+  min-height: 32px;
+}
+
+.dialpadDisplay em {
+  font-style: normal;
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.dialpadWrap .dtmfPad {
+  margin-top: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 320px;
+}
+
+.dtmfKey {
+  font-family: "JetBrains Mono", Consolas, monospace;
+  transition: transform 90ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.dtmfKey:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--accent-primary, #4f46e5);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary, #4f46e5) 40%, transparent);
+}
+
+.dtmfKey.dtmfCall {
+  background: var(--accent-success, #16a34a) !important;
+  border-color: var(--accent-success, #16a34a) !important;
+  color: #fff;
+}
+
+.dtmfKey.dtmfCall:disabled {
+  opacity: 0.45;
+}
+
+.dtmfKey.dtmfAux {
+  font-size: 15px;
+  color: var(--text-soft);
+}
+
+.callPath {
+  margin: 4px 0 16px;
+  padding: 14px;
+  border-radius: var(--radius, 10px);
+  border: 1px solid var(--border-glow, rgba(99, 102, 241, 0.4));
+  background: color-mix(in srgb, var(--accent-primary, #4f46e5) 5%, transparent);
+}
+
+.callPathFlow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+
+.callPathFlow .hop {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft, rgba(148, 163, 184, 0.18));
+  background: var(--bg-card-solid, rgba(255, 255, 255, 0.03));
+  min-width: 110px;
+}
+
+.callPathFlow .hop b {
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.callPathFlow .hop i {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--text-soft);
+  font-family: "JetBrains Mono", Consolas, monospace;
+  word-break: break-all;
+}
+
+.callPathFlow .hopArrow {
+  align-self: center;
+  color: var(--accent-primary, #4f46e5);
+  font-weight: 700;
+}
+
+.metricHelp {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft, rgba(148, 163, 184, 0.16));
+}
+
+.metricHelp p {
+  margin: 6px 0;
+  font-size: 13px;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+
+.metricHelp p b {
+  color: var(--text-main);
 }
 
 .webphoneProfileTable td:first-child {
@@ -6303,11 +6629,9 @@ tbody tr:hover {
 @keyframes terminalFade {
   from {
     opacity: 0;
-    transform: translateY(6px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -7912,3 +8236,196 @@ td {
     padding: 12px 16px 16px;
   }
 }
+
+/* ============================================================
+   ALIEN-TECH SKIN — webphone only. Layout unchanged; visual
+   redesign (xenotech console). Scoped to .webphonePage so it
+   never bleeds to other pages, and prefixed with `body` to
+   win over the theme application layer's !important rules.
+   ============================================================ */
+.webphonePage {
+  --ax: #46f6e0;
+  --ax2: #b07bff;
+  --ax3: #9dff5b;
+  --ax-void: #03070b;
+  --ax-panel: rgba(6, 18, 22, 0.92);
+  --ax-edge: rgba(70, 246, 224, 0.55);
+  --ax-text: #d9fff7;
+  position: relative;
+  color: var(--ax-text);
+}
+
+body[data-theme] .webphonePage {
+  background:
+    radial-gradient(900px 520px at 12% -8%, rgba(70, 246, 224, 0.10), transparent 60%),
+    radial-gradient(760px 480px at 92% 0%, rgba(176, 123, 255, 0.10), transparent 58%),
+    repeating-linear-gradient(0deg, rgba(70, 246, 224, 0.035) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #04090d, #02060a 60%, #010406);
+  border-radius: 14px;
+  padding: 8px;
+}
+
+body[data-theme] .webphonePage .panel,
+body[data-theme] .webphonePage .qualityPanel,
+body[data-theme] .webphonePage .launcherSteps {
+  background: var(--ax-panel) !important;
+  border: 1px solid var(--ax-edge) !important;
+  border-radius: 4px !important;
+  color: var(--ax-text) !important;
+  box-shadow: 0 0 0 1px rgba(70, 246, 224, 0.08), 0 18px 50px rgba(0, 0, 0, 0.6), inset 0 0 38px rgba(70, 246, 224, 0.05) !important;
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+
+body[data-theme] .webphonePage h2,
+body[data-theme] .webphonePage h3,
+body[data-theme] .webphonePage .eyebrow {
+  color: var(--ax) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 12px rgba(70, 246, 224, 0.55);
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+body[data-theme] .webphonePage .muted,
+body[data-theme] .webphonePage label span,
+body[data-theme] .webphonePage td,
+body[data-theme] .webphonePage th {
+  color: #8fc9c2 !important;
+}
+
+body[data-theme] .webphonePage input,
+body[data-theme] .webphonePage select,
+body[data-theme] .webphonePage textarea {
+  background: rgba(2, 12, 14, 0.85) !important;
+  border: 1px solid rgba(70, 246, 224, 0.32) !important;
+  color: var(--ax-text) !important;
+  border-radius: 3px !important;
+  font-family: "JetBrains Mono", Consolas, monospace;
+}
+
+body[data-theme] .webphonePage input:focus,
+body[data-theme] .webphonePage select:focus,
+body[data-theme] .webphonePage textarea:focus {
+  border-color: var(--ax) !important;
+  box-shadow: 0 0 0 1px var(--ax), 0 0 16px rgba(70, 246, 224, 0.4) !important;
+  outline: none;
+}
+
+body[data-theme] .webphonePage button {
+  background: linear-gradient(180deg, rgba(12, 38, 40, 0.95), rgba(4, 16, 18, 0.95)) !important;
+  border: 1px solid rgba(70, 246, 224, 0.4) !important;
+  color: var(--ax-text) !important;
+  border-radius: 3px !important;
+  letter-spacing: 0.06em;
+  transition: box-shadow 140ms ease, transform 90ms ease, border-color 140ms ease;
+}
+
+body[data-theme] .webphonePage button:hover:not(:disabled) {
+  border-color: var(--ax) !important;
+  box-shadow: 0 0 14px rgba(70, 246, 224, 0.4), inset 0 0 12px rgba(70, 246, 224, 0.12) !important;
+  transform: translateY(-1px);
+}
+
+body[data-theme] .webphonePage button.primary,
+body[data-theme] .webphonePage .dtmfKey.dtmfCall {
+  background: linear-gradient(180deg, rgba(157, 255, 91, 0.28), rgba(20, 60, 20, 0.6)) !important;
+  border-color: var(--ax3) !important;
+  color: #eaffe0 !important;
+  text-shadow: 0 0 8px rgba(157, 255, 91, 0.6);
+}
+
+body[data-theme] .webphonePage .webphoneTabs button.activeTab {
+  border-color: var(--ax) !important;
+  color: var(--ax) !important;
+  box-shadow: inset 0 -2px 0 var(--ax), 0 0 14px rgba(70, 246, 224, 0.3) !important;
+}
+
+/* Dialpad — xeno keys (digits kept readable for humans) */
+body[data-theme] .webphonePage .dialpadDisplay {
+  border: 1px solid var(--ax-edge) !important;
+  background: rgba(70, 246, 224, 0.06) !important;
+  box-shadow: inset 0 0 22px rgba(70, 246, 224, 0.12);
+}
+
+body[data-theme] .webphonePage .dialpadDisplay strong {
+  color: var(--ax) !important;
+  text-shadow: 0 0 14px rgba(70, 246, 224, 0.6);
+  animation: axFlicker 4.5s infinite steps(60);
+}
+
+@keyframes axFlicker {
+  0%, 92%, 100% { opacity: 1; }
+  93% { opacity: 0.72; }
+  95% { opacity: 1; }
+  96% { opacity: 0.85; }
+}
+
+body[data-theme] .webphonePage .dtmfKey {
+  background: radial-gradient(circle at 50% 30%, rgba(70, 246, 224, 0.14), rgba(3, 12, 14, 0.95)) !important;
+  border: 1px solid rgba(70, 246, 224, 0.38) !important;
+  color: var(--ax-text) !important;
+  clip-path: polygon(50% 0, 100% 26%, 100% 74%, 50% 100%, 0 74%, 0 26%);
+  border-radius: 0 !important;
+  padding: 16px 0 !important;
+  font-size: 19px;
+  text-shadow: 0 0 8px rgba(70, 246, 224, 0.45);
+}
+
+body[data-theme] .webphonePage .dtmfKey:hover:not(:disabled) {
+  box-shadow: 0 0 18px rgba(70, 246, 224, 0.5) !important;
+}
+
+/* HUD quality pods */
+body[data-theme] .webphonePage .qualityCell {
+  background: rgba(70, 246, 224, 0.04) !important;
+  border: 1px solid rgba(70, 246, 224, 0.28) !important;
+  border-radius: 2px !important;
+  position: relative;
+}
+
+body[data-theme] .webphonePage .qualityCell::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 7px;
+  height: 7px;
+  border-top: 1px solid var(--ax);
+  border-left: 1px solid var(--ax);
+}
+
+body[data-theme] .webphonePage .qualityCell span { color: #7fb8b2 !important; }
+body[data-theme] .webphonePage .qualityCell strong { color: var(--ax) !important; }
+body[data-theme] .webphonePage .qualityCell.warn strong { color: #ffd34d !important; }
+body[data-theme] .webphonePage .qualityCell.bad strong { color: #ff6b8a !important; }
+body[data-theme] .webphonePage .qualityCell.good strong { color: var(--ax3) !important; }
+
+body[data-theme] .webphonePage .agentStatus {
+  border: 1px solid rgba(70, 246, 224, 0.45) !important;
+  background: rgba(70, 246, 224, 0.07) !important;
+  color: var(--ax) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+body[data-theme] .webphonePage .selectedRow {
+  box-shadow: inset 3px 0 0 var(--ax) !important;
+  background: rgba(70, 246, 224, 0.06) !important;
+}
+
+/* Alien detail/console modal (colors only — never touch position/size) */
+body[data-theme] .webphonePage .modal,
+body[data-theme] .webphonePage .modal-box {
+  background: linear-gradient(180deg, rgba(6, 18, 22, 0.98), rgba(2, 8, 11, 0.98)) !important;
+  border: 1px solid var(--ax-edge) !important;
+  color: var(--ax-text) !important;
+  box-shadow: 0 0 40px rgba(70, 246, 224, 0.16), 0 30px 80px rgba(0, 0, 0, 0.7) !important;
+}
+
+body[data-theme] .webphonePage .callPath {
+  border: 1px solid var(--ax-edge) !important;
+  background: rgba(70, 246, 224, 0.05) !important;
+}
+
+body[data-theme] .webphonePage .callPathFlow .hopArrow { color: var(--ax) !important; }
+body[data-theme] .webphonePage .metricHelp p b { color: var(--ax) !important; }

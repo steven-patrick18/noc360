@@ -373,12 +373,70 @@ class WebphoneCallLogCreate(BaseModel):
     status: str
     duration: int = 0
     notes: Optional[str] = None
+    call_uuid: Optional[str] = None
+    direction: Optional[str] = "outbound"
+    quality_source: Optional[str] = None
+    mos: Optional[float] = None
+    jitter_ms: Optional[float] = None
+    packet_loss_pct: Optional[float] = None
+    rtt_ms: Optional[float] = None
+    audio_codec: Optional[str] = None
+    packets_sent: Optional[int] = None
+    packets_received: Optional[int] = None
+    packets_lost: Optional[int] = None
+    pdd_ms: Optional[int] = None
+    ring_ms: Optional[int] = None
+    answer_seconds: Optional[int] = None
+    sip_response: Optional[str] = None
+    hangup_cause: Optional[str] = None
+    carrier_route: Optional[str] = None
+    remote_media_ip: Optional[str] = None
+    route_path: Optional[str] = None
 
 
 class WebphoneCallLogOut(WebphoneCallLogCreate, OrmModel):
     id: int
     profile_name: Optional[str] = None
     created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class WebphoneCarrierBase(BaseModel):
+    name: str
+    auth_type: str = "ip"
+    host: str
+    port: int = 5060
+    username: Optional[str] = None
+    password: Optional[str] = None
+    prefix: Optional[str] = None
+    codecs: str = "OPUS,PCMU,PCMA"
+    status: str = "Active"
+    notes: Optional[str] = None
+
+
+class WebphoneCarrierCreate(WebphoneCarrierBase):
+    pass
+
+
+class WebphoneCarrierUpdate(BaseModel):
+    name: Optional[str] = None
+    auth_type: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    prefix: Optional[str] = None
+    codecs: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class WebphoneCarrierOut(WebphoneCarrierBase, OrmModel):
+    id: int
+    conn_status: Optional[str] = None
+    conn_detail: Optional[str] = None
+    conn_checked_at: Optional[datetime] = None
+    has_password: bool = False
     created_at: Optional[datetime] = None
 
 

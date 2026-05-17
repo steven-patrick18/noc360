@@ -12,6 +12,7 @@ import re
 import secrets
 import shlex
 import shutil
+import socket
 import sqlite3
 import ssl
 import stat
@@ -45,7 +46,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database import Base, DATABASE_PATH, SessionLocal, engine, get_db
-from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSPortal, WebphoneCallLog, WebphoneProfile, WeeklyInvoice, WeeklyInvoiceItem
+from models import ActivityLog, AsteriskSoundServer, BillingCharge, BillingSetting, CDR, ChatGroup, ChatGroupMember, ChatGroupMessage, ChatMessage, ChatRoom, Client, ClientAccess, ClientLedger, DataCost, DialerCluster, PagePermission, RDP, RoutingGateway, SSHConnection, SystemRoutingPlacement, TerminalCommand, TerminalCommandHistory, TerminalSession, Ticket, TicketMessage, User, VOSLauncherVersion, VOSPortal, WebphoneCallLog, WebphoneCarrier, WebphoneProfile, WeeklyInvoice, WeeklyInvoiceItem
 from schemas import (
     ActivityLogOut,
     AsteriskSoundFileOut,
@@ -114,6 +115,9 @@ from schemas import (
     VOSPortalUpdate,
     WebphoneCallLogCreate,
     WebphoneCallLogOut,
+    WebphoneCarrierCreate,
+    WebphoneCarrierOut,
+    WebphoneCarrierUpdate,
     WebphoneProfileCreate,
     WebphoneProfileOut,
     WebphoneProfileUpdate,
@@ -389,6 +393,8 @@ class VOSDesktopOut(BaseModel):
     vos_port: int | None = 80
     vos_desktop_enabled: bool = False
     vos_notes: str | None = None
+    system_tag: str | None = None
+    last_used_at: str | None = None
     has_password: bool = False
 
 
@@ -396,6 +402,7 @@ class VOSDesktopLoginOut(BaseModel):
     server: str | None = None
     username: str | None = None
     password: str | None = None
+    system_tag: str | None = None
     anti_hack_url: str | None = None
     anti_hack_password: str | None = None
 
@@ -414,6 +421,7 @@ class VOSDesktopDetailsOut(BaseModel):
     uuid: str | None = None
     notes: str | None = None
     vos_notes: str | None = None
+    system_tag: str | None = None
     status: str | None = None
 
 
@@ -441,6 +449,56 @@ class VOSDesktopUpdateIn(BaseModel):
     vos_port: int | None = None
     vos_desktop_enabled: bool | None = None
     vos_notes: str | None = None
+    system_tag: str | None = None
+
+
+class VOSLauncherVersionOut(BaseModel):
+    id: int
+    name: str
+    install_path: str
+    args_template: str | None = None
+    login_wait_seconds: int = 5
+    field_sequence: str = "server_ip,username,password,system_tag"
+    field_gap: int = 1
+    focus_strategy: str = "vos_window"
+    initial_tab_count: int = 0
+    press_enter_after_fill: bool = True
+    anti_hack_method: str = "http"
+    anti_hack_wait_seconds: int = 2
+    status: str = "Active"
+    notes: str | None = None
+
+
+class VOSLauncherVersionIn(BaseModel):
+    name: str
+    install_path: str
+    args_template: str | None = None
+    login_wait_seconds: int = 5
+    field_sequence: str = "server_ip,username,password,system_tag"
+    field_gap: int = 1
+    focus_strategy: str = "vos_window"
+    initial_tab_count: int = 0
+    press_enter_after_fill: bool = True
+    anti_hack_method: str = "http"
+    anti_hack_wait_seconds: int = 2
+    status: str = "Active"
+    notes: str | None = None
+
+
+class VOSLauncherVersionUpdateIn(BaseModel):
+    name: str | None = None
+    install_path: str | None = None
+    args_template: str | None = None
+    login_wait_seconds: int | None = None
+    field_sequence: str | None = None
+    field_gap: int | None = None
+    focus_strategy: str | None = None
+    initial_tab_count: int | None = None
+    press_enter_after_fill: bool | None = None
+    anti_hack_method: str | None = None
+    anti_hack_wait_seconds: int | None = None
+    status: str | None = None
+    notes: str | None = None
 
 
 class ActivityLogTrackIn(BaseModel):
@@ -2588,7 +2646,7 @@ def ensure_asterisk_include(file_name: str, include_name: str):
         path.write_text(f"{existing}{separator}{include_line}\n")
 
 
-def write_pbx_config_files(config: dict):
+def write_pbx_config_files(config: dict, carriers=None):
     fullchain, privkey = pbx_cert_paths(config["pbx_domain"])
     if not fullchain.exists() or not privkey.exists():
         raise HTTPException(status_code=400, detail=f"SSL certificate missing. Run certbot manually for {config['pbx_domain']}.")
@@ -2689,13 +2747,67 @@ username={config['sip_username']}
 password={config['sip_password']}
 {trunk_block}
 """)
+    trunk_host = config.get("trunk_host") or "VOS"
+    ingest_url = os.getenv("NOC360_CDR_INGEST_URL", "http://127.0.0.1:8000/api/webphone/cdr-ingest")
     (ASTERISK_DIR / "extensions_noc360_webrtc.conf").write_text(f"""; Managed by NOC360 PBX Setup
 
 [webphone-test]
 exten => _X.,1,NoOp(NOC360 Webphone DID Test)
+ same => n,Set(NOC360UUID=${{PJSIP_HEADER(read,X-NOC360-Call-ID)}})
+ same => n,Set(CARRIER=${{FILTER(0-9,${{PJSIP_HEADER(read,X-NOC360-Carrier)}})}})
+ same => n,Set(CHANNEL(hangup_handler_push)=noc360-cdr,s,1)
+ same => n,GotoIf($["${{CARRIER}}"=""]?def)
+ same => n,Set(NOC360ROUTE=noc360-carrier-${{CARRIER}})
+ same => n,Dial(PJSIP/${{EXTEN}}@noc360-carrier-${{CARRIER}},60)
+ same => n,Hangup()
+ same => n(def),Set(NOC360ROUTE={config['trunk_name']})
  same => n,Dial(PJSIP/{dial_prefix}${{EXTEN}}@{config['trunk_name']},60)
  same => n,Hangup()
+
+; Node-leg quality + outcome pushed to NOC360 (matched by X-NOC360-Call-ID).
+[noc360-cdr]
+exten => s,1,NoOp(NOC360 quality push ${{NOC360UUID}})
+ same => n,ExecIf($["${{NOC360UUID}}"=""]?Return())
+ same => n,Set(CURLOPT(httptimeout)=5)
+ same => n,Set(B=call_uuid=${{URIENCODE(${{NOC360UUID}})}}&rtpqos=${{URIENCODE(${{CHANNEL(rtpqos,audio,all)}})}}&hangupcause=${{URIENCODE(${{HANGUPCAUSE}})}}&sipresponse=${{URIENCODE(${{DIALSTATUS}})}}&codec=${{URIENCODE(${{CHANNEL(audionativeformat)}})}}&billsec=${{CDR(billsec)}}&route=${{NOC360ROUTE}}&remote_media_ip={trunk_host}&route_path=${{URIENCODE(browser > NOC360 Asterisk > ${{NOC360ROUTE}})}})
+ same => n,Set(NOC360RES=${{CURL({ingest_url},${{B}})}})
+ same => n,Return()
 """)
+    if carriers:
+        carrier_cfg = ["", "; Managed by NOC360 - selectable carriers"]
+        for c in carriers:
+            ep = f"noc360-carrier-{c.id}"
+            carrier_cfg.append(f"""
+[{ep}]
+type=endpoint
+context=webphone-test
+disallow=all
+allow={(c.codecs or 'ulaw,alaw').lower().replace('opus,', 'opus,').replace('pcmu', 'ulaw').replace('pcma', 'alaw')}
+aors={ep}
+direct_media=no
+from_user={normalize(c.username) or 'noc360'}
+{f'outbound_auth={ep}-auth' if (c.auth_type == 'user' and c.username and c.password) else ''}
+
+[{ep}]
+type=aor
+contact=sip:{c.host}:{int(c.port or 5060)}
+qualify_frequency=30
+""")
+            if c.auth_type == "user" and c.username and c.password:
+                carrier_cfg.append(f"""[{ep}-auth]
+type=auth
+auth_type=userpass
+username={c.username}
+password={c.password}
+""")
+            else:
+                carrier_cfg.append(f"""[{ep}]
+type=identify
+endpoint={ep}
+match={c.host}
+""")
+        with (ASTERISK_DIR / "pjsip_noc360_webrtc.conf").open("a", encoding="utf-8") as handle:
+            handle.write("\n".join(carrier_cfg))
     return backup_dir
 
 
@@ -2742,6 +2854,25 @@ def webphone_call_log_out(record: WebphoneCallLog):
         "notes": record.notes,
         "created_by": record.created_by,
         "created_at": record.created_at,
+        "call_uuid": record.call_uuid,
+        "direction": record.direction or "outbound",
+        "quality_source": record.quality_source,
+        "mos": record.mos,
+        "jitter_ms": record.jitter_ms,
+        "packet_loss_pct": record.packet_loss_pct,
+        "rtt_ms": record.rtt_ms,
+        "audio_codec": record.audio_codec,
+        "packets_sent": record.packets_sent,
+        "packets_received": record.packets_received,
+        "packets_lost": record.packets_lost,
+        "pdd_ms": record.pdd_ms,
+        "ring_ms": record.ring_ms,
+        "answer_seconds": record.answer_seconds,
+        "sip_response": record.sip_response,
+        "hangup_cause": record.hangup_cause,
+        "carrier_route": record.carrier_route,
+        "remote_media_ip": record.remote_media_ip,
+        "route_path": record.route_path,
     }
 
 
@@ -2844,6 +2975,25 @@ def create_webphone_call_log(payload: WebphoneCallLogCreate, request: Request, d
         duration=max(int(payload.duration or 0), 0),
         notes=payload.notes,
         created_by=user.username,
+        call_uuid=normalize(payload.call_uuid),
+        direction=normalize(payload.direction) or "outbound",
+        quality_source=normalize(payload.quality_source),
+        mos=payload.mos,
+        jitter_ms=payload.jitter_ms,
+        packet_loss_pct=payload.packet_loss_pct,
+        rtt_ms=payload.rtt_ms,
+        audio_codec=normalize(payload.audio_codec),
+        packets_sent=payload.packets_sent,
+        packets_received=payload.packets_received,
+        packets_lost=payload.packets_lost,
+        pdd_ms=payload.pdd_ms,
+        ring_ms=payload.ring_ms,
+        answer_seconds=payload.answer_seconds,
+        sip_response=normalize(payload.sip_response),
+        hangup_cause=normalize(payload.hangup_cause),
+        carrier_route=normalize(payload.carrier_route),
+        remote_media_ip=normalize(payload.remote_media_ip),
+        route_path=normalize(payload.route_path),
     )
     db.add(record)
     db.flush()
@@ -2851,6 +3001,168 @@ def create_webphone_call_log(payload: WebphoneCallLogCreate, request: Request, d
     db.commit()
     db.refresh(record)
     return webphone_call_log_out(record)
+
+
+# ---------------------------------------------------------------------------
+# Webphone carriers: selectable IP-based / user-based trunks the node PBX
+# routes test calls to. Connection status via SIP OPTIONS (ip) / REGISTER
+# view (user), best-effort and honest when no engine is present.
+# ---------------------------------------------------------------------------
+
+def webphone_carrier_out(c: WebphoneCarrier):
+    return {
+        "id": c.id,
+        "name": c.name,
+        "auth_type": c.auth_type or "ip",
+        "host": c.host,
+        "port": c.port or 5060,
+        "username": c.username,
+        "password": None,
+        "has_password": bool(c.password),
+        "prefix": c.prefix,
+        "codecs": c.codecs or "OPUS,PCMU,PCMA",
+        "status": c.status or "Active",
+        "conn_status": c.conn_status or "unknown",
+        "conn_detail": c.conn_detail,
+        "conn_checked_at": c.conn_checked_at,
+        "notes": c.notes,
+        "created_at": c.created_at,
+    }
+
+
+def probe_carrier(c: WebphoneCarrier):
+    host = (c.host or "").strip()
+    port = int(c.port or 5060)
+    if not host:
+        return "error", "Carrier host is not set"
+    # Prefer the engine's own view of the trunk if Asterisk is present.
+    if shutil.which("asterisk"):
+        res = run_safe_command(["asterisk", "-rx", f"pjsip show endpoint noc360-carrier-{c.id}"], timeout=6)
+        out = (res.get("output") or "")
+        if res.get("ok") and "Endpoint" in out and "not found" not in out.lower():
+            lowered = out.lower()
+            if c.auth_type == "user":
+                reg = run_safe_command(["asterisk", "-rx", "pjsip show registrations"], timeout=6).get("output") or ""
+                if f"noc360-carrier-{c.id}" in reg and "registered" in reg.lower():
+                    return "registered", "Asterisk: registration active"
+            if "avail" in lowered or "not in use" in lowered or "reachable" in lowered:
+                return "reachable", "Asterisk endpoint reachable"
+    # TCP reachability
+    try:
+        with socket.create_connection((host, port), timeout=3):
+            return "reachable", f"TCP {host}:{port} open"
+    except OSError:
+        pass
+    # Best-effort UDP SIP OPTIONS
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3)
+        tag = secrets.token_hex(6)
+        msg = (
+            f"OPTIONS sip:{host} SIP/2.0\r\n"
+            f"Via: SIP/2.0/UDP noc360;branch=z9hG4bK{tag}\r\n"
+            f"Max-Forwards: 70\r\n"
+            f"From: <sip:noc360@noc360>;tag={tag}\r\n"
+            f"To: <sip:{host}>\r\n"
+            f"Call-ID: {tag}@noc360\r\n"
+            f"CSeq: 1 OPTIONS\r\n"
+            f"Content-Length: 0\r\n\r\n"
+        )
+        sock.sendto(msg.encode(), (host, port))
+        data, _ = sock.recvfrom(2048)
+        sock.close()
+        if data:
+            return "reachable", "SIP OPTIONS responded"
+    except OSError:
+        pass
+    return "unreachable", f"No TCP/UDP response from {host}:{port}"
+
+
+@app.get("/api/webphone/carriers", response_model=list[WebphoneCarrierOut])
+@app.get("/webphone/carriers", response_model=list[WebphoneCarrierOut])
+def list_webphone_carriers(db: Session = Depends(get_db), user: User = Depends(require_webphone())):
+    return [webphone_carrier_out(c) for c in db.query(WebphoneCarrier).order_by(WebphoneCarrier.name.asc()).all()]
+
+
+@app.post("/api/webphone/carriers", response_model=WebphoneCarrierOut)
+@app.post("/webphone/carriers", response_model=WebphoneCarrierOut)
+def create_webphone_carrier(payload: WebphoneCarrierCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_create"))):
+    name = normalize(payload.name)
+    if not name:
+        raise HTTPException(status_code=400, detail="Carrier name is required")
+    if not normalize(payload.host):
+        raise HTTPException(status_code=400, detail="Carrier host/IP is required")
+    if (payload.auth_type or "ip") == "user" and not (normalize(payload.username) and normalize(payload.password)):
+        raise HTTPException(status_code=400, detail="User-based carrier requires username and password")
+    if db.query(WebphoneCarrier).filter(WebphoneCarrier.name == name).first():
+        raise HTTPException(status_code=400, detail=f"A carrier named '{name}' already exists")
+    c = WebphoneCarrier(
+        name=name,
+        auth_type="user" if (payload.auth_type or "ip") == "user" else "ip",
+        host=normalize(payload.host),
+        port=int(payload.port or 5060),
+        username=normalize(payload.username),
+        password=normalize(payload.password),
+        prefix=normalize(payload.prefix),
+        codecs=normalize(payload.codecs) or "OPUS,PCMU,PCMA",
+        status=payload.status or "Active",
+        notes=payload.notes,
+        created_by=user.username,
+    )
+    db.add(c)
+    db.flush()
+    log_activity(db, user, "create", "webphone", "WebphoneCarrier", c.id, f"Carrier {c.name} ({c.auth_type}) created", new_value={**webphone_carrier_out(c)}, request=request)
+    db.commit()
+    db.refresh(c)
+    return webphone_carrier_out(c)
+
+
+@app.put("/api/webphone/carriers/{carrier_id}", response_model=WebphoneCarrierOut)
+@app.put("/webphone/carriers/{carrier_id}", response_model=WebphoneCarrierOut)
+def update_webphone_carrier(carrier_id: int, payload: WebphoneCarrierUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_edit"))):
+    c = get_record(db, WebphoneCarrier, carrier_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        new_name = normalize(updates["name"])
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Carrier name cannot be empty")
+        clash = db.query(WebphoneCarrier).filter(WebphoneCarrier.name == new_name, WebphoneCarrier.id != carrier_id).first()
+        if clash:
+            raise HTTPException(status_code=400, detail=f"A carrier named '{new_name}' already exists")
+        updates["name"] = new_name
+    if "password" in updates and not normalize(updates["password"]):
+        updates.pop("password")
+    for key, value in updates.items():
+        setattr(c, key, value)
+    db.commit()
+    db.refresh(c)
+    log_activity(db, user, "update", "webphone", "WebphoneCarrier", c.id, f"Carrier {c.name} updated", request=request, commit=True)
+    return webphone_carrier_out(c)
+
+
+@app.delete("/api/webphone/carriers/{carrier_id}")
+@app.delete("/webphone/carriers/{carrier_id}")
+def delete_webphone_carrier(carrier_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone("can_delete"))):
+    c = get_record(db, WebphoneCarrier, carrier_id)
+    name = c.name
+    db.delete(c)
+    db.commit()
+    log_activity(db, user, "delete", "webphone", "WebphoneCarrier", carrier_id, f"Carrier {name} deleted", request=request, commit=True)
+    return {"deleted": True}
+
+
+@app.post("/api/webphone/carriers/{carrier_id}/connect")
+@app.post("/webphone/carriers/{carrier_id}/connect")
+def connect_webphone_carrier(carrier_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_webphone())):
+    c = get_record(db, WebphoneCarrier, carrier_id)
+    status, detail = probe_carrier(c)
+    c.conn_status = status
+    c.conn_detail = detail
+    c.conn_checked_at = datetime.utcnow()
+    db.commit()
+    db.refresh(c)
+    log_activity(db, user, "carrier_connect_check", "webphone", "WebphoneCarrier", c.id, f"Carrier {c.name} status: {status}", request=request, commit=True)
+    return webphone_carrier_out(c)
 
 
 def validate_ssh_connection_payload(payload: SSHConnectionCreate | SSHConnectionUpdate, require_password: bool = False):
@@ -4327,7 +4639,8 @@ async def terminal_websocket(websocket: WebSocket, connection_id: int):
             live = None
             with TERMINAL_LIVE_SESSIONS_LOCK:
                 candidate = TERMINAL_LIVE_SESSIONS.get(session_key)
-                if candidate and not candidate.get("channel", None).closed:
+                candidate_channel = candidate.get("channel") if candidate else None
+                if candidate_channel is not None and not candidate_channel.closed:
                     live = candidate
                     live["attached"] = True
             if live:
@@ -4522,6 +4835,110 @@ def enable_webphone_webrtc(request: Request, db: Session = Depends(get_db), user
     return {"enabled": True, "message": "WebRTC Enabled Successfully", "backup_dir": str(backup_dir), "profile": webphone_profile_out(profile), "status": pbx_status_payload()}
 
 
+def webphone_pbx_overview(db: Session):
+    status = pbx_status_payload()
+    carriers = db.query(WebphoneCarrier).all()
+    return {
+        **status,
+        "carrier_count": len(carriers),
+        "carriers": [{"id": c.id, "name": c.name, "auth_type": c.auth_type, "conn_status": c.conn_status or "unknown"} for c in carriers],
+        "webphone_profile": (lambda p: webphone_profile_out(p) if p else None)(db.query(WebphoneProfile).order_by(WebphoneProfile.id.desc()).first()),
+    }
+
+
+@app.get("/api/webphone/pbx/overview")
+@app.get("/webphone/pbx/overview")
+def get_webphone_pbx_overview(db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    return webphone_pbx_overview(db)
+
+
+@app.post("/api/webphone/pbx/one-click")
+@app.post("/webphone/pbx/one-click")
+def one_click_webphone_setup(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Single button: verify Asterisk, write the WebRTC gateway + all active
+    carriers, reload, and auto-create the hidden browser SIP identity."""
+    if not shutil.which("asterisk"):
+        raise HTTPException(status_code=400, detail="Asterisk is not installed on this server. Run: sudo apt install asterisk certbot, issue a TLS cert, then retry.")
+    config = default_pbx_config_for_enable()
+    cert, key = pbx_cert_paths(config["pbx_domain"])
+    if not (cert.exists() and key.exists()):
+        raise HTTPException(status_code=400, detail=f"TLS certificate for {config['pbx_domain']} is missing. Issue it (certbot) once, then retry.")
+    carriers = db.query(WebphoneCarrier).filter(WebphoneCarrier.status == "Active").all()
+    backup_dir = write_pbx_config_files(config, carriers=carriers)
+    restart = run_safe_command(["systemctl", "restart", "asterisk"], timeout=20)
+    if not restart["ok"]:
+        reload_result = run_safe_command(["asterisk", "-rx", "core reload"], timeout=12)
+        if not reload_result["ok"]:
+            raise HTTPException(status_code=500, detail=f"Config written but Asterisk restart/reload failed: {restart['output'] or reload_result['output']}")
+    profile = upsert_webphone_profile_from_config(db, config)
+    log_activity(db, user, "webphone_one_click_setup", "webphone", "WebphoneProfile", profile.id, f"One-click webphone setup ({len(carriers)} carriers)", new_value={"pbx_domain": config["pbx_domain"], "carriers": len(carriers), "backup_dir": str(backup_dir)}, request=request)
+    db.commit()
+    db.refresh(profile)
+    return {"ok": True, "message": f"Webphone ready. {len(carriers)} carrier(s) configured.", "profile": webphone_profile_out(profile), "overview": webphone_pbx_overview(db)}
+
+
+@app.post("/api/webphone/pbx/enable-telephony")
+@app.post("/webphone/pbx/enable-telephony")
+def enable_telephony(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
+    """Enable Telephony: auto-install Asterisk + modules + TLS cert, then
+    write the WebRTC gateway + carriers and create the browser SIP login.
+    Returns per-step results. Requires the backend to run with root/sudo."""
+    steps = []
+
+    def add(name, ok, output):
+        steps.append({"step": name, "ok": bool(ok), "output": str(output)[:700]})
+
+    config = default_pbx_config_for_enable()
+    script = Path(PROJECT_ROOT) / "scripts" / "install-asterisk.sh"
+    if not script.exists():
+        add("install-asterisk", False, "scripts/install-asterisk.sh is missing")
+    else:
+        env = {**os.environ, "PBX_HOST": config["pbx_domain"], "CERT_EMAIL": os.getenv("NOC360_CERT_EMAIL", f"admin@{config['pbx_domain']}")}
+        try:
+            completed = subprocess.run(["bash", str(script), "--yes"], capture_output=True, text=True, timeout=900, env=env, check=False)
+            add("install-asterisk", completed.returncode == 0, completed.stdout or completed.stderr or "")
+        except subprocess.TimeoutExpired:
+            add("install-asterisk", False, "Installer timed out (apt may still be running in the background)")
+        except (FileNotFoundError, OSError) as exc:
+            add("install-asterisk", False, f"Cannot run installer: {exc}")
+
+    if not shutil.which("asterisk"):
+        return {"ok": False, "message": "Asterisk is not available after the install step. Review the step output (apt/repo/permission issues).", "steps": steps, "overview": webphone_pbx_overview(db)}
+
+    cert, key = pbx_cert_paths(config["pbx_domain"])
+    if not (cert.exists() and key.exists()):
+        add("tls-cert", False, f"TLS cert for {config['pbx_domain']} is missing. Point DNS {config['pbx_domain']} -> this VPS, free port 80, then click Enable Telephony again.")
+        return {"ok": False, "message": "Asterisk installed but TLS certificate is missing (needed for wss://).", "steps": steps, "overview": webphone_pbx_overview(db)}
+    add("tls-cert", True, "present")
+
+    carriers = db.query(WebphoneCarrier).filter(WebphoneCarrier.status == "Active").all()
+    try:
+        backup_dir = write_pbx_config_files(config, carriers=carriers)
+        add("write-config", True, f"WebRTC gateway + {len(carriers)} carrier(s); backup {backup_dir}")
+    except HTTPException as exc:
+        add("write-config", False, str(exc.detail))
+        return {"ok": False, "message": "Asterisk config write failed.", "steps": steps, "overview": webphone_pbx_overview(db)}
+
+    restart = run_safe_command(["systemctl", "restart", "asterisk"], timeout=25)
+    if not restart["ok"]:
+        restart = run_safe_command(["asterisk", "-rx", "core reload"], timeout=15)
+    add("restart-asterisk", restart.get("ok"), restart.get("output") or "")
+
+    profile = upsert_webphone_profile_from_config(db, config)
+    add("browser-profile", True, profile.profile_name)
+    log_activity(db, user, "webphone_enable_telephony", "webphone", "WebphoneProfile", profile.id, f"Enable Telephony ({len(carriers)} carriers)", new_value={"pbx_domain": config["pbx_domain"], "carriers": len(carriers), "steps": [s["step"] for s in steps]}, request=request)
+    db.commit()
+    db.refresh(profile)
+    overall = all(s["ok"] for s in steps)
+    return {
+        "ok": overall,
+        "message": "Telephony enabled and webphone configured." if overall else "Enable Telephony finished with issues — see steps below.",
+        "steps": steps,
+        "profile": webphone_profile_out(profile),
+        "overview": webphone_pbx_overview(db),
+    }
+
+
 @app.post("/api/webphone/pbx/configure")
 @app.post("/webphone/pbx/configure")
 def configure_webphone_pbx(payload: WebphonePbxConfigIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):
@@ -4561,6 +4978,119 @@ def restart_webphone_pbx(request: Request, db: Session = Depends(get_db), user: 
         raise HTTPException(status_code=500, detail=result["output"] or "Asterisk restart failed")
     log_activity(db, user, "pbx_restarted", "webphone", "Asterisk", None, "Asterisk restarted from NOC360 PBX Setup", request=request, commit=True)
     return {"restarted": True, "status": pbx_status_payload()}
+
+
+def _cdr_value(variables: dict, *names):
+    for name in names:
+        for key, value in variables.items():
+            if key.lower() == name.lower() and value not in (None, ""):
+                return value
+    return None
+
+
+def _estimate_mos(rtt_ms: float, jitter_ms: float, loss_pct: float) -> float:
+    """Simplified ITU-T G.107 E-model MOS estimate (mirrors the frontend)."""
+    eff_latency = (rtt_ms or 0) + (jitter_ms or 0) * 2 + 10
+    if eff_latency < 160:
+        r = 93.2 - eff_latency / 40
+    else:
+        r = 93.2 - (eff_latency - 120) / 10
+    r -= (loss_pct or 0) * 2.5
+    r = max(0.0, min(100.0, r))
+    mos = 1 + 0.035 * r + r * (r - 60) * (100 - r) * 7e-6
+    return round(max(1.0, min(4.5, mos)), 2)
+
+
+@app.post("/api/webphone/cdr-ingest")
+@app.post("/webphone/cdr-ingest")
+async def webphone_cdr_ingest(request: Request, db: Session = Depends(get_db)):
+    """Receives Asterisk CDR pushes (localhost only) from the dialplan CURL()
+    and merges carrier-leg quality into the matching WebphoneCallLog by call_uuid."""
+    client_host = (request.client.host if request.client else "") or ""
+    token = request.query_params.get("token") or ""
+    expected = os.getenv("NOC360_CDR_TOKEN", "")
+    if client_host not in {"127.0.0.1", "::1", "localhost"} and (not expected or token != expected):
+        raise HTTPException(status_code=403, detail="CDR ingest is restricted")
+    raw = b""
+    try:
+        raw = await request.body()
+    except Exception:
+        raw = b""
+    text = raw.decode("utf-8", errors="ignore").strip()
+    if not text:
+        return {"ok": True, "matched": False}
+    if text.startswith("cdr="):
+        from urllib.parse import unquote_plus
+        text = unquote_plus(text[4:])
+
+    def _commit_match(rec, uuid, engine):
+        rec.quality_source = "both" if rec.quality_source == "browser" else engine
+        db.commit()
+        return {"ok": True, "matched": True, "call_uuid": uuid, "engine": engine}
+
+    # Asterisk (or generic) form / JSON payload posted by the dialplan CURL()
+    data = {}
+    try:
+        if text.startswith("{"):
+            import json as _json
+            data = {str(k).lower(): v for k, v in _json.loads(text).items()}
+        else:
+            from urllib.parse import parse_qs
+            data = {k.lower(): (v[0] if v else "") for k, v in parse_qs(text, keep_blank_values=True).items()}
+    except Exception:
+        return {"ok": True, "matched": False, "reason": "unparseable payload"}
+    call_uuid = (data.get("call_uuid") or data.get("sip_h_x-noc360-call-id") or "").strip()
+    if not call_uuid:
+        return {"ok": True, "matched": False, "reason": "no call uuid"}
+    record = db.query(WebphoneCallLog).filter(WebphoneCallLog.call_uuid == call_uuid).order_by(WebphoneCallLog.id.desc()).first()
+    if not record:
+        return {"ok": True, "matched": False, "reason": "no matching call log"}
+    # Parse Asterisk RTPAUDIOQOS / CHANNEL(rtpqos,audio,...) "key=val;key=val"
+    qos = {}
+    for part in str(data.get("rtpqos") or data.get("rtpaudioqos") or "").replace(",", ";").split(";"):
+        if "=" in part:
+            k, _, v = part.partition("=")
+            qos[k.strip().lower()] = v.strip()
+
+    def fnum(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    rxjit = fnum(qos.get("rxjitter"))
+    if rxjit is not None:
+        record.jitter_ms = round(rxjit * 1000, 2)
+    rtt = fnum(qos.get("rtt"))
+    if rtt is not None:
+        record.rtt_ms = round(rtt * 1000, 2)
+    lp = fnum(qos.get("lp"))
+    rxc = fnum(qos.get("rxcount"))
+    txc = fnum(qos.get("txcount"))
+    if lp is not None and rxc:
+        record.packet_loss_pct = round((lp / (lp + rxc)) * 100, 2)
+        record.packets_lost = int(lp)
+        record.packets_received = int(rxc)
+    if txc is not None:
+        record.packets_sent = int(txc)
+    if record.jitter_ms is not None or record.rtt_ms is not None or record.packet_loss_pct is not None:
+        record.mos = _estimate_mos(record.rtt_ms or 0, record.jitter_ms or 0, record.packet_loss_pct or 0)
+    if data.get("pdd"):
+        record.pdd_ms = int(fnum(data.get("pdd")) or 0)
+    if data.get("billsec"):
+        record.answer_seconds = int(fnum(data.get("billsec")) or 0)
+    if data.get("codec"):
+        record.audio_codec = str(data.get("codec"))
+    if data.get("sipresponse"):
+        record.sip_response = str(data.get("sipresponse"))
+    if data.get("hangupcause"):
+        record.hangup_cause = str(data.get("hangupcause"))
+    record.carrier_route = str(data.get("route") or data.get("dialedpeer") or record.carrier_route or "noc360-trunk")
+    if data.get("remote_media_ip"):
+        record.remote_media_ip = str(data.get("remote_media_ip"))
+    if data.get("route_path"):
+        record.route_path = str(data.get("route_path"))
+    return _commit_match(record, call_uuid, "asterisk")
 
 
 def seed_data(db: Session):
@@ -6753,6 +7283,8 @@ def vos_desktop_out(portal: VOSPortal):
         "vos_port": portal.vos_port or 80,
         "vos_desktop_enabled": bool(portal.vos_desktop_enabled),
         "vos_notes": portal.vos_notes,
+        "system_tag": portal.system_tag,
+        "last_used_at": portal.last_used_at.isoformat() if portal.last_used_at else None,
         "has_password": bool(portal.password),
     }
 
@@ -6772,6 +7304,7 @@ def vos_desktop_details_out(portal: VOSPortal):
         "uuid": portal.uuid,
         "notes": portal.notes or portal.vos_notes,
         "vos_notes": portal.vos_notes,
+        "system_tag": portal.system_tag,
         "status": portal.status,
     }
 
@@ -6819,7 +7352,7 @@ def get_vos_desktop_details(record_id: int, request: Request, db: Session = Depe
 def get_vos_desktop_login(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
     portal = get_vos_desktop_portal(db, record_id)
     log_activity(db, user, "copy_credentials", "vos_desktop", "VOSPortal", portal.id, f"VOS credentials copied for {portal.portal_type}", request=request, commit=True)
-    return {"server": portal.server_ip, "username": portal.username, "password": portal.password, "anti_hack_url": portal.anti_hack_url, "anti_hack_password": portal.anti_hack_password}
+    return {"server": portal.server_ip, "username": portal.username, "password": portal.password, "system_tag": portal.system_tag or portal.uuid, "anti_hack_url": portal.anti_hack_url, "anti_hack_password": portal.anti_hack_password}
 
 
 @app.put("/api/vos-desktop/{record_id}", response_model=VOSDesktopOut)
@@ -6861,8 +7394,90 @@ def launch_vos_desktop(record_id: int, payload: VOSLaunchIn, request: Request, d
 @app.post("/api/vos-desktop/{record_id}/last-used")
 @app.post("/vos-desktop/{record_id}/last-used")
 def mark_vos_desktop_last_used(record_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_export"))):
-    get_vos_desktop_portal(db, record_id)
-    return {"updated": True}
+    portal = get_vos_desktop_portal(db, record_id)
+    portal.last_used_at = datetime.utcnow()
+    db.commit()
+    db.refresh(portal)
+    return {"updated": True, "last_used_at": portal.last_used_at.isoformat() if portal.last_used_at else None}
+
+
+def vos_launcher_version_out(version: VOSLauncherVersion):
+    return {
+        "id": version.id,
+        "name": version.name,
+        "install_path": version.install_path,
+        "args_template": version.args_template,
+        "login_wait_seconds": version.login_wait_seconds,
+        "field_sequence": version.field_sequence,
+        "field_gap": version.field_gap,
+        "focus_strategy": version.focus_strategy,
+        "initial_tab_count": version.initial_tab_count,
+        "press_enter_after_fill": bool(version.press_enter_after_fill),
+        "anti_hack_method": version.anti_hack_method,
+        "anti_hack_wait_seconds": version.anti_hack_wait_seconds,
+        "status": version.status,
+        "notes": version.notes,
+    }
+
+
+@app.get("/api/vos-launcher/versions", response_model=list[VOSLauncherVersionOut])
+@app.get("/vos-launcher/versions", response_model=list[VOSLauncherVersionOut])
+def list_vos_launcher_versions(db: Session = Depends(get_db), user: User = Depends(require_vos_desktop())):
+    versions = db.query(VOSLauncherVersion).order_by(VOSLauncherVersion.name.asc()).all()
+    return [vos_launcher_version_out(version) for version in versions]
+
+
+@app.post("/api/vos-launcher/versions", response_model=VOSLauncherVersionOut)
+@app.post("/vos-launcher/versions", response_model=VOSLauncherVersionOut)
+def create_vos_launcher_version(payload: VOSLauncherVersionIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Version name is required")
+    if not (payload.install_path or "").strip():
+        raise HTTPException(status_code=400, detail="Install path is required")
+    if db.query(VOSLauncherVersion).filter(VOSLauncherVersion.name == name).first():
+        raise HTTPException(status_code=400, detail=f"A launcher version named '{name}' already exists")
+    version = VOSLauncherVersion(**payload.model_dump(), created_by=user.username)
+    version.name = name
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    log_activity(db, user, "create_vos_launcher_version", "vos_desktop", "VOSLauncherVersion", version.id, f"VOS launcher version {version.name} created", new_value=version, request=request, commit=True)
+    return vos_launcher_version_out(version)
+
+
+@app.put("/api/vos-launcher/versions/{version_id}", response_model=VOSLauncherVersionOut)
+@app.put("/vos-launcher/versions/{version_id}", response_model=VOSLauncherVersionOut)
+def update_vos_launcher_version(version_id: int, payload: VOSLauncherVersionUpdateIn, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
+    version = get_record(db, VOSLauncherVersion, version_id)
+    old_value = sanitize_activity_value(version)
+    updates = payload.model_dump(exclude_unset=True)
+    new_name = updates.get("name")
+    if new_name is not None:
+        new_name = new_name.strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="Version name cannot be empty")
+        clash = db.query(VOSLauncherVersion).filter(VOSLauncherVersion.name == new_name, VOSLauncherVersion.id != version_id).first()
+        if clash:
+            raise HTTPException(status_code=400, detail=f"A launcher version named '{new_name}' already exists")
+        updates["name"] = new_name
+    for key, value in updates.items():
+        setattr(version, key, value)
+    db.commit()
+    db.refresh(version)
+    log_activity(db, user, "update_vos_launcher_version", "vos_desktop", "VOSLauncherVersion", version.id, f"VOS launcher version {version.name} updated", old_value=old_value, new_value=version, request=request, commit=True)
+    return vos_launcher_version_out(version)
+
+
+@app.delete("/api/vos-launcher/versions/{version_id}")
+@app.delete("/vos-launcher/versions/{version_id}")
+def delete_vos_launcher_version(version_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(require_vos_desktop("can_edit"))):
+    version = get_record(db, VOSLauncherVersion, version_id)
+    name = version.name
+    db.delete(version)
+    db.commit()
+    log_activity(db, user, "delete_vos_launcher_version", "vos_desktop", "VOSLauncherVersion", version_id, f"VOS launcher version {name} deleted", request=request, commit=True)
+    return {"deleted": True}
 
 
 @app.get("/api/vos-portals", response_model=list[VOSPortalOut])

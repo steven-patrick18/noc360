@@ -55,27 +55,23 @@ const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
 const themeOptions = [
-  { id: 'executive-noc', name: 'Executive NOC', description: 'Premium dark navy with cyan control-room accents.', colors: ['#0b1320', '#17d9e6', '#5cf0c4'] },
-  { id: 'dark-minimal', name: 'Dark Minimal', description: 'Low-glow dark gray tuned for long reading sessions.', colors: ['#12151b', '#7dd3fc', '#d4d4d8'] },
-  { id: 'slate-enterprise', name: 'Slate Enterprise', description: 'Soft slate business dashboard with quiet contrast.', colors: ['#16202b', '#38bdf8', '#94a3b8'] },
-  { id: 'cyber-neon', name: 'Cyber Neon', description: 'Command-center neon cyan and magenta.', colors: ['#050816', '#00f5ff', '#ff3cc7'] },
-  { id: 'telecom-ops', name: 'Telecom Ops', description: 'Telecom NOC blue surfaces with uptime green.', colors: ['#0a1830', '#3abff8', '#34d399'] },
-  { id: 'devops-dark', name: 'DevOps Dark', description: 'Grafana-inspired monitoring theme for infra work.', colors: ['#111827', '#60a5fa', '#22c55e'] },
-  { id: 'trading-terminal', name: 'Trading Terminal', description: 'Compact market-terminal look with data accents.', colors: ['#0b0e13', '#facc15', '#22c55e'] },
-  { id: 'military-command', name: 'Military Command', description: 'Tactical deep green and subdued operations color.', colors: ['#0a120d', '#7ddf7a', '#d4b46b'] },
-  { id: 'amoled-black', name: 'AMOLED Black', description: 'Pure black OLED surfaces with restrained contrast.', colors: ['#000000', '#22d3ee', '#a3e635'] },
-  { id: 'glass-ultra', name: 'Glass Ultra', description: 'Transparent glass cards for premium demos.', colors: ['#09111f', '#93c5fd', '#d8b4fe'] },
-  { id: 'light-professional', name: 'Light Professional', description: 'Clean light workspace for daytime ops.', colors: ['#f8fafc', '#0f766e', '#0284c7'] },
+  { id: 'clean-light', name: 'Clean Light', description: 'Bright minimal SaaS workspace with a calm indigo accent.', colors: ['#ffffff', '#4f46e5', '#0ea5e9'] },
+  { id: 'slate', name: 'Slate', description: 'Soft cool-gray enterprise light theme with quiet contrast.', colors: ['#f1f5f9', '#0f766e', '#0284c7'] },
+  { id: 'clean-dark', name: 'Clean Dark', description: 'Flat modern dark dashboard with no glow.', colors: ['#0b0e14', '#6366f1', '#38bdf8'] },
+  { id: 'midnight', name: 'Midnight', description: 'Calm deep-navy professional theme for low light.', colors: ['#0a1124', '#3b82f6', '#22d3ee'] },
+  { id: 'graphite', name: 'Graphite', description: 'Neutral low-contrast graphite with a subtle emerald accent.', colors: ['#18181b', '#10b981', '#6ee7b7'] },
 ];
+const themeIds = themeOptions.map((option) => option.id);
+const DEFAULT_THEME_ID = 'clean-light';
 const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
 const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
 const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
 const defaultCustomBackground = { image: '', opacity: 55, blur: 0, overlayColor: '#000000' };
 
 function resolveTheme(themeId) {
-  if (themeId !== 'auto') return themeId || 'executive-noc';
+  if (themeId !== 'auto') return themeIds.includes(themeId) ? themeId : DEFAULT_THEME_ID;
   const hour = new Date().getHours();
-  return hour >= 7 && hour < 18 ? 'light-professional' : 'executive-noc';
+  return hour >= 7 && hour < 18 ? 'clean-light' : 'clean-dark';
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -319,11 +315,11 @@ const customerModules = {
 };
 
 const sidebarGroups = [
-  { id: 'core', label: 'Core', keys: ['dashboard', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
-  { id: 'operations', label: 'Operations', keys: ['management', 'clients', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways'] },
-  { id: 'finance', label: 'Finance', keys: ['billing', 'myBilling'] },
-  { id: 'communication', label: 'Communication', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
-  { id: 'voipTools', label: 'VoIP Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
+  { id: 'overview', label: 'Overview', keys: ['dashboard', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
+  { id: 'network', label: 'Network', keys: ['management', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways'] },
+  { id: 'clientsBilling', label: 'Clients & Billing', keys: ['clients', 'billing', 'myBilling'] },
+  { id: 'support', label: 'Support', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
+  { id: 'tools', label: 'Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
   { id: 'admin', label: 'Admin', keys: ['bareMetalOsInstaller', 'updateCenter', 'userAccess', 'activityLogs', 'dangerZone'] },
 ];
 
@@ -642,7 +638,10 @@ function App() {
   const [error, setError] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
-  const [theme, setTheme] = useState(() => localStorage.getItem('noc360_theme') || 'executive-noc');
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem('noc360_theme');
+    return stored === 'auto' || themeIds.includes(stored) ? stored : DEFAULT_THEME_ID;
+  });
   const [customBackground, setCustomBackground] = useState(loadCustomBackground);
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
@@ -689,14 +688,17 @@ function App() {
 
   const loadAll = async () => {
     if (!auth) return;
-    const requestId = Date.now();
+    const requestId = loadAllRequestRef.current + 1;
     loadAllRequestRef.current = requestId;
     const hasComms = ['chat_center', 'my_chat', 'group_chat', 'tickets', 'my_tickets'].some((pageKey) => canDo(auth.user, pageKey));
     setLoading(true);
     setError('');
-    setLoading(false);
 
-    refreshBillingData().catch((err) => {
+    const finishLoading = () => {
+      if (loadAllRequestRef.current === requestId) setLoading(false);
+    };
+
+    const billingPromise = refreshBillingData().catch((err) => {
       if (loadAllRequestRef.current === requestId) setError(err.message);
     });
 
@@ -736,7 +738,10 @@ function App() {
         })
         .catch((err) => {
           if (loadAllRequestRef.current === requestId) setError(err.message);
-        });
+        })
+        .finally(finishLoading);
+    } else {
+      billingPromise.finally(finishLoading);
     }
   };
 
@@ -1461,6 +1466,7 @@ function VOSDesktopEditModal({ record, onClose, onSave }) {
           <label><span>Server IP</span><input value={form.server_ip || ''} onChange={(event) => setField('server_ip', event.target.value)} /></label>
           <label><span>Status</span><select value={form.status || 'Active'} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
           <label><span>Username</span><input value={form.username || ''} onChange={(event) => setField('username', event.target.value)} /></label>
+          <label><span>System Tag</span><input value={form.system_tag || ''} onChange={(event) => setField('system_tag', event.target.value)} placeholder="VOS login system/tag" /></label>
           <label><span>Password</span><input type="password" value={form.password || ''} onChange={(event) => setField('password', event.target.value)} placeholder="Leave blank to keep current password" /></label>
           <label className="wide"><span>Anti-Hack URL</span><input value={form.anti_hack_url || ''} onChange={(event) => setField('anti_hack_url', event.target.value)} /></label>
           <label><span>Anti-Hack Password</span><input type="password" value={form.anti_hack_password || ''} onChange={(event) => setField('anti_hack_password', event.target.value)} placeholder="Leave blank to keep current password" /></label>
@@ -1616,19 +1622,30 @@ function VOSDesktopPage({ rows, user, reload }) {
   const [editing, setEditing] = useState(null);
   const [agentStatus, setAgentStatus] = useState({ checking: true, running: false, message: 'Checking launcher...' });
   const [agentVersions, setAgentVersions] = useState([]);
+  const [registry, setRegistry] = useState([]);
+  const [manageVersions, setManageVersions] = useState(false);
   const [autoLogin, setAutoLogin] = useState(() => localStorage.getItem('vos_auto_login') !== 'false');
   const [message, setMessage] = useState('');
-  const [launchDetails, setLaunchDetails] = useState([]);
+  const [launchSteps, setLaunchSteps] = useState([]);
   const [error, setError] = useState('');
 
-  const launcherVersions = agentVersions.length ? agentVersions : [];
+  const launcherVersions = useMemo(() => {
+    const byName = new Map();
+    registry.forEach((version) => byName.set(version.name, { ...version, source: 'registry' }));
+    agentVersions.forEach((version) => {
+      if (!byName.has(version.name)) {
+        byName.set(version.name, { name: version.name, source: 'agent', args_template: version.args_template ? '1' : '' });
+      }
+    });
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [registry, agentVersions]);
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const filtered = useMemo(() => {
     const needle = query.toLowerCase();
     return [...rows]
-      .sort((a, b) => Number(favoriteSet.has(b.id)) - Number(favoriteSet.has(a.id)) || a.vos_name.localeCompare(b.vos_name))
+      .sort((a, b) => Number(favoriteSet.has(b.id)) - Number(favoriteSet.has(a.id)) || String(a.vos_name || '').localeCompare(String(b.vos_name || '')))
       .filter((row) => typeFilter === 'All' || row.vos_type === typeFilter)
-      .filter((row) => [row.vos_name, row.server_ip, row.status, row.username, row.vos_type, row.vos_notes].join(' ').toLowerCase().includes(needle));
+      .filter((row) => [row.vos_name, row.server_ip, row.status, row.username, row.vos_type, row.vos_notes].map((value) => value || '').join(' ').toLowerCase().includes(needle));
   }, [rows, query, typeFilter, favoriteSet]);
   const groupedRows = useMemo(() => ([
     ['RDP', 'Media Servers / RDP'],
@@ -1655,8 +1672,18 @@ function VOSDesktopPage({ rows, user, reload }) {
     }
   };
 
+  const loadRegistry = async () => {
+    try {
+      const versions = await request('/vos-launcher/versions');
+      setRegistry(Array.isArray(versions) ? versions : []);
+    } catch (err) {
+      setRegistry([]);
+    }
+  };
+
   useEffect(() => {
     refreshAgent();
+    loadRegistry();
   }, []);
 
   const downloadLauncher = async () => {
@@ -1768,38 +1795,44 @@ function VOSDesktopPage({ rows, user, reload }) {
     if (!canUseLauncher) return;
     const versionName = selectedVersionFor(row);
     if (!agentStatus.running) {
-      setError('NOC360 Launcher not running. Please start local launcher.');
+      setError('NOC360 Launcher not running. Please start the local launcher on this PC.');
       return;
     }
-    if (!versionName) {
-      setError('No local VOS version detected. Edit C:\\NOC360\\config.json, then click Refresh Agent.');
+    const version = launcherVersions.find((item) => item.name === versionName);
+    if (!version) {
+      setError(launcherVersions.length ? 'Select a launcher version for this VOS record.' : 'No VOS version available. The local agent detected none and none are configured in "VOS Launcher Versions" (admin).');
       return;
     }
     try {
       const login = await fetchLogin(row);
       setMessage(autoLogin ? 'Auto-login started...' : 'Launching VOS. Login will be copied to clipboard.');
-      setLaunchDetails([]);
+      setLaunchSteps([]);
       const response = await fetch('http://127.0.0.1:5055/launch-vos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          version_name: versionName,
+          version_name: version.name,
+          version_path: version.install_path || '',
+          args_template: version.args_template || '',
+          login_wait_seconds: version.login_wait_seconds ?? 5,
+          field_sequence: version.field_sequence || 'server_ip,username,password,system_tag',
+          field_gap: version.field_gap ?? 1,
+          focus_strategy: version.focus_strategy || 'vos_window',
+          initial_tab_count: version.initial_tab_count ?? 0,
+          press_enter_after_fill: version.press_enter_after_fill ?? true,
+          anti_hack_method: version.anti_hack_method || 'http',
+          anti_hack_wait_seconds: version.anti_hack_wait_seconds ?? 2,
           server_ip: login.server || row.server_ip || '',
           username: login.username || row.username || '',
           password: login.password || '',
+          system_tag: login.system_tag || row.system_tag || '',
           anti_hack_url: login.anti_hack_url || row.anti_hack_url || '',
           anti_hack_password: login.anti_hack_password || '',
-          system_tag: '',
           auto_login: autoLogin,
-          focus_strategy: 'vos_window',
-          login_wait_seconds: 5,
-          anti_hack_use_ctrl_l: false,
-          anti_hack_press_escape: true,
-          anti_hack_tab_count_to_pin: 1,
         }),
       });
       const result = await response.json().catch(() => ({}));
-      setLaunchDetails(Array.isArray(result.details) ? result.details : []);
+      setLaunchSteps(Array.isArray(result.steps) ? result.steps : []);
       if (!response.ok) {
         throw new Error(result.message || result.error || result.detail || 'Launcher command failed');
       }
@@ -1811,7 +1844,7 @@ function VOSDesktopPage({ rows, user, reload }) {
           module: 'vos_desktop',
           record_type: 'VOSPortal',
           record_id: row.id,
-          description: `Local agent launch requested for ${row.vos_name} using ${versionName}`,
+          description: `Local agent launch requested for ${row.vos_name} using ${version.name}`,
         }),
       }).catch(() => {});
       setMessage(result.message || `VOS launched for ${row.vos_name}. Login copied to clipboard.`);
@@ -1851,8 +1884,9 @@ function VOSDesktopPage({ rows, user, reload }) {
   };
 
   const lastUsedText = (row) => {
-    if (!lastUsed[row.id]) return 'Never';
-    return new Date(lastUsed[row.id]).toLocaleString();
+    const stamp = row.last_used_at || lastUsed[row.id];
+    if (!stamp) return 'Never';
+    return new Date(stamp).toLocaleString();
   };
 
   const saveEdit = async (form) => {
@@ -1865,6 +1899,7 @@ function VOSDesktopPage({ rows, user, reload }) {
       vos_port: form.vos_port ? Number(form.vos_port) : null,
       vos_desktop_enabled: Boolean(form.vos_desktop_enabled),
       vos_notes: form.vos_notes || null,
+      system_tag: form.system_tag || null,
     };
     if (form.password) payload.password = form.password;
     if (form.anti_hack_password) payload.anti_hack_password = form.anti_hack_password;
@@ -1896,21 +1931,30 @@ function VOSDesktopPage({ rows, user, reload }) {
         <div>
           <span className="eyebrow">Local Agent</span>
           <h2>127.0.0.1:5055 Launcher</h2>
-          <p className="muted">Install and run the NOC360 Launcher once on this PC. Local VOS app paths stay inside <code>C:\NOC360\config.json</code>.</p>
+          <p className="muted">Run the NOC360 Launcher once on this PC. {agentVersions.length} version(s) auto-detected on this PC, {registry.length} configured centrally. Both are selectable; central versions take priority.</p>
         </div>
         <div className="launcherAgentControls">
           <span className={`agentStatus ${agentStatus.running ? 'running' : 'offline'}`}>{agentStatus.checking ? 'CHECKING' : agentStatus.running ? 'ONLINE' : 'OFFLINE'} - {agentStatus.message}</span>
           <label className="autoLoginToggle"><span>Auto Login</span><input type="checkbox" checked={autoLogin} onChange={(event) => setAutoLoginPreference(event.target.checked)} /></label>
+          {canEdit && <button onClick={() => setManageVersions(true)}><Settings size={16} /> VOS Launcher Versions</button>}
           <button onClick={downloadLauncher}><Download size={16} /> Download NOC360 Launcher</button>
-          <button onClick={refreshAgent}><RefreshCcw size={16} /> Refresh Agent</button>
+          <button onClick={() => { refreshAgent(); loadRegistry(); }}><RefreshCcw size={16} /> Refresh</button>
         </div>
       </div>
 
       {message && <div className="toastSuccess">{message}</div>}
-      {launchDetails.length > 0 && (
-        <div className="panel launcherDetails">
-          <h3>Launcher Details</h3>
-          <ul>{launchDetails.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+      {launchSteps.length > 0 && (
+        <div className="panel launcherSteps">
+          <h3>Launch Progress</h3>
+          <ul className="launchStepList">
+            {launchSteps.map((step, index) => (
+              <li key={`${step.step}-${index}`} className={step.ok ? 'stepOk' : 'stepFail'}>
+                <span className="stepMark">{step.ok ? '✓' : '✗'}</span>
+                <span className="stepLabel">{step.label}</span>
+                <span className="stepMessage">{step.message}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
@@ -1948,11 +1992,11 @@ function VOSDesktopPage({ rows, user, reload }) {
                       <td><StatusPill value={row.status} /></td>
                       <td>{lastUsedText(row)}</td>
                       <td>
-                        <select value={selectedVersionFor(row)} onChange={(event) => setSelectedVersion(row, event.target.value)} disabled={!agentVersions.length}>
-                          {!agentVersions.length && <option value="">No versions detected</option>}
-                          {agentVersions.map((version) => <option key={version.name} value={version.name}>{version.name}</option>)}
+                        <select value={selectedVersionFor(row)} onChange={(event) => setSelectedVersion(row, event.target.value)} disabled={!launcherVersions.length}>
+                          {!launcherVersions.length && <option value="">No versions available</option>}
+                          {launcherVersions.map((version) => <option key={version.name} value={version.name}>{version.name}{version.source === 'agent' ? ' (detected)' : ''}</option>)}
                         </select>
-                        {agentVersions.find((version) => version.name === selectedVersionFor(row))?.args_template && <small className="muted">CLI args enabled</small>}
+                        {launcherVersions.find((version) => version.name === selectedVersionFor(row))?.args_template && <small className="muted">CLI args enabled</small>}
                       </td>
                       <td className="actions vosActions">
                         {canUseLauncher && <button className="primary" onClick={() => launchDesktop(row)}><Play size={15} /> Launch Desktop Client</button>}
@@ -1983,7 +2027,154 @@ function VOSDesktopPage({ rows, user, reload }) {
         />
       )}
       {editing && <VOSDesktopEditModal record={editing} onClose={() => setEditing(null)} onSave={saveEdit} />}
+      {manageVersions && (
+        <VOSLauncherVersionsModal
+          versions={registry}
+          onClose={() => setManageVersions(false)}
+          onChanged={loadRegistry}
+          notify={(text) => { setMessage(text); setError(''); }}
+          fail={(text) => setError(text)}
+        />
+      )}
     </section>
+  );
+}
+
+const EMPTY_LAUNCHER_VERSION = {
+  name: '',
+  install_path: '',
+  args_template: '',
+  login_wait_seconds: 5,
+  field_sequence: 'server_ip,username,password,system_tag',
+  field_gap: 1,
+  focus_strategy: 'vos_window',
+  initial_tab_count: 0,
+  press_enter_after_fill: true,
+  anti_hack_method: 'http',
+  anti_hack_wait_seconds: 2,
+  status: 'Active',
+  notes: '',
+};
+
+function VOSLauncherVersionsModal({ versions, onClose, onChanged, notify, fail }) {
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY_LAUNCHER_VERSION);
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+  const showError = (text) => { setFeedback({ type: 'error', text }); fail(text); };
+  const showSuccess = (text) => { setFeedback({ type: 'success', text }); notify(text); };
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const resetForm = () => { setEditingId(null); setForm(EMPTY_LAUNCHER_VERSION); };
+
+  const startEdit = (version) => {
+    setEditingId(version.id);
+    setForm({ ...EMPTY_LAUNCHER_VERSION, ...version });
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setFeedback(null);
+    if (!form.name.trim()) { showError('Version name is required'); return; }
+    if (!form.install_path.trim()) { showError('Install path (full path to vos3000client.exe) is required'); return; }
+    setBusy(true);
+    try {
+      const payload = {
+        ...form,
+        name: form.name.trim(),
+        install_path: form.install_path.trim(),
+        login_wait_seconds: Number(form.login_wait_seconds) || 5,
+        field_gap: Math.max(1, Number(form.field_gap) || 1),
+        initial_tab_count: Number(form.initial_tab_count) || 0,
+        anti_hack_wait_seconds: Number(form.anti_hack_wait_seconds) || 2,
+        press_enter_after_fill: Boolean(form.press_enter_after_fill),
+      };
+      if (editingId) {
+        await request(`/vos-launcher/versions/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
+        showSuccess(`Launcher version "${payload.name}" updated`);
+      } else {
+        await request('/vos-launcher/versions', { method: 'POST', body: JSON.stringify(payload) });
+        showSuccess(`Launcher version "${payload.name}" added`);
+      }
+      resetForm();
+      await onChanged();
+    } catch (err) {
+      showError(err.message || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (version) => {
+    if (!window.confirm(`Delete launcher version "${version.name}"?`)) return;
+    setFeedback(null);
+    try {
+      await request(`/vos-launcher/versions/${version.id}`, { method: 'DELETE' });
+      showSuccess(`Launcher version "${version.name}" deleted`);
+      if (editingId === version.id) resetForm();
+      await onChanged();
+    } catch (err) {
+      showError(err.message || 'Delete failed');
+    }
+  };
+
+  return (
+    <div className="modalBackdrop modal-overlay" onClick={onClose}>
+      <div className="modal modal-box vosLauncherVersionsModal" onClick={(event) => event.stopPropagation()}>
+        <div className="modalHeader">
+          <div><span className="eyebrow">Central Registry</span><h2>VOS Launcher Versions</h2></div>
+          <button type="button" className="iconButton" onClick={onClose} title="Close"><X size={18} /></button>
+        </div>
+        <p className="muted">Define each VOS3000 build once. Operators pick a version on launch; the agent uses these paths and login profiles — no local config editing.</p>
+        {feedback && (
+          <div className={feedback.type === 'error' ? 'error' : 'toastSuccess'}>
+            {feedback.type === 'error' && <AlertTriangle size={16} />} {feedback.text}
+            {feedback.type === 'error' && /already exists/i.test(feedback.text) && ' — use Edit on the existing row, or choose a different name.'}
+          </div>
+        )}
+        <div className="tableWrap">
+          <table>
+            <thead><tr><th>Name</th><th>Install Path</th><th>Anti-hack</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+              {versions.map((version) => (
+                <tr key={version.id}>
+                  <td><strong>{version.name}</strong></td>
+                  <td><code>{version.install_path}</code></td>
+                  <td>{version.anti_hack_method}</td>
+                  <td><StatusPill value={version.status} /></td>
+                  <td className="actions">
+                    <button className="iconButton" onClick={() => startEdit(version)} title="Edit"><Edit3 size={16} /></button>
+                    <button className="iconButton" onClick={() => remove(version)} title="Delete"><Trash2 size={16} /></button>
+                  </td>
+                </tr>
+              ))}
+              {!versions.length && <tr><td colSpan="5" className="muted">No launcher versions yet. Add the first one below.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <form className="vosLauncherVersionForm" onSubmit={submit}>
+          <h3>{editingId ? 'Edit Version' : 'Add Version'}</h3>
+          <div className="formGrid">
+            <label className="fieldLabel">Version Name<input value={form.name} onChange={(event) => setField('name', event.target.value)} placeholder="V2.1.8.05" /></label>
+            <label className="fieldLabel">Install Path (full path to vos3000client.exe)<input value={form.install_path} onChange={(event) => setField('install_path', event.target.value)} placeholder="C:\\Program Files (x86)\\VOS300021800\\V2.1.8.00\\bin\\vos3000client.exe" /></label>
+            <label className="fieldLabel">Args Template (optional)<input value={form.args_template || ''} onChange={(event) => setField('args_template', event.target.value)} placeholder="leave blank for keyboard auto-fill" /></label>
+            <label className="fieldLabel" title="Comma list. Add :N after a field for a custom tab count to reach it (overrides Tabs Between Fields). Add a final 'login:N' to tab to and click the Login button. Example: server_ip,username,password,system_tag:1,login:1">Field Sequence<input value={form.field_sequence} onChange={(event) => setField('field_sequence', event.target.value)} placeholder="server_ip,username,password,system_tag:1,login:1" /></label>
+            <label className="fieldLabel">Tabs Between Fields<input type="number" min="1" value={form.field_gap} onChange={(event) => setField('field_gap', event.target.value)} title="VOS2009 login dialog needs 2 (it has extra Delete/Remember tab stops)" /></label>
+            <label className="fieldLabel">Focus Strategy<select value={form.focus_strategy} onChange={(event) => setField('focus_strategy', event.target.value)}><option value="vos_window">vos_window</option><option value="alt_tab">alt_tab</option><option value="auto">auto</option><option value="none">none</option></select></label>
+            <label className="fieldLabel">Login Wait (s)<input type="number" min="0" value={form.login_wait_seconds} onChange={(event) => setField('login_wait_seconds', event.target.value)} /></label>
+            <label className="fieldLabel">Initial Tab Count<input type="number" min="0" value={form.initial_tab_count} onChange={(event) => setField('initial_tab_count', event.target.value)} /></label>
+            <label className="fieldLabel">Anti-hack Method<select value={form.anti_hack_method} onChange={(event) => setField('anti_hack_method', event.target.value)}><option value="http">http (recommended)</option><option value="keyboard">keyboard</option></select></label>
+            <label className="fieldLabel">Anti-hack Wait (s)<input type="number" min="0" value={form.anti_hack_wait_seconds} onChange={(event) => setField('anti_hack_wait_seconds', event.target.value)} /></label>
+            <label className="fieldLabel">Status<select value={form.status} onChange={(event) => setField('status', event.target.value)}><option>Active</option><option>Inactive</option></select></label>
+            <label className="fieldLabel checkboxField"><input type="checkbox" checked={Boolean(form.press_enter_after_fill)} onChange={(event) => setField('press_enter_after_fill', event.target.checked)} /><span>Press Enter after fill</span></label>
+          </div>
+          <label className="fieldLabel">Notes<textarea value={form.notes || ''} onChange={(event) => setField('notes', event.target.value)} rows={2} /></label>
+          <div className="modalActions">
+            {editingId && <button type="button" onClick={resetForm}>Cancel Edit</button>}
+            <button type="submit" className="primary" disabled={busy}><Plus size={16} /> {editingId ? 'Save Version' : 'Add Version'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -2536,6 +2727,21 @@ function TicketsPage({ user, clients, onSummaryRefresh }) {
   );
 }
 
+const WEBPHONE_METRIC_HELP = [
+  ['MOS', 'Mean Opinion Score (1.0–4.5): an estimated call-quality rating from latency, jitter and loss. 4.0+ = excellent, 3.6–4.0 = good, 3.0–3.6 = users notice issues, below 3.0 = poor.'],
+  ['Jitter', 'Variation in packet arrival timing (ms). The jitter buffer hides small amounts. Under 20 ms = great, 20–30 ms = acceptable, over 30 ms causes choppy/robotic audio.'],
+  ['Packet Loss', 'Percentage of audio packets that never arrived. 0% ideal, under 1% usually inaudible, 1–3% noticeable gaps, over 3% = clipped/broken speech.'],
+  ['RTT', 'Round-trip time / latency (ms) — how long audio takes there and back. Under 150 ms = natural, 150–250 ms = slight delay, over 300 ms = people talk over each other.'],
+  ['PDD', 'Post-Dial Delay (ms): time from pressing call until ringback. High PDD often means slow carrier routing or downstream lookups; under ~3 s is normal for international.'],
+  ['Ring', 'Time the destination rang before it was answered (ms).'],
+  ['Codec', 'Negotiated audio codec. OPUS = HD/best, PCMU/PCMA (G.711) = standard toll quality, others may indicate transcoding on the carrier.'],
+  ['SIP Response', 'Final SIP status of the call (e.g. 200 OK answered, 486 Busy, 404 number unallocated, 503 carrier congestion).'],
+  ['Hangup Cause', 'Q.850 / engine release cause (e.g. NORMAL_CLEARING, USER_BUSY, NO_ROUTE_DESTINATION, CALL_REJECTED) — why the call ended.'],
+  ['Carrier Route / Gateway', 'The trunk/gateway this test egressed through toward your VOS. Deeper per-carrier route, IP and rate live in the VOS CDR (not yet connected).'],
+  ['Remote Media IP', 'The IP the far-end RTP media came from — the next-hop media gateway (your VOS / its media node). Beyond that the upstream carrier path is decided inside VOS.'],
+  ['Quality Source', 'browser = WebRTC stats (access leg, browser↔node). asterisk = node-leg RTCP from the PBX. both = merged end-to-end.'],
+];
+
 function WebphonePage({ user }) {
   const canCreate = canDo(user, 'webphone', 'can_create');
   const canEdit = canDo(user, 'webphone', 'can_edit');
@@ -2566,10 +2772,25 @@ function WebphonePage({ user }) {
     status: 'Active',
     notes: '',
   });
-  const [pbxStatus, setPbxStatus] = useState(null);
-  const [pbxConnected, setPbxConnected] = useState(false);
-  const [webRtcEnabled, setWebRtcEnabled] = useState(false);
-  const [pbxConnect, setPbxConnect] = useState({ ip: '127.0.0.1', username: '', password: '' });
+  const [carriers, setCarriers] = useState([]);
+  const [selectedCarrierId, setSelectedCarrierId] = useState(() => localStorage.getItem('webphone_carrier') || '');
+  const [editingCarrierId, setEditingCarrierId] = useState(null);
+  const emptyCarrier = { name: '', auth_type: 'ip', host: '', port: 5060, username: '', password: '', prefix: '', codecs: 'OPUS,PCMU,PCMA', status: 'Active', notes: '' };
+  const [carrierForm, setCarrierForm] = useState(emptyCarrier);
+  const [pbxOverview, setPbxOverview] = useState(null);
+  const [pbxBusy, setPbxBusy] = useState(false);
+  const [enableSteps, setEnableSteps] = useState([]);
+  const [held, setHeld] = useState(false);
+  const [speakerMuted, setSpeakerMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [audioInputs, setAudioInputs] = useState([]);
+  const [audioOutputs, setAudioOutputs] = useState([]);
+  const [selectedMic, setSelectedMic] = useState('');
+  const [selectedSpeaker, setSelectedSpeaker] = useState('');
+  const [transferTo, setTransferTo] = useState('');
+  const [quality, setQuality] = useState(null);
+  const [testFilter, setTestFilter] = useState({ from: '', to: '', profile: '', q: '' });
+  const [detailLog, setDetailLog] = useState(null);
   const uaRef = useRef(null);
   const sessionRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -2577,6 +2798,11 @@ function WebphonePage({ user }) {
   const timerRef = useRef(null);
   const callStartedAtRef = useRef(null);
   const logSavedRef = useRef(false);
+  const pcRef = useRef(null);
+  const statsTimerRef = useRef(null);
+  const qualityRef = useRef(null);
+  const callUuidRef = useRef('');
+  const callMarksRef = useRef({});
 
   const selectedProfile = profiles.find((profile) => String(profile.id) === String(selectedId));
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -2587,21 +2813,171 @@ function WebphonePage({ user }) {
   const registrationClass = isRegistered ? 'running' : isConnecting ? 'warming' : 'offline';
   const inCall = Boolean(sessionRef.current);
 
+  const filteredLogs = useMemo(() => {
+    const q = testFilter.q.trim().toLowerCase();
+    return logs.filter((log) => {
+      if (testFilter.profile && String(log.profile_id || '') !== String(testFilter.profile)) return false;
+      const day = String(log.created_at || '').slice(0, 10);
+      if (testFilter.from && day && day < testFilter.from) return false;
+      if (testFilter.to && day && day > testFilter.to) return false;
+      if (q && ![log.destination, log.cli, log.status, log.audio_codec, log.profile_name, log.hangup_cause].some((v) => String(v || '').toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [logs, testFilter]);
+
+  const testSummary = useMemo(() => {
+    const total = filteredLogs.length;
+    const answered = filteredLogs.filter((l) => Number(l.duration || 0) > 0 || /answered|connected|ended/i.test(l.status || '')).length;
+    const connected = filteredLogs.filter((l) => Number(l.duration || 0) > 0);
+    const avg = (arr, key) => {
+      const vals = arr.map((l) => l[key]).filter((v) => v != null && !Number.isNaN(Number(v))).map(Number);
+      return vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null;
+    };
+    const acdSec = connected.length ? Math.round(connected.reduce((a, l) => a + Number(l.duration || 0), 0) / connected.length) : 0;
+    return {
+      total,
+      asr: total ? Math.round((answered / total) * 1000) / 10 : 0,
+      acd: acdSec,
+      mos: avg(filteredLogs, 'mos'),
+      jitter: avg(filteredLogs, 'jitter_ms'),
+      loss: avg(filteredLogs, 'packet_loss_pct'),
+      rtt: avg(filteredLogs, 'rtt_ms'),
+      pdd: avg(filteredLogs, 'pdd_ms'),
+    };
+  }, [filteredLogs]);
+
   const loadWebphone = async () => {
-    const [profileRows, logRows] = await Promise.all([
+    const [profileRows, logRows, carrierRows] = await Promise.all([
       request('/webphone/profiles'),
       request('/webphone/call-logs'),
+      request('/webphone/carriers').catch(() => []),
     ]);
     setProfiles(profileRows);
     setLogs(logRows);
+    setCarriers(Array.isArray(carrierRows) ? carrierRows : []);
     setSelectedId((current) => current || String(profileRows[0]?.id || ''));
     if (!cli && profileRows[0]?.cli) setCli(profileRows[0].cli);
+  };
+
+  const loadCarriers = async () => {
+    try {
+      setCarriers(await request('/webphone/carriers'));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const setCarrierField = (key, value) => setCarrierForm((c) => ({ ...c, [key]: value }));
+  const resetCarrierForm = () => { setEditingCarrierId(null); setCarrierForm(emptyCarrier); };
+
+  const editCarrier = (c) => {
+    setEditingCarrierId(c.id);
+    setCarrierForm({ name: c.name, auth_type: c.auth_type || 'ip', host: c.host || '', port: c.port || 5060, username: c.username || '', password: '', prefix: c.prefix || '', codecs: c.codecs || 'OPUS,PCMU,PCMA', status: c.status || 'Active', notes: c.notes || '' });
+  };
+
+  const saveCarrier = async (event) => {
+    event.preventDefault();
+    setError('');
+    try {
+      if (!carrierForm.name.trim()) throw new Error('Carrier name is required');
+      if (!carrierForm.host.trim()) throw new Error('Carrier host/IP is required');
+      if (carrierForm.auth_type === 'user' && (!carrierForm.username.trim() || (!carrierForm.password.trim() && !editingCarrierId))) throw new Error('User-based carrier needs username and password');
+      const body = { ...carrierForm, port: Number(carrierForm.port) || 5060 };
+      if (editingCarrierId && !body.password) delete body.password;
+      if (editingCarrierId) {
+        await request(`/webphone/carriers/${editingCarrierId}`, { method: 'PUT', body: JSON.stringify(body) });
+        setMessage(`Carrier "${body.name}" updated`);
+      } else {
+        await request('/webphone/carriers', { method: 'POST', body: JSON.stringify(body) });
+        setMessage(`Carrier "${body.name}" added`);
+      }
+      resetCarrierForm();
+      await loadCarriers();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const deleteCarrier = async (c) => {
+    if (!window.confirm(`Delete carrier "${c.name}"?`)) return;
+    try {
+      await request(`/webphone/carriers/${c.id}`, { method: 'DELETE' });
+      setMessage(`Carrier "${c.name}" deleted`);
+      if (String(selectedCarrierId) === String(c.id)) { setSelectedCarrierId(''); localStorage.removeItem('webphone_carrier'); }
+      await loadCarriers();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const connectCarrier = async (c) => {
+    setError('');
+    try {
+      const updated = await request(`/webphone/carriers/${c.id}/connect`, { method: 'POST', body: JSON.stringify({}) });
+      setCarriers((list) => list.map((x) => (x.id === updated.id ? updated : x)));
+      setMessage(`${c.name}: ${updated.conn_status}${updated.conn_detail ? ` — ${updated.conn_detail}` : ''}`);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const pickCarrier = (id) => {
+    setSelectedCarrierId(id);
+    if (id) localStorage.setItem('webphone_carrier', id);
+    else localStorage.removeItem('webphone_carrier');
+  };
+
+  const loadPbxOverview = async () => {
+    if (!isAdmin) return;
+    try {
+      setPbxOverview(await request('/webphone/pbx/overview'));
+    } catch (err) {
+      setPbxOverview({ error: err.message });
+    }
+  };
+
+  const runOneClickSetup = async () => {
+    if (!isAdmin) return;
+    setError('');
+    setPbxBusy(true);
+    try {
+      const result = await request('/webphone/pbx/one-click', { method: 'POST', body: JSON.stringify({}) });
+      setMessage(result.message || 'Webphone ready');
+      setPbxOverview(result.overview || null);
+      await loadWebphone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPbxBusy(false);
+    }
+  };
+
+  const runEnableTelephony = async () => {
+    if (!isAdmin) return;
+    if (!window.confirm('Enable Telephony will install Asterisk + modules and issue a TLS certificate on this server. Continue?')) return;
+    setError('');
+    setMessage('Enabling telephony — installing Asterisk (this can take a few minutes)…');
+    setEnableSteps([]);
+    setPbxBusy(true);
+    try {
+      const result = await request('/webphone/pbx/enable-telephony', { method: 'POST', body: JSON.stringify({}) });
+      setEnableSteps(Array.isArray(result.steps) ? result.steps : []);
+      setPbxOverview(result.overview || null);
+      setMessage(result.message || (result.ok ? 'Telephony enabled' : 'Finished with issues'));
+      if (!result.ok) setError(result.message || 'Some steps failed — see the step list.');
+      await loadWebphone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPbxBusy(false);
+    }
   };
 
   useEffect(() => {
     loadWebphone().catch((err) => setError(err.message));
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
+      if (statsTimerRef.current) window.clearInterval(statsTimerRef.current);
       try {
         sessionRef.current?.terminate();
         uaRef.current?.stop();
@@ -2614,57 +2990,9 @@ function WebphonePage({ user }) {
 
   useEffect(() => {
     if (selectedProfile?.cli) setCli(selectedProfile.cli);
-  }, [selectedId]);
+  }, [selectedId, selectedProfile?.cli]);
 
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const setPbxConnectField = (key, value) => setPbxConnect((current) => ({ ...current, [key]: value }));
-
-  const loadPbxStatus = async () => {
-    if (!isAdmin) return;
-    try {
-      const status = await request('/webphone/pbx/status');
-      setPbxStatus(status);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  const connectPbx = async (event) => {
-    event.preventDefault();
-    if (!isAdmin) return;
-    setError('');
-    try {
-      if (!pbxConnect.ip.trim()) throw new Error('IP is required');
-      if (!pbxConnect.username.trim()) throw new Error('Username is required');
-      if (!pbxConnect.password.trim()) throw new Error('Password is required');
-      const result = await request('/webphone/pbx/connect', {
-        method: 'POST',
-        body: JSON.stringify(pbxConnect),
-      });
-      setPbxConnected(true);
-      setPbxStatus(result.status);
-      setMessage('PBX connected');
-    } catch (err) {
-      setPbxConnected(false);
-      setError(err.message);
-    }
-  };
-
-  const enableWebRtc = async () => {
-    if (!isAdmin) return;
-    setError('');
-    try {
-      const result = await request('/webphone/pbx/enable-webrtc', { method: 'POST', body: JSON.stringify({}) });
-      setMessage(result.message || 'WebRTC Enabled Successfully');
-      setWebRtcEnabled(true);
-      setPbxStatus(result.status);
-      await loadWebphone();
-      setSelectedId(String(result.profile?.id || selectedId));
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
   const validateProfilePayload = (payload) => {
     if (!payload.profile_name.trim()) throw new Error('Profile name is required');
     if (!payload.sip_username.trim()) throw new Error('SIP username is required');
@@ -2741,10 +3069,199 @@ function WebphonePage({ user }) {
     remoteAudioRef.current.srcObject = null;
   };
 
-  const saveCallLog = async (status, notes = '') => {
+  const refreshDevices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setAudioInputs(devices.filter((d) => d.kind === 'audioinput'));
+      setAudioOutputs(devices.filter((d) => d.kind === 'audiooutput'));
+    } catch {
+      // device labels need a granted mic permission; ignore until then
+    }
+  };
+
+  const applyAudioOutput = async () => {
+    const el = remoteAudioRef.current;
+    if (!el) return;
+    el.volume = volume;
+    el.muted = speakerMuted;
+    if (selectedSpeaker && typeof el.setSinkId === 'function') {
+      try {
+        await el.setSinkId(selectedSpeaker);
+      } catch {
+        // browser/output not switchable; keep default
+      }
+    }
+  };
+
+  useEffect(() => {
+    refreshDevices();
+    if (navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+      return () => navigator.mediaDevices.removeEventListener('devicechange', refreshDevices);
+    }
+    return undefined;
+  }, []);
+
+  useEffect(() => {
+    applyAudioOutput();
+  }, [volume, speakerMuted, selectedSpeaker]);
+
+  // Simplified ITU-T G.107 E-model -> MOS estimate from RTT, jitter, loss.
+  const computeMos = (rttMs, jitterMs, lossPct) => {
+    const effLatency = (rttMs || 0) + (jitterMs || 0) * 2 + 10;
+    let r = effLatency < 160 ? 93.2 - effLatency / 40 : 93.2 - (effLatency - 120) / 10;
+    r -= (lossPct || 0) * 2.5;
+    if (r < 0) r = 0;
+    if (r > 100) r = 100;
+    const mos = 1 + 0.035 * r + r * (r - 60) * (100 - r) * 7e-6;
+    return Math.round(Math.min(4.5, Math.max(1, mos)) * 100) / 100;
+  };
+
+  const stopStatsPolling = () => {
+    if (statsTimerRef.current) window.clearInterval(statsTimerRef.current);
+    statsTimerRef.current = null;
+  };
+
+  const startStatsPolling = (pc) => {
+    stopStatsPolling();
+    if (!pc) return;
+    pcRef.current = pc;
+    const prev = { lost: 0, recv: 0 };
+    statsTimerRef.current = window.setInterval(async () => {
+      try {
+        const report = await pc.getStats();
+        let jitterMs = 0;
+        let rttMs = 0;
+        let codec = '';
+        let packetsLost = 0;
+        let packetsReceived = 0;
+        let packetsSent = 0;
+        const codecs = {};
+        report.forEach((s) => {
+          if (s.type === 'codec') codecs[s.id] = (s.mimeType || '').split('/')[1] || s.mimeType;
+        });
+        report.forEach((s) => {
+          if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+            jitterMs = Math.round((s.jitter || 0) * 1000 * 10) / 10;
+            packetsLost = s.packetsLost || 0;
+            packetsReceived = s.packetsReceived || 0;
+            if (s.codecId && codecs[s.codecId]) codec = codecs[s.codecId];
+          }
+          if (s.type === 'outbound-rtp' && s.kind === 'audio') {
+            packetsSent = s.packetsSent || 0;
+            if (!codec && s.codecId && codecs[s.codecId]) codec = codecs[s.codecId];
+          }
+          if (s.type === 'candidate-pair' && (s.nominated || s.state === 'succeeded') && s.currentRoundTripTime != null) {
+            rttMs = Math.round(s.currentRoundTripTime * 1000);
+          }
+        });
+        const dLost = Math.max(0, packetsLost - prev.lost);
+        const dRecv = Math.max(0, packetsReceived - prev.recv);
+        prev.lost = packetsLost;
+        prev.recv = packetsReceived;
+        const lossPct = dRecv + dLost > 0 ? Math.round((dLost / (dRecv + dLost)) * 1000) / 10 : 0;
+        const snap = {
+          mos: computeMos(rttMs, jitterMs, lossPct),
+          jitter_ms: jitterMs,
+          rtt_ms: rttMs,
+          packet_loss_pct: lossPct,
+          audio_codec: codec || (qualityRef.current?.audio_codec || ''),
+          packets_sent: packetsSent,
+          packets_received: packetsReceived,
+          packets_lost: packetsLost,
+        };
+        qualityRef.current = snap;
+        setQuality(snap);
+      } catch {
+        // getStats can throw mid-renegotiation; skip this tick
+      }
+    }, 1000);
+  };
+
+  const sendDtmf = (digit) => {
+    try {
+      sessionRef.current?.sendDTMF(String(digit));
+      setLastCallStatus(`DTMF ${digit}`);
+    } catch {
+      // session not in a state that accepts DTMF
+    }
+  };
+
+  // Dialpad key: in a call it sends DTMF, otherwise it builds the number.
+  const dialKey = (digit) => {
+    if (inCall) {
+      sendDtmf(digit);
+    } else {
+      setDestination((current) => `${current || ''}${digit}`);
+    }
+  };
+
+  const dialBackspace = () => {
+    if (!inCall) setDestination((current) => String(current || '').slice(0, -1));
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'dialer') return undefined;
+    const onKey = (event) => {
+      const tag = (event.target?.tagName || '').toUpperCase();
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || event.target?.isContentEditable) return;
+      const key = event.key;
+      if (/^[0-9*#+]$/.test(key)) {
+        event.preventDefault();
+        dialKey(key);
+      } else if (key === 'Backspace') {
+        event.preventDefault();
+        dialBackspace();
+      } else if (key === 'Enter') {
+        event.preventDefault();
+        if (inCall) hangup();
+        else if (isRegistered && destination.trim()) callDid();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTab, inCall, isRegistered, destination]);
+
+  const toggleHold = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    try {
+      if (held) {
+        session.unhold();
+        setHeld(false);
+        setLastCallStatus('Resumed');
+      } else {
+        session.hold();
+        setHeld(true);
+        setLastCallStatus('On Hold');
+      }
+    } catch {
+      // hold/unhold unsupported by far end
+    }
+  };
+
+  const blindTransfer = () => {
+    const session = sessionRef.current;
+    const target = transferTo.trim();
+    if (!session || !target || !selectedProfile) return;
+    try {
+      session.refer(`sip:${target}@${selectedProfile.sip_domain}`);
+      setLastCallStatus(`Transferring to ${target}`);
+    } catch (err) {
+      setError(err?.message || 'Transfer failed');
+    }
+  };
+
+  const saveCallLog = async (status, notes = '', sipCause = '') => {
     if (logSavedRef.current || !selectedProfile || !destination.trim()) return;
     logSavedRef.current = true;
     const duration = stopTimer();
+    stopStatsPolling();
+    const q = qualityRef.current || {};
+    const marks = callMarksRef.current || {};
+    const pddMs = marks.dialAt && marks.ringAt ? Math.max(0, marks.ringAt - marks.dialAt) : null;
+    const ringMs = marks.ringAt && marks.answerAt ? Math.max(0, marks.answerAt - marks.ringAt) : null;
+    const answerSeconds = marks.answerAt ? Math.max(0, Math.round((Date.now() - marks.answerAt) / 1000)) : 0;
     try {
       await request('/webphone/call-logs', {
         method: 'POST',
@@ -2755,6 +3272,21 @@ function WebphonePage({ user }) {
           status,
           duration,
           notes,
+          call_uuid: callUuidRef.current || null,
+          direction: 'outbound',
+          quality_source: q.mos != null ? 'browser' : null,
+          mos: q.mos ?? null,
+          jitter_ms: q.jitter_ms ?? null,
+          packet_loss_pct: q.packet_loss_pct ?? null,
+          rtt_ms: q.rtt_ms ?? null,
+          audio_codec: q.audio_codec || null,
+          packets_sent: q.packets_sent ?? null,
+          packets_received: q.packets_received ?? null,
+          packets_lost: q.packets_lost ?? null,
+          pdd_ms: pddMs,
+          ring_ms: ringMs,
+          answer_seconds: answerSeconds,
+          sip_response: sipCause || null,
         }),
       });
       const nextLogs = await request('/webphone/call-logs');
@@ -2781,8 +3313,10 @@ function WebphonePage({ user }) {
     try {
       setRegistrationStatus('Requesting microphone');
       localStreamRef.current?.getTracks()?.forEach((track) => track.stop());
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const audioConstraint = selectedMic ? { deviceId: { exact: selectedMic } } : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false });
       localStreamRef.current = stream;
+      refreshDevices();
       const JsSIPModule = await import('jssip');
       const JsSIP = JsSIPModule.default || JsSIPModule;
       const socket = new JsSIP.WebSocketInterface(selectedProfile.websocket_url);
@@ -2828,6 +3362,7 @@ function WebphonePage({ user }) {
     }
     uaRef.current = null;
     setRegistrationStatus('Unregistered');
+    stopStatsPolling();
     clearRemoteAudio();
     localStreamRef.current?.getTracks()?.forEach((track) => track.stop());
     localStreamRef.current = null;
@@ -2835,12 +3370,14 @@ function WebphonePage({ user }) {
 
   const attachRemoteAudio = (session) => {
     const connection = session.connection;
-    if (!connection) return;
+    if (!connection || connection.__noc360TrackBound) return;
+    connection.__noc360TrackBound = true;
     connection.addEventListener('track', (event) => {
       const [remoteStream] = event.streams || [];
       if (remoteStream && remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
         remoteAudioRef.current.play?.().catch(() => {});
+        applyAudioOutput();
       }
     });
   };
@@ -2862,6 +3399,11 @@ function WebphonePage({ user }) {
     logSavedRef.current = false;
     setError('');
     setLastCallStatus('Calling');
+    setHeld(false);
+    setQuality(null);
+    qualityRef.current = null;
+    callUuidRef.current = (window.crypto?.randomUUID?.() || `noc360-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    callMarksRef.current = { dialAt: Date.now() };
     const callerId = cli || selectedProfile.cli || selectedProfile.sip_username;
     const target = `sip:${did}@${selectedProfile.sip_domain}`;
     const session = uaRef.current.call(target, {
@@ -2872,30 +3414,42 @@ function WebphonePage({ user }) {
       extraHeaders: [
         `P-Asserted-Identity: <sip:${callerId}@${selectedProfile.sip_domain}>`,
         `Remote-Party-ID: <sip:${callerId}@${selectedProfile.sip_domain}>;party=calling;privacy=off;screen=no`,
+        `X-NOC360-Call-ID: ${callUuidRef.current}`,
+        ...(selectedCarrierId ? [`X-NOC360-Carrier: ${selectedCarrierId}`] : []),
       ],
       eventHandlers: {
-        progress: () => setLastCallStatus('Ringing'),
+        progress: () => {
+          if (!callMarksRef.current.ringAt) callMarksRef.current.ringAt = Date.now();
+          setLastCallStatus('Ringing');
+        },
         confirmed: () => {
+          callMarksRef.current.answerAt = Date.now();
           setLastCallStatus('Connected');
           startTimer();
+          startStatsPolling(sessionRef.current?.connection || pcRef.current);
         },
         ended: (event) => {
           setLastCallStatus('Ended');
           sessionRef.current = null;
+          stopStatsPolling();
           clearRemoteAudio();
-          saveCallLog('Ended', event?.cause || '');
+          saveCallLog('Ended', event?.cause || '', event?.cause || '');
         },
         failed: (event) => {
           const reason = event?.cause || 'Call failed';
           setLastCallStatus(`Failed: ${reason}`);
           sessionRef.current = null;
+          stopStatsPolling();
           clearRemoteAudio();
-          saveCallLog('Failed', reason);
+          saveCallLog('Failed', reason, event?.message?.status_code ? `${event.message.status_code} ${reason}` : reason);
         },
       },
     });
     sessionRef.current = session;
-    session.on('peerconnection', () => attachRemoteAudio(session));
+    session.on('peerconnection', (e) => {
+      pcRef.current = e?.peerconnection || session.connection || pcRef.current;
+      attachRemoteAudio(session);
+    });
     attachRemoteAudio(session);
   };
 
@@ -2908,8 +3462,9 @@ function WebphonePage({ user }) {
     }
     setLastCallStatus('Hangup');
     sessionRef.current = null;
+    stopStatsPolling();
     clearRemoteAudio();
-    saveCallLog('Hangup', 'Manual hangup');
+    saveCallLog('Hangup', 'Manual hangup', 'Local hangup');
   };
 
   const toggleMute = () => {
@@ -2942,9 +3497,9 @@ function WebphonePage({ user }) {
       {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
 
       <div className="webphoneTabs">
-        {['dialer', 'profiles', 'logs', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
-          <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => setActiveTab(tab)}>
-            {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Call Logs' : tab[0].toUpperCase() + tab.slice(1)}
+        {['dialer', 'carriers', 'logs', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
+          <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => { setActiveTab(tab); if (tab === 'pbx') loadPbxOverview(); }}>
+            {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Carrier Tests' : tab === 'carriers' ? 'Carriers' : tab[0].toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -2952,68 +3507,115 @@ function WebphonePage({ user }) {
       {activeTab === 'dialer' && (
         <div className="panel webphoneDialerPanel">
           <div className="sectionHeader">
-            <div><span className="eyebrow">DID Test Dialer</span><h2>Browser WebRTC Webphone</h2></div>
+            <div><span className="eyebrow">DID Test Dialer &amp; Carrier Test</span><h2>Browser WebRTC Softphone</h2></div>
             <span className={`agentStatus ${registrationClass}`}>{registrationDisplay}</span>
           </div>
           <div className="dialerForm">
-            <label><span>Profile</span><select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}><option value="">Select profile</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.profile_name}</option>)}</select></label>
+            <label><span>Connection</span><input value={selectedProfile ? `${selectedProfile.profile_name} (auto)` : 'Run PBX Setup → Enable Telephony'} readOnly title="Browser↔PBX SIP login is created automatically by Enable Telephony" /></label>
             <label><span>DID / Destination</span><input value={destination} onChange={(event) => setDestination(event.target.value)} placeholder="Enter DID to test" /></label>
             <label><span>CLI / Caller ID</span><input value={cli} onChange={(event) => setCli(event.target.value)} placeholder="Caller ID" /></label>
+            <label><span>Carrier</span><select value={selectedCarrierId} onChange={(event) => pickCarrier(event.target.value)}><option value="">Default trunk</option>{carriers.filter((c) => c.status === 'Active').map((c) => <option key={c.id} value={c.id}>{c.name} ({c.auth_type}) · {c.conn_status || 'unknown'}</option>)}</select></label>
             <label><span>Call Timer</span><input value={durationText(callSeconds)} readOnly /></label>
+            <label><span>Microphone</span><select value={selectedMic} onChange={(event) => setSelectedMic(event.target.value)}><option value="">System default</option>{audioInputs.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Microphone ${i + 1}`}</option>)}</select></label>
+            <label><span>Speaker</span><select value={selectedSpeaker} onChange={(event) => setSelectedSpeaker(event.target.value)}><option value="">System default</option>{audioOutputs.map((d, i) => <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Speaker ${i + 1}`}</option>)}</select></label>
+            <label><span>Speaker Volume</span><input type="range" min="0" max="1" step="0.05" value={volume} onChange={(event) => setVolume(Number(event.target.value))} /></label>
           </div>
           <div className="dialerControls">
             <button onClick={registerWebphone} disabled={!canTest || isRegistered || !selectedProfile}><RadioTower size={16} /> Register</button>
             <button onClick={unregisterWebphone} disabled={!uaRef.current}><PhoneOff size={16} /> Unregister</button>
             <button className="primary" onClick={callDid} disabled={!canTest || !isRegistered || inCall}><Phone size={16} /> Call</button>
             <button className="danger" onClick={hangup} disabled={!inCall}><PhoneOff size={16} /> Hangup</button>
-            <button onClick={toggleMute} disabled={!localStreamRef.current}>{muted ? <MicOff size={16} /> : <Mic size={16} />} {muted ? 'Unmute' : 'Mute'}</button>
+            <button onClick={toggleMute} disabled={!localStreamRef.current}>{muted ? <MicOff size={16} /> : <Mic size={16} />} {muted ? 'Unmute Mic' : 'Mute Mic'}</button>
+            <button onClick={() => setSpeakerMuted((m) => !m)}>{speakerMuted ? 'Unmute Speaker' : 'Mute Speaker'}</button>
+            <button onClick={toggleHold} disabled={!inCall}>{held ? 'Resume' : 'Hold'}</button>
+          </div>
+          {inCall && (
+            <div className="webphoneTransfer">
+              <input value={transferTo} onChange={(event) => setTransferTo(event.target.value)} placeholder="Blind transfer to number/ext" />
+              <button onClick={blindTransfer} disabled={!transferTo.trim()}><Send size={15} /> Transfer</button>
+            </div>
+          )}
+          <div className="dialpadWrap">
+            <div className="dialpadDisplay">
+              <span className="dialpadHint">{inCall ? 'In call — keys send DTMF' : 'Type on your keyboard or tap the pad · Enter to call · Backspace to delete'}</span>
+              <strong>{destination || <em>Enter number</em>}</strong>
+            </div>
+            <div className="dtmfPad">
+              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((d) => (
+                <button key={d} className="dtmfKey" onClick={() => dialKey(d)} title={inCall ? `Send DTMF ${d}` : `Add ${d}`}>{d}</button>
+              ))}
+              <button className="dtmfKey dtmfAux" onClick={dialBackspace} disabled={inCall} title="Backspace">⌫</button>
+              <button className="dtmfKey dtmfCall" onClick={() => (inCall ? hangup() : callDid())} disabled={!isRegistered || (!inCall && !destination.trim())} title={inCall ? 'Hang up' : 'Call'}>{inCall ? <PhoneOff size={16} /> : <Phone size={16} />}</button>
+              <button className="dtmfKey dtmfAux" onClick={() => setDestination('')} disabled={inCall || !destination} title="Clear">C</button>
+            </div>
+          </div>
+          <div className="qualityPanel">
+            <div className="sectionHeader"><div><span className="eyebrow">Live Carrier Quality (browser leg)</span><h3>Call Quality</h3></div></div>
+            <div className="qualityGrid">
+              {[
+                ['MOS', quality?.mos != null ? quality.mos.toFixed(2) : '-', quality?.mos != null && quality.mos < 3.6 ? 'bad' : quality?.mos != null && quality.mos < 4.0 ? 'warn' : 'good'],
+                ['Jitter', quality?.jitter_ms != null ? `${quality.jitter_ms} ms` : '-', (quality?.jitter_ms || 0) > 30 ? 'warn' : 'good'],
+                ['Packet Loss', quality?.packet_loss_pct != null ? `${quality.packet_loss_pct}%` : '-', (quality?.packet_loss_pct || 0) > 1 ? 'bad' : 'good'],
+                ['RTT', quality?.rtt_ms != null ? `${quality.rtt_ms} ms` : '-', (quality?.rtt_ms || 0) > 250 ? 'warn' : 'good'],
+                ['Codec', quality?.audio_codec || '-', 'good'],
+                ['Pkts (tx/rx/lost)', quality ? `${quality.packets_sent ?? 0}/${quality.packets_received ?? 0}/${quality.packets_lost ?? 0}` : '-', 'good'],
+              ].map(([label, value, tone]) => (
+                <div className={`qualityCell ${tone}`} key={label}><span>{label}</span><strong>{value}</strong></div>
+              ))}
+            </div>
+            <p className="muted">Browser↔gateway leg, sampled every second via WebRTC stats. The carrier (gateway↔VOS↔destination) leg is added from the Asterisk CDR and shown in Carrier Tests.</p>
           </div>
           <audio ref={remoteAudioRef} autoPlay playsInline />
-          <p className="muted">Only secure WSS WebRTC is supported. Calls route through Asterisk to VOS/carrier trunks.</p>
+          <p className="muted">Only secure WSS WebRTC is supported. Calls route through the node telephony to your VOS/carrier trunk.</p>
         </div>
       )}
 
-      {activeTab === 'profiles' && (
-        <div className="panel webphoneProfilePanel">
+      {activeTab === 'carriers' && (
+        <div className="panel">
           <div className="sectionHeader">
-            <div><span className="eyebrow">WSS SIP Profile</span><h2>WebRTC Gateway Profiles</h2></div>
-            <span className="typeBadge">{profiles.length} profiles</span>
+            <div><span className="eyebrow">Carriers / Profiles</span><h2>Carrier Profiles (IP-based &amp; User-based)</h2></div>
+            <button onClick={loadCarriers}><RefreshCcw size={16} /> Refresh</button>
           </div>
-          {(canCreate || editingId) && (
-            <form className="webphoneForm" onSubmit={saveProfile}>
-              <label><span>Profile Name</span><input value={form.profile_name} onChange={(event) => setField('profile_name', event.target.value)} placeholder="pbx.voipzap.com DID Test" /></label>
-              <label><span>SIP Username</span><input value={form.sip_username} onChange={(event) => setField('sip_username', event.target.value)} placeholder="1001" /></label>
-              <label><span>SIP Password</span><input type="password" value={form.sip_password} onChange={(event) => setField('sip_password', event.target.value)} placeholder="SIP secret" /></label>
-              <label><span>WebSocket URL</span><input value={form.websocket_url} onChange={(event) => setField('websocket_url', event.target.value)} placeholder="wss://pbx.voipzap.com:8089/ws" /></label>
-              <label><span>SIP Domain</span><input value={form.sip_domain} onChange={(event) => setField('sip_domain', event.target.value)} placeholder="pbx.voipzap.com" /></label>
-              <label><span>Outbound Proxy</span><input value={form.outbound_proxy} onChange={(event) => setField('outbound_proxy', event.target.value)} placeholder="Optional" /></label>
-              <label><span>Default CLI</span><input value={form.cli} onChange={(event) => setField('cli', event.target.value)} placeholder="Caller ID" /></label>
-              <label><span>Status</span><select value={form.status} onChange={(event) => setField('status', event.target.value)}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
-              <label className="wide"><span>Notes</span><textarea value={form.notes} onChange={(event) => setField('notes', event.target.value)} placeholder="Gateway/trunk notes" /></label>
+          <p className="muted">A carrier <strong>is</strong> the profile — one record per IP or per user. Create it here and pick it in the dialer&apos;s Carrier dropdown. IP-based = the carrier trusts this server&apos;s IP (no login); User-based = SIP username/password. Connect checks reachability (OPTIONS) or registration. The browser↔PBX SIP login is created automatically by PBX Setup → Enable Telephony — you never manage it.</p>
+          {(canCreate || editingCarrierId) && (
+            <form className="webphoneForm" onSubmit={saveCarrier}>
+              <label><span>Carrier Name</span><input value={carrierForm.name} onChange={(e) => setCarrierField('name', e.target.value)} placeholder="My Carrier A" /></label>
+              <label><span>Auth Type</span><select value={carrierForm.auth_type} onChange={(e) => setCarrierField('auth_type', e.target.value)}><option value="ip">IP-based</option><option value="user">User-based</option></select></label>
+              <label><span>Host / IP</span><input value={carrierForm.host} onChange={(e) => setCarrierField('host', e.target.value)} placeholder="carrier.example.com or 1.2.3.4" /></label>
+              <label><span>Port</span><input type="number" value={carrierForm.port} onChange={(e) => setCarrierField('port', e.target.value)} /></label>
+              {carrierForm.auth_type === 'user' && <label><span>Username</span><input value={carrierForm.username} onChange={(e) => setCarrierField('username', e.target.value)} placeholder="SIP username" /></label>}
+              {carrierForm.auth_type === 'user' && <label><span>Password</span><input type="password" value={carrierForm.password} onChange={(e) => setCarrierField('password', e.target.value)} placeholder={editingCarrierId ? 'Leave blank to keep' : 'SIP password'} /></label>}
+              <label><span>Dial Prefix</span><input value={carrierForm.prefix} onChange={(e) => setCarrierField('prefix', e.target.value)} placeholder="Optional" /></label>
+              <label><span>Codecs</span><input value={carrierForm.codecs} onChange={(e) => setCarrierField('codecs', e.target.value)} placeholder="OPUS,PCMU,PCMA" /></label>
+              <label><span>Status</span><select value={carrierForm.status} onChange={(e) => setCarrierField('status', e.target.value)}><option>Active</option><option>Inactive</option></select></label>
+              <label className="wide"><span>Notes</span><textarea value={carrierForm.notes} onChange={(e) => setCarrierField('notes', e.target.value)} /></label>
               <div className="wide formActions">
-                <button className="primary">{editingId ? 'Update Profile' : 'Save Profile'}</button>
-                {editingId && <button type="button" onClick={resetProfileForm}>Cancel Edit</button>}
+                <button className="primary">{editingCarrierId ? 'Update Carrier' : 'Add Carrier'}</button>
+                {editingCarrierId && <button type="button" onClick={resetCarrierForm}>Cancel Edit</button>}
               </div>
             </form>
           )}
-          <div className="tableWrap webphoneProfileTable">
+          <div className="tableWrap">
             <table>
-              <thead><tr><th>Profile</th><th>SIP User</th><th>WSS</th><th>Domain</th><th>CLI</th><th>Status</th><th>Actions</th></tr></thead>
-              <tbody>{profiles.map((profile) => (
-                <tr key={profile.id} className={String(profile.id) === String(selectedId) ? 'selectedRow' : ''}>
-                  <td><strong>{profile.profile_name}</strong><small>Password: ********</small></td>
-                  <td>{profile.sip_username}</td>
-                  <td>{profile.websocket_url}</td>
-                  <td>{profile.sip_domain}</td>
-                  <td>{profile.cli || '-'}</td>
-                  <td><StatusPill value={profile.status} /></td>
-                  <td className="actions">
-                    <button onClick={() => { setSelectedId(String(profile.id)); setActiveTab('dialer'); }}>Use</button>
-                    {canEdit && <button onClick={() => editProfile(profile)}><Edit3 size={15} /> Edit</button>}
-                    {canDelete && <button className="danger" onClick={() => deleteProfile(profile)}><Trash2 size={15} /> Delete</button>}
-                  </td>
-                </tr>
-              ))}</tbody>
+              <thead><tr><th>Name</th><th>Auth</th><th>Host:Port</th><th>Status</th><th>Connection</th><th>Actions</th></tr></thead>
+              <tbody>
+                {carriers.map((c) => (
+                  <tr key={c.id} className={String(c.id) === String(selectedCarrierId) ? 'selectedRow' : ''}>
+                    <td><strong>{c.name}</strong></td>
+                    <td><span className="typeBadge">{c.auth_type}</span></td>
+                    <td>{c.host}:{c.port}</td>
+                    <td><StatusPill value={c.status} /></td>
+                    <td><span className={`agentStatus ${c.conn_status === 'registered' || c.conn_status === 'reachable' ? 'running' : c.conn_status === 'unknown' ? 'warming' : 'offline'}`}>{c.conn_status || 'unknown'}</span></td>
+                    <td className="actions">
+                      <button onClick={() => connectCarrier(c)}>Connect</button>
+                      <button onClick={() => { pickCarrier(String(c.id)); setActiveTab('dialer'); }}>Use</button>
+                      {canEdit && <button onClick={() => editCarrier(c)}><Edit3 size={15} /> Edit</button>}
+                      {canDelete && <button className="danger" onClick={() => deleteCarrier(c)}><Trash2 size={15} /> Delete</button>}
+                    </td>
+                  </tr>
+                ))}
+                {!carriers.length && <tr><td colSpan="6" className="muted">No carriers yet. Add one above, then pick it in the dialer.</td></tr>}
+              </tbody>
             </table>
           </div>
         </div>
@@ -3022,25 +3624,117 @@ function WebphonePage({ user }) {
       {activeTab === 'logs' && (
         <div className="panel">
           <div className="sectionHeader">
-            <div><span className="eyebrow">DID Test Trail</span><h2>Webphone Call Logs</h2></div>
+            <div><span className="eyebrow">Carrier Test Analytics</span><h2>Test Calls &amp; Quality</h2></div>
             <button onClick={loadWebphone}><RefreshCcw size={16} /> Refresh</button>
           </div>
-          <div className="tableWrap">
+          <div className="cards managementCards carrierSummary">
+            {[
+              ['Test Calls', testSummary.total, 'good'],
+              ['ASR', `${testSummary.asr}%`, testSummary.asr < 40 ? 'bad' : testSummary.asr < 60 ? 'warn' : 'good'],
+              ['ACD', durationText(testSummary.acd || 0), 'good'],
+              ['Avg MOS', testSummary.mos != null ? testSummary.mos.toFixed(2) : '-', testSummary.mos == null ? 'good' : testSummary.mos < 3.6 ? 'bad' : testSummary.mos < 4 ? 'warn' : 'good'],
+              ['Avg Jitter', testSummary.jitter != null ? `${testSummary.jitter} ms` : '-', (testSummary.jitter || 0) > 30 ? 'warn' : 'good'],
+              ['Avg Loss', testSummary.loss != null ? `${testSummary.loss}%` : '-', (testSummary.loss || 0) > 1 ? 'bad' : 'good'],
+              ['Avg RTT', testSummary.rtt != null ? `${testSummary.rtt} ms` : '-', (testSummary.rtt || 0) > 250 ? 'warn' : 'good'],
+              ['Avg PDD', testSummary.pdd != null ? `${Math.round(testSummary.pdd)} ms` : '-', 'good'],
+            ].map(([label, value, tone]) => (
+              <div className={`metric qualityCell ${tone}`} key={label}><span>{label}</span><strong>{value}</strong></div>
+            ))}
+          </div>
+          <div className="dialerForm carrierFilters">
+            <label><span>From</span><input type="date" value={testFilter.from} onChange={(e) => setTestFilter((f) => ({ ...f, from: e.target.value }))} /></label>
+            <label><span>To</span><input type="date" value={testFilter.to} onChange={(e) => setTestFilter((f) => ({ ...f, to: e.target.value }))} /></label>
+            <label><span>Profile</span><select value={testFilter.profile} onChange={(e) => setTestFilter((f) => ({ ...f, profile: e.target.value }))}><option value="">All</option>{profiles.map((p) => <option key={p.id} value={p.id}>{p.profile_name}</option>)}</select></label>
+            <label><span>Search</span><input value={testFilter.q} onChange={(e) => setTestFilter((f) => ({ ...f, q: e.target.value }))} placeholder="DID, CLI, codec, cause..." /></label>
+          </div>
+          <div className="tableWrap carrierTestTable">
             <table>
-              <thead><tr><th>Date/Time</th><th>Profile</th><th>CLI</th><th>DID</th><th>Status</th><th>Duration</th><th>Notes</th><th>Created By</th></tr></thead>
-              <tbody>{logs.map((log) => (
-                <tr key={log.id}>
-                  <td>{log.created_at ? new Date(log.created_at).toLocaleString() : '-'}</td>
-                  <td>{log.profile_name || '-'}</td>
-                  <td>{log.cli || '-'}</td>
-                  <td>{log.destination}</td>
-                  <td><StatusPill value={log.status} /></td>
-                  <td>{durationText(log.duration || 0)}</td>
-                  <td>{log.notes || '-'}</td>
-                  <td>{log.created_by || '-'}</td>
-                </tr>
-              ))}</tbody>
+              <thead><tr><th>Time</th><th>Profile</th><th>CLI</th><th>DID</th><th>Status</th><th>Dur</th><th>MOS</th><th>Jitter</th><th>Loss</th><th>RTT</th><th>Codec</th><th>PDD</th><th>Cause</th><th></th></tr></thead>
+              <tbody>{filteredLogs.map((log) => {
+                const mosTone = log.mos == null ? '' : log.mos < 3.6 ? 'badText' : log.mos < 4 ? 'warnText' : 'okText';
+                return (
+                  <tr key={log.id} className="carrierRow" onClick={() => setDetailLog(log)}>
+                    <td>{log.created_at ? new Date(log.created_at).toLocaleString() : '-'}</td>
+                    <td>{log.profile_name || '-'}</td>
+                    <td>{log.cli || '-'}</td>
+                    <td>{log.destination}</td>
+                    <td><StatusPill value={log.status} /></td>
+                    <td>{durationText(log.duration || 0)}</td>
+                    <td className={mosTone}>{log.mos != null ? log.mos.toFixed(2) : '-'}</td>
+                    <td>{log.jitter_ms != null ? `${log.jitter_ms}ms` : '-'}</td>
+                    <td>{log.packet_loss_pct != null ? `${log.packet_loss_pct}%` : '-'}</td>
+                    <td>{log.rtt_ms != null ? `${log.rtt_ms}ms` : '-'}</td>
+                    <td>{log.audio_codec || '-'}</td>
+                    <td>{log.pdd_ms != null ? `${log.pdd_ms}ms` : '-'}</td>
+                    <td>{log.hangup_cause || log.sip_response || '-'}</td>
+                    <td><button className="iconButton" onClick={(e) => { e.stopPropagation(); setDetailLog(log); }} title="Details"><Eye size={15} /></button></td>
+                  </tr>
+                );
+              })}
+              {!filteredLogs.length && <tr><td colSpan="14" className="muted">No test calls match the filters.</td></tr>}
+              </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {detailLog && (
+        <div className="modalBackdrop modal-overlay" onClick={() => setDetailLog(null)}>
+          <div className="modal modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader">
+              <div><span className="eyebrow">Carrier Test Detail</span><h2>{detailLog.destination} · {detailLog.status}</h2></div>
+              <button type="button" className="iconButton" onClick={() => setDetailLog(null)} title="Close"><X size={18} /></button>
+            </div>
+            <div className="callPath">
+              <span className="eyebrow">Call Path / Routing</span>
+              <div className="callPathFlow">
+                <span className="hop"><b>Caller (CLI)</b><i>{detailLog.cli || '-'}</i></span>
+                <span className="hopArrow">▸</span>
+                <span className="hop"><b>NOC360 Webphone</b><i>{detailLog.quality_source || 'browser'}</i></span>
+                <span className="hopArrow">▸</span>
+                <span className="hop"><b>Node PBX</b><i>Asterisk</i></span>
+                <span className="hopArrow">▸</span>
+                <span className="hop"><b>VOS Gateway</b><i>{detailLog.remote_media_ip || detailLog.carrier_route || 'VOS'}</i></span>
+                <span className="hopArrow">▸</span>
+                <span className="hop"><b>Carrier → Number</b><i>{detailLog.destination}</i></span>
+              </div>
+              <p className="muted">{detailLog.route_path || `Browser → NOC360 node PBX → VOS (${detailLog.carrier_route || 'trunk'}) → carrier → ${detailLog.destination}`}. The terminating carrier, its IP and rate are chosen inside VOS — connect the VOS CDR for that deeper hop.</p>
+            </div>
+            <div className="qualityGrid">
+              {[
+                ['Time', detailLog.created_at ? new Date(detailLog.created_at).toLocaleString() : '-'],
+                ['Profile', detailLog.profile_name || '-'],
+                ['CLI', detailLog.cli || '-'],
+                ['DID', detailLog.destination],
+                ['Direction', detailLog.direction || '-'],
+                ['Status', detailLog.status],
+                ['Duration', durationText(detailLog.duration || 0)],
+                ['Answer (s)', detailLog.answer_seconds ?? '-'],
+                ['MOS', detailLog.mos != null ? detailLog.mos.toFixed(2) : '-'],
+                ['Jitter', detailLog.jitter_ms != null ? `${detailLog.jitter_ms} ms` : '-'],
+                ['Packet Loss', detailLog.packet_loss_pct != null ? `${detailLog.packet_loss_pct}%` : '-'],
+                ['RTT', detailLog.rtt_ms != null ? `${detailLog.rtt_ms} ms` : '-'],
+                ['Codec', detailLog.audio_codec || '-'],
+                ['Pkts tx/rx/lost', `${detailLog.packets_sent ?? '-'} / ${detailLog.packets_received ?? '-'} / ${detailLog.packets_lost ?? '-'}`],
+                ['PDD', detailLog.pdd_ms != null ? `${detailLog.pdd_ms} ms` : '-'],
+                ['Ring', detailLog.ring_ms != null ? `${detailLog.ring_ms} ms` : '-'],
+                ['SIP Response', detailLog.sip_response || '-'],
+                ['Hangup Cause', detailLog.hangup_cause || '-'],
+                ['Carrier Route / Gateway', detailLog.carrier_route || '-'],
+                ['Remote Media IP', detailLog.remote_media_ip || '-'],
+                ['Quality Source', detailLog.quality_source || '-'],
+                ['Created By', detailLog.created_by || '-'],
+              ].map(([label, value]) => (
+                <div className="qualityCell" key={label}><span>{label}</span><strong>{value}</strong></div>
+              ))}
+            </div>
+            {detailLog.notes && <p className="muted">Notes: {detailLog.notes}</p>}
+            <div className="metricHelp">
+              <span className="eyebrow">What these mean</span>
+              {WEBPHONE_METRIC_HELP.map(([term, text]) => (
+                <p key={term}><b>{term}:</b> {text}</p>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -3048,22 +3742,52 @@ function WebphonePage({ user }) {
       {activeTab === 'pbx' && isAdmin && (
         <div className="panel pbxSetupPanel">
           <div className="sectionHeader">
-            <div><span className="eyebrow">Safe PBX Setup</span><h2>Connect &gt; Enable WebRTC &gt; Done</h2></div>
+            <div><span className="eyebrow">Webphone Gateway · Asterisk</span><h2>Enable Telephony</h2></div>
+            <button onClick={loadPbxOverview}><RefreshCcw size={16} /> Refresh Status</button>
           </div>
-          {pbxStatus?.message && <div className="error"><AlertTriangle size={18} /> {pbxStatus.message}</div>}
-          {webRtcEnabled && <div className="toastSuccess">WebRTC Enabled Successfully</div>}
-          {!pbxConnected ? (
-            <form className="webphoneForm pbxConnectForm" onSubmit={connectPbx}>
-              <label><span>IP</span><input value={pbxConnect.ip} onChange={(event) => setPbxConnectField('ip', event.target.value)} placeholder="127.0.0.1" /></label>
-              <label><span>Username</span><input value={pbxConnect.username} onChange={(event) => setPbxConnectField('username', event.target.value)} placeholder="Server admin username" /></label>
-              <label><span>Password</span><input type="password" value={pbxConnect.password} onChange={(event) => setPbxConnectField('password', event.target.value)} placeholder="Not stored" /></label>
-              <div className="wide formActions">
-                <button className="primary">Connect</button>
-              </div>
-            </form>
-          ) : (
-            <div className="pbxEnableBox">
-              <button className="primary pbxEnableButton" onClick={enableWebRtc}>Enable WebRTC</button>
+          <p className="muted">This PBX handles only the webphone. <strong>Enable Telephony</strong> auto-installs Asterisk + WebRTC modules, issues a TLS certificate, opens the firewall, then writes the gateway + all Active carriers and creates the browser SIP login. One button, nothing to install by hand. (DNS for the PBX host must point at this server.)</p>
+          <div className="oneClickBox">
+            <button className="primary pbxEnableButton" onClick={runEnableTelephony} disabled={pbxBusy}>{pbxBusy ? 'Working… (installing, can take minutes)' : 'Enable Telephony'}</button>
+            <button onClick={runOneClickSetup} disabled={pbxBusy} title="Re-write config only; skip install (use if Asterisk is already installed)">Reconfigure (skip install)</button>
+          </div>
+          {enableSteps.length > 0 && (
+            <div className="panel launcherSteps" style={{ marginTop: 12 }}>
+              <h3>Setup Progress</h3>
+              <ul className="launchStepList">
+                {enableSteps.map((s, i) => (
+                  <li key={`${s.step}-${i}`} className={s.ok ? 'stepOk' : 'stepFail'}>
+                    <span className="stepMark">{s.ok ? '✓' : '✗'}</span>
+                    <span className="stepLabel">{s.step}</span>
+                    <span className="stepMessage">{(s.output || '').slice(0, 240)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {pbxOverview && (
+            <div className="qualityGrid" style={{ marginTop: 14 }}>
+              {(pbxOverview.error
+                ? [['Status', pbxOverview.error, 'bad']]
+                : [
+                    ['Asterisk Installed', pbxOverview.installed ? 'Yes' : 'No', pbxOverview.installed ? 'good' : 'bad'],
+                    ['Running', pbxOverview.running ? 'Yes' : 'No', pbxOverview.running ? 'good' : 'bad'],
+                    ['TLS Cert', pbxOverview.tls_cert_present ? 'Present' : 'Missing', pbxOverview.tls_cert_present ? 'good' : 'bad'],
+                    ['WebRTC Config', pbxOverview.config_ready ? 'Ready' : 'Not written', pbxOverview.config_ready ? 'good' : 'warn'],
+                    ['WSS URL', pbxOverview.wss_url || pbxOverview.expected_wss || '-', 'good'],
+                    ['Carriers', String(pbxOverview.carrier_count ?? 0), 'good'],
+                    ['Browser Profile', pbxOverview.webphone_profile?.profile_name || 'None', pbxOverview.webphone_profile ? 'good' : 'warn'],
+                  ]
+              ).map(([k, v, tone]) => <div className={`qualityCell ${tone}`} key={k}><span>{k}</span><strong>{String(v)}</strong></div>)}
+            </div>
+          )}
+          {pbxOverview?.carriers?.length > 0 && (
+            <div className="tableWrap" style={{ marginTop: 12 }}>
+              <table>
+                <thead><tr><th>Carrier</th><th>Auth</th><th>Connection</th></tr></thead>
+                <tbody>{pbxOverview.carriers.map((c) => (
+                  <tr key={c.id}><td>{c.name}</td><td>{c.auth_type}</td><td><span className={`agentStatus ${c.conn_status === 'registered' || c.conn_status === 'reachable' ? 'running' : 'offline'}`}>{c.conn_status}</span></td></tr>
+                ))}</tbody>
+              </table>
             </div>
           )}
         </div>
@@ -5151,7 +5875,8 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved,
   };
 
   useEffect(() => {
-    if (!containerRef.current) return undefined;
+    const container = containerRef.current;
+    if (!container) return undefined;
     const terminal = new XTerm({
       cursorBlink: true,
       convertEol: true,
@@ -5174,7 +5899,7 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved,
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.open(containerRef.current);
+    terminal.open(container);
     terminalRef.current = terminal;
     fitRef.current = fitAddon;
     terminal.options.cursorBlink = true;
@@ -5225,15 +5950,15 @@ function SSHTerminalPane({ tab, active, commandAction, onStatus, onHistorySaved,
       event.preventDefault();
       pasteFromClipboard().catch(() => {});
     };
-    containerRef.current.addEventListener('mousedown', handleClickFocus);
-    containerRef.current.addEventListener('contextmenu', handlePasteShortcut);
+    container.addEventListener('mousedown', handleClickFocus);
+    container.addEventListener('contextmenu', handlePasteShortcut);
     window.addEventListener('resize', fitAndResize);
     window.setTimeout(fitAndResize, 120);
 
     return () => {
       window.removeEventListener('resize', fitAndResize);
-      containerRef.current?.removeEventListener('mousedown', handleClickFocus);
-      containerRef.current?.removeEventListener('contextmenu', handlePasteShortcut);
+      container.removeEventListener('mousedown', handleClickFocus);
+      container.removeEventListener('contextmenu', handlePasteShortcut);
       disposable.dispose();
       if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(4002, 'Terminal pane detached');
       terminal.dispose();
@@ -5564,8 +6289,8 @@ function ClientInvoiceLedgerView({ user, pageKey = 'my_reports', title = 'Client
         <table>
           <thead><tr><th>Date</th><th>Invoice No / Reference</th><th>Description</th><th>Debit (DR)</th><th>Credit (CR)</th><th>Balance</th><th>Download PDF</th></tr></thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}>
+            {rows.map((row, index) => (
+              <tr key={`${row.type}-${row.reference}-${row.date}-${index}`} className={row.credit ? 'creditRow' : 'debitRow'}>
                 <td>{row.date}</td>
                 <td>{row.reference}</td>
                 <td>{row.description}</td>
@@ -5818,6 +6543,7 @@ function BusinessAIPage({ data }) {
   const [filters, setFilters] = useState({ date_from: '', date_to: '', client_ids: [], charge_type: '' });
   const [summary, setSummary] = useState(null);
   const [insights, setInsights] = useState([]);
+  const [error, setError] = useState('');
   const [selectedChart, setSelectedChart] = useState('billing_trend_by_day');
   const chartOptions = [
     ['billing_trend_by_day', 'Billing Trend by Day'],
@@ -5828,10 +6554,15 @@ function BusinessAIPage({ data }) {
     ['client_growth_trend', 'Client Growth Trend'],
   ];
   const load = async () => {
-    const qs = makeQuery(filters);
-    const [summaryData, insightData] = await Promise.all([request(`/business-ai/summary${qs}`), request(`/business-ai/insights${qs}`)]);
-    setSummary(summaryData);
-    setInsights(insightData.insights || []);
+    setError('');
+    try {
+      const qs = makeQuery(filters);
+      const [summaryData, insightData] = await Promise.all([request(`/business-ai/summary${qs}`), request(`/business-ai/insights${qs}`)]);
+      setSummary(summaryData);
+      setInsights(insightData.insights || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load business intelligence data');
+    }
   };
   useEffect(() => { load(); }, []);
   const cards = summary?.cards || {};
@@ -5852,6 +6583,7 @@ function BusinessAIPage({ data }) {
         <select value={selectedChart} onChange={(e) => setSelectedChart(e.target.value)}>{chartOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
         <button onClick={load}><RefreshCcw size={16} /> Analyze</button>
       </div>
+      {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
       <div className="aiHero">
         <div>
           <span className="eyebrow">Business AI Insights</span>
@@ -7086,28 +7818,6 @@ function BillingPage({ billing, data, reload, refreshBilling, user, settings }) 
       {billing.ledgerSummary?.fx_adjusted && <div className="alert billingAlert">FX difference adjusted.</div>}
       {user.role === 'admin' && <BillingRateConfig settings={settings} reload={reload} />}
       <WeeklyInvoicePanel user={user} clients={data.clients} canCreate={canCreate} canExport={canExport} canDelete={canDelete} />
-      {false && (
-        <form className="inlineForm billingEntryForm" onSubmit={save}>
-          <ClientSelect value={form.client_id} clients={data.clients} onChange={(value) => setForm({ ...form, client_id: value })} />
-          <input type="date" value={form.entry_date} onChange={(event) => setForm({ ...form, entry_date: event.target.value })} />
-          <select value={form.entry_type} onChange={(event) => setForm({ ...form, entry_type: event.target.value })}><option>Debit</option><option>Credit</option></select>
-          <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>{ledgerCategories.map((type) => <option key={type}>{type}</option>)}</select>
-          <input placeholder="Description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
-          <div className="currencyGrid">
-            <label className={`fieldLabel currencyField usdField ${lastEdited === 'usd' ? 'activeCurrency' : ''}`}>Amount ($)<input type="number" step="0.01" placeholder="Amount ($)" value={form.amount_usd} onChange={(event) => updateUsd(event.target.value)} /></label>
-            <label className={`fieldLabel currencyField inrField ${lastEdited === 'inr' ? 'activeCurrency' : ''}`}>Amount (₹)<input type="number" step="0.01" placeholder="Amount (₹)" value={form.amount_inr} onChange={(event) => updateInr(event.target.value)} /></label>
-            <label className="fieldLabel currencyField rateField">Rate (USD→INR)<input type="number" step="0.0001" value={form.exchange_rate} onChange={(event) => updateRate(event.target.value)} /></label>
-            <div className="conversionPreview">
-              <span>{exchangeText(form.exchange_rate)}</span>
-              <strong>Converted Value: {inr(previewInr)}</strong>
-              <small>= {usd(previewUsd)} × {Number(previewRate || 0).toFixed(2)} = {inr(previewInr)}</small>
-            </div>
-          </div>
-          {entryError && <span className="formError">{entryError}</span>}
-          <button className="primary"><Plus size={16} /> {editingLedger ? 'Update Entry' : 'Save Entry'}</button>
-          {editingLedger && <button type="button" onClick={cancelEdit}>Cancel Edit</button>}
-        </form>
-      )}
       {canCreate && !editingLedger && ledgerEntryForm}
       {editingLedger && (
         <div className="modalBackdrop modal-overlay">
@@ -7392,8 +8102,8 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
         </tbody></table></div>
         {viewInvoice && <WeeklyInvoiceViewModal invoice={viewInvoice} canExport={canExport} onDownload={downloadWeeklyInvoicePdf} onClose={() => setViewInvoice(null)} />}
         <h2>Invoice Ledger</h2>
-        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>DR ₹</th><th>CR ₹</th><th>Balance ₹</th></tr></thead><tbody>{(detail.ledger || []).map((row) => (
-          <tr key={`${row.type}-${row.reference}-${row.date}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td></tr>
+        <div className="tableWrap"><table><thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>DR ₹</th><th>CR ₹</th><th>Balance ₹</th></tr></thead><tbody>{(detail.ledger || []).map((row, index) => (
+          <tr key={`${row.type}-${row.reference}-${row.date}-${index}`} className={row.credit ? 'creditRow' : 'debitRow'}><td>{row.date}</td><td>{row.reference}</td><td>{row.description}</td><td>{row.debit ? inr(row.debit) : '-'}</td><td className="creditText">{row.credit ? inr(row.credit) : '-'}</td><td className={row.balance > 0 ? 'outstandingText' : 'okText'}>{invoiceLedgerBalanceText(row.balance)}</td></tr>
         ))}
           {(detail.ledger || []).length === 0 && <tr><td colSpan="6" className="muted">No saved invoices, payments, or adjustments found.</td></tr>}
         </tbody></table></div>
@@ -7404,17 +8114,6 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
         ))}</tbody></table></div>
       </div>
     </div>
-  );
-}
-
-function DownloadsPage({ billing, user }) {
-  const canExportLedger = canDo(user, 'my_ledger', 'can_export');
-  return (
-    <section className="panel downloadsPanel">
-      <h2>Downloads</h2>
-      {canExportLedger && <button onClick={() => exportRows('my-ledger.csv', billing.ledger || [])}><Download size={16} /> Ledger CSV</button>}
-      {canExportLedger && <button onClick={() => exportRows('my-billing.csv', billing.rows || [])}><Download size={16} /> Billing CSV</button>}
-    </section>
   );
 }
 

@@ -61,7 +61,7 @@ With Auto Login enabled in NOC360, the launcher:
   "versions": [
     {
       "name": "V2.1.8.05",
-      "path": "C:\\Program Files (x86)\\VOS300021805\\V2.1.8.05\\bin\\VOS3000.exe",
+      "path": "C:\\Program Files (x86)\\VOS300021805\\V2.1.8.05\\bin\\vos3000client.exe",
       "args_template": "",
       "login_wait_seconds": 5,
       "tab_sequence": ["server_ip", "username", "password", "system_tag"]
