@@ -2750,6 +2750,7 @@ use_avpf=yes
 media_encryption=dtls
 dtls_verify=fingerprint
 dtls_setup=actpass
+dtls_auto_generate_cert=yes
 ice_support=yes
 rtcp_mux=yes
 direct_media=no
