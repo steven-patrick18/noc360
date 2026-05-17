@@ -2781,6 +2781,7 @@ function WebphonePage({ user }) {
   const [pbxBusy, setPbxBusy] = useState(false);
   const [nodeHealth, setNodeHealth] = useState(null);
   const [nodeHealthBusy, setNodeHealthBusy] = useState(false);
+  const [routeQuality, setRouteQuality] = useState(null);
   const [enableSteps, setEnableSteps] = useState([]);
   const [held, setHeld] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(false);
@@ -2936,6 +2937,14 @@ function WebphonePage({ user }) {
       setPbxOverview(await request('/webphone/pbx/overview'));
     } catch (err) {
       setPbxOverview({ error: err.message });
+    }
+  };
+
+  const loadRouteQuality = async () => {
+    try {
+      setRouteQuality(await request('/webphone/carrier-quality'));
+    } catch (err) {
+      setRouteQuality({ error: err.message });
     }
   };
 
@@ -3532,7 +3541,7 @@ function WebphonePage({ user }) {
 
       <div className="webphoneTabs">
         {['dialer', 'carriers', 'logs', 'health', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
-          <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => { setActiveTab(tab); if (tab === 'pbx') loadPbxOverview(); }}>
+          <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => { setActiveTab(tab); if (tab === 'pbx') loadPbxOverview(); if (tab === 'logs') loadRouteQuality(); }}>
             {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Carrier Tests' : tab === 'carriers' ? 'Carriers' : tab === 'health' ? 'Node Health' : tab[0].toUpperCase() + tab.slice(1)}
           </button>
         ))}
@@ -3671,8 +3680,35 @@ function WebphonePage({ user }) {
         <div className="panel">
           <div className="sectionHeader">
             <div><span className="eyebrow">Carrier Test Analytics</span><h2>Test Calls &amp; Quality</h2></div>
-            <button onClick={loadWebphone}><RefreshCcw size={16} /> Refresh</button>
+            <button onClick={() => { loadWebphone(); loadRouteQuality(); }}><RefreshCcw size={16} /> Refresh</button>
           </div>
+          {routeQuality && !routeQuality.error && routeQuality.carriers?.length > 0 && (
+            <div className="routeQualityWrap">
+              <span className="eyebrow">Route Quality (last {routeQuality.days} days · inferred from call metrics, not VOS)</span>
+              <div className="tableWrap">
+                <table>
+                  <thead><tr><th>Route / Carrier</th><th>Verdict</th><th>Calls</th><th>ASR</th><th>ACD</th><th>MOS</th><th>PDD</th><th>FAS%</th><th>Why</th></tr></thead>
+                  <tbody>{routeQuality.carriers.map((c) => {
+                    const cls = c.verdict.startsWith('Premium') ? 'okText' : c.verdict.startsWith('Grey') ? 'badText' : c.verdict === 'Standard' ? 'warnText' : 'muted';
+                    return (
+                      <tr key={c.carrier}>
+                        <td>{c.carrier}</td>
+                        <td className={cls}><strong>{c.verdict}</strong></td>
+                        <td>{c.answered}/{c.total}</td>
+                        <td>{c.asr_pct}%</td>
+                        <td>{durationText(Math.round(c.acd_s || 0))}</td>
+                        <td>{c.avg_mos != null ? c.avg_mos.toFixed(2) : '-'}</td>
+                        <td>{c.avg_pdd_ms != null ? `${Math.round(c.avg_pdd_ms)}ms` : '-'}</td>
+                        <td className={c.fas_rate_pct >= 15 ? 'badText' : ''}>{c.fas_rate_pct}%</td>
+                        <td className="muted" title={(c.reasons || []).join(' ')}>{(c.reasons || [])[0] || '-'}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              </div>
+              <p className="muted">Heuristic tiering from ASR / ACD / MOS / PDD / FAS aggregated per route. "Route" is the carrier/trunk as NOC360 sees it (the downstream carrier VOS actually picked needs VOS CDR integration). Judge on volume, not a couple of calls.</p>
+            </div>
+          )}
           <div className="cards managementCards carrierSummary">
             {[
               ['Test Calls', testSummary.total, 'good'],

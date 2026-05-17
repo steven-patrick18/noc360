@@ -2950,6 +2950,77 @@ def webphone_call_log_out(record: WebphoneCallLog):
     }
 
 
+def carrier_quality_summary(db: Session, days: int = 30):
+    """Aggregate per-route call quality into a heuristic tier verdict.
+
+    Pure inference from metrics NOC360 already collects (no VOS API). The
+    'route' is the carrier/trunk as NOC360 sees it, not the downstream
+    carrier VOS picked. Needs a handful of calls to be meaningful.
+    """
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = db.query(WebphoneCallLog).filter(WebphoneCallLog.created_at >= since).all()
+    carrier_names = {c.id: c.name for c in db.query(WebphoneCarrier).all()}
+    groups: dict[str, list] = {}
+    for r in rows:
+        route = r.carrier_route or "noc360-trunk"
+        name = route
+        m = re.match(r"noc360-carrier-(\d+)", route)
+        if m:
+            name = carrier_names.get(int(m.group(1)), route)
+        groups.setdefault(name, []).append(r)
+
+    def avg(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    out = []
+    for name, calls in groups.items():
+        total = len(calls)
+        answered = [c for c in calls if (c.answer_seconds or 0) > 0]
+        nans = len(answered)
+        asr = round(nans / total * 100, 1) if total else 0.0
+        acd = round(sum(c.answer_seconds or 0 for c in answered) / nans, 1) if nans else 0.0
+        mos = avg([c.mos for c in calls])
+        pdd = avg([c.pdd_ms for c in calls])
+        fas_n = sum(1 for c in answered if fas_assessment(c)["suspect"])
+        fas_rate = round(fas_n / nans * 100, 1) if nans else 0.0
+        short_rate = round(sum(1 for c in answered if 0 < (c.answer_seconds or 0) <= 6) / nans * 100, 1) if nans else 0.0
+        grey, premium = [], []
+        if total < 5:
+            verdict, reasons = "Insufficient data", [f"Only {total} call(s) - need ~5+ for a reliable verdict."]
+        else:
+            if fas_rate >= 15: grey.append(f"High FAS-suspect rate ({fas_rate}%)")
+            if acd and acd < 20 and asr >= 30: grey.append(f"Very low ACD ({acd}s) despite answers — answer-then-drop")
+            if mos is not None and mos < 3.2: grey.append(f"Poor average MOS ({mos})")
+            if pdd is not None and pdd > 8000: grey.append(f"Very high PDD ({pdd} ms)")
+            if short_rate >= 40: grey.append(f"{short_rate}% of answered calls ultra-short (<=6s)")
+            if asr >= 45: premium.append(f"Healthy ASR ({asr}%)")
+            if acd and acd >= 60: premium.append(f"Solid ACD ({acd}s)")
+            if mos is not None and mos >= 4.0: premium.append(f"High MOS ({mos})")
+            if pdd is not None and pdd < 3000: premium.append(f"Low PDD ({pdd} ms)")
+            if fas_rate < 3: premium.append("Negligible FAS")
+            if grey:
+                verdict, reasons = "Grey-suspect", grey
+            elif len(premium) >= 3:
+                verdict, reasons = "Premium / Tier-1-like", premium
+            else:
+                verdict, reasons = "Standard", premium or ["Mixed signals; no strong grey or premium indicators."]
+        out.append({
+            "carrier": name, "total": total, "answered": nans,
+            "asr_pct": asr, "acd_s": acd, "avg_mos": mos, "avg_pdd_ms": pdd,
+            "fas_rate_pct": fas_rate, "short_call_pct": short_rate,
+            "verdict": verdict, "reasons": reasons,
+        })
+    out.sort(key=lambda x: -x["total"])
+    return {"days": days, "carriers": out}
+
+
+@app.get("/api/webphone/carrier-quality")
+@app.get("/webphone/carrier-quality")
+def get_carrier_quality(days: int = Query(default=30, ge=1, le=365), db: Session = Depends(get_db), user: User = Depends(require_webphone())):
+    return carrier_quality_summary(db, days)
+
+
 @app.get("/api/webphone/profiles", response_model=list[WebphoneProfileOut])
 @app.get("/webphone/profiles", response_model=list[WebphoneProfileOut])
 def get_webphone_profiles(db: Session = Depends(get_db), user: User = Depends(require_webphone())):
