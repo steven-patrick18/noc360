@@ -2804,6 +2804,7 @@ exten => s,1,NoOp(NOC360 quality push ${{NOC360UUID}})
             carrier_cfg.append(f"""
 [{ep}]
 type=endpoint
+transport=noc360-transport-udp
 context=webphone-test
 disallow=all
 allow={(c.codecs or 'ulaw,alaw').lower().replace('opus,', 'opus,').replace('pcmu', 'ulaw').replace('pcma', 'alaw')}
