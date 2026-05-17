@@ -4852,6 +4852,137 @@ def get_webphone_pbx_overview(db: Session = Depends(get_db), user: User = Depend
     return webphone_pbx_overview(db)
 
 
+def _read_proc_meminfo():
+    try:
+        info = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                key, _, rest = line.partition(":")
+                info[key.strip()] = int(rest.strip().split()[0])  # kB
+        total = info.get("MemTotal", 0)
+        avail = info.get("MemAvailable", info.get("MemFree", 0))
+        if total <= 0:
+            return None
+        used = total - avail
+        return {
+            "total_mb": round(total / 1024),
+            "used_mb": round(used / 1024),
+            "used_pct": round(used / total * 100, 1),
+        }
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _system_uptime():
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as fh:
+            secs = int(float(fh.read().split()[0]))
+        d, rem = divmod(secs, 86400)
+        h, rem = divmod(rem, 3600)
+        m, _ = divmod(rem, 60)
+        return (f"{d}d " if d else "") + f"{h}h {m}m"
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _service_state(name: str):
+    res = run_safe_command(["systemctl", "is-active", name], timeout=5)
+    out = (res.get("output") or "").strip()
+    return out or ("unknown" if not shutil.which("systemctl") else "inactive")
+
+
+def _tls_cert_health(domain: str):
+    fullchain, privkey = pbx_cert_paths(domain)
+    if not (fullchain.exists() and privkey.exists()):
+        return {"present": False, "domain": domain}
+    info = {"present": True, "domain": domain}
+    res = run_safe_command(["openssl", "x509", "-enddate", "-noout", "-in", str(fullchain)], timeout=6)
+    if res.get("ok") and "notAfter=" in (res.get("output") or ""):
+        not_after = res["output"].split("notAfter=", 1)[1].strip()
+        info["expires"] = not_after
+        try:
+            import ssl as _ssl
+            expiry_ts = _ssl.cert_time_to_seconds(not_after)
+            info["days_remaining"] = int((expiry_ts - time.time()) / 86400)
+        except (ValueError, OSError):
+            pass
+    return info
+
+
+def node_health_payload(db: Session):
+    import platform as _platform
+    config = default_pbx_config_for_enable()
+    load = None
+    try:
+        load = [round(x, 2) for x in os.getloadavg()]
+    except (OSError, AttributeError):
+        load = None
+    cpus = os.cpu_count() or 1
+    try:
+        total_b, used_b, free_b = shutil.disk_usage("/")
+        disk = {
+            "total_gb": round(total_b / 1e9, 1),
+            "used_gb": round(used_b / 1e9, 1),
+            "free_gb": round(free_b / 1e9, 1),
+            "used_pct": round(used_b / total_b * 100, 1) if total_b else None,
+        }
+    except OSError:
+        disk = None
+    mem = _read_proc_meminfo()
+    cpu_pct = round(min(100.0, (load[0] / cpus) * 100), 1) if load else None
+
+    asterisk_installed = bool(shutil.which("asterisk"))
+    channels = None
+    if asterisk_installed:
+        ch = run_safe_command(["asterisk", "-rx", "core show channels count"], timeout=6)
+        if ch.get("ok"):
+            match = re.search(r"(\d+)\s+active channel", ch.get("output") or "")
+            channels = int(match.group(1)) if match else None
+
+    carriers = db.query(WebphoneCarrier).all()
+    profile = db.query(WebphoneProfile).order_by(WebphoneProfile.id.desc()).first()
+
+    services = {name: _service_state(name) for name in ("asterisk", UPDATE_CENTER_SERVICE_NAME, "nginx")}
+
+    return {
+        "node": {
+            "hostname": socket.gethostname(),
+            "os": _platform.platform(),
+            "uptime": _system_uptime(),
+            "checked_at": datetime.utcnow().isoformat(),
+        },
+        "system": {
+            "cpus": cpus,
+            "load_avg": load,
+            "cpu_pct": cpu_pct,
+            "memory": mem,
+            "disk": disk,
+        },
+        "services": services,
+        "telephony": {
+            "asterisk_installed": asterisk_installed,
+            "asterisk_running": services.get("asterisk") == "active",
+            "active_calls": channels,
+            "rtp_range": f"{config.get('rtp_start')}-{config.get('rtp_end')}",
+            "wss_url": f"wss://{config['pbx_domain']}:{config.get('wss_port')}/ws",
+            "browser_profile": profile.profile_name if profile else None,
+        },
+        "tls_cert": _tls_cert_health(config["pbx_domain"]),
+        "carriers": {
+            "total": len(carriers),
+            "active": sum(1 for c in carriers if (c.status or "Active") == "Active"),
+            "reachable": sum(1 for c in carriers if c.conn_status in ("reachable", "registered")),
+            "list": [{"id": c.id, "name": c.name, "auth_type": c.auth_type, "conn_status": c.conn_status or "unknown"} for c in carriers],
+        },
+    }
+
+
+@app.get("/api/webphone/node-health")
+@app.get("/webphone/node-health")
+def get_node_health(db: Session = Depends(get_db), user: User = Depends(require_webphone())):
+    return node_health_payload(db)
+
+
 @app.post("/api/webphone/pbx/one-click")
 @app.post("/webphone/pbx/one-click")
 def one_click_webphone_setup(request: Request, db: Session = Depends(get_db), user: User = Depends(require_roles("admin"))):

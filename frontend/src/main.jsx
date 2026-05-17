@@ -2779,6 +2779,8 @@ function WebphonePage({ user }) {
   const [carrierForm, setCarrierForm] = useState(emptyCarrier);
   const [pbxOverview, setPbxOverview] = useState(null);
   const [pbxBusy, setPbxBusy] = useState(false);
+  const [nodeHealth, setNodeHealth] = useState(null);
+  const [nodeHealthBusy, setNodeHealthBusy] = useState(false);
   const [enableSteps, setEnableSteps] = useState([]);
   const [held, setHeld] = useState(false);
   const [speakerMuted, setSpeakerMuted] = useState(false);
@@ -2933,6 +2935,17 @@ function WebphonePage({ user }) {
       setPbxOverview(await request('/webphone/pbx/overview'));
     } catch (err) {
       setPbxOverview({ error: err.message });
+    }
+  };
+
+  const loadNodeHealth = async () => {
+    setNodeHealthBusy(true);
+    try {
+      setNodeHealth(await request('/webphone/node-health'));
+    } catch (err) {
+      setNodeHealth({ error: err.message });
+    } finally {
+      setNodeHealthBusy(false);
     }
   };
 
@@ -3222,6 +3235,13 @@ function WebphonePage({ user }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeTab, inCall, isRegistered, destination]);
 
+  useEffect(() => {
+    if (activeTab !== 'health') return undefined;
+    loadNodeHealth();
+    const timer = setInterval(loadNodeHealth, 15000);
+    return () => clearInterval(timer);
+  }, [activeTab]);
+
   const toggleHold = () => {
     const session = sessionRef.current;
     if (!session) return;
@@ -3497,9 +3517,9 @@ function WebphonePage({ user }) {
       {error && <div className="error"><AlertTriangle size={18} /> {error}</div>}
 
       <div className="webphoneTabs">
-        {['dialer', 'carriers', 'logs', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
+        {['dialer', 'carriers', 'logs', 'health', ...(isAdmin ? ['pbx'] : [])].map((tab) => (
           <button key={tab} className={activeTab === tab ? 'activeTab' : ''} onClick={() => { setActiveTab(tab); if (tab === 'pbx') loadPbxOverview(); }}>
-            {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Carrier Tests' : tab === 'carriers' ? 'Carriers' : tab[0].toUpperCase() + tab.slice(1)}
+            {tab === 'pbx' ? 'PBX Setup' : tab === 'logs' ? 'Carrier Tests' : tab === 'carriers' ? 'Carriers' : tab === 'health' ? 'Node Health' : tab[0].toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
@@ -3736,6 +3756,81 @@ function WebphonePage({ user }) {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'health' && (
+        <div className="panel nodeHealthPanel">
+          <div className="sectionHeader">
+            <div><span className="eyebrow">This Node · Live</span><h2>Node Health</h2></div>
+            <button onClick={loadNodeHealth} disabled={nodeHealthBusy}><RefreshCcw size={16} /> {nodeHealthBusy ? 'Refreshing…' : 'Refresh'}</button>
+          </div>
+          <p className="muted">Live system, service, telephony and carrier health for the server running NOC360. Auto-refreshes every 15s while open.</p>
+          {nodeHealth?.error && <div className="error"><AlertTriangle size={18} /> {nodeHealth.error}</div>}
+          {!nodeHealth && <p className="muted">Loading node health…</p>}
+          {nodeHealth && !nodeHealth.error && (() => {
+            const h = nodeHealth;
+            const pctTone = (v, warn, bad) => (v == null ? 'warn' : v >= bad ? 'bad' : v >= warn ? 'warn' : 'good');
+            const svcTone = (s) => (s === 'active' ? 'good' : s === 'inactive' ? 'warn' : 'bad');
+            const sys = h.system || {};
+            const tel = h.telephony || {};
+            const car = h.carriers || {};
+            const tls = h.tls_cert || {};
+            const mem = sys.memory;
+            const disk = sys.disk;
+            const tlsTone = !tls.present ? 'bad' : tls.days_remaining == null ? 'warn' : tls.days_remaining < 7 ? 'bad' : tls.days_remaining < 21 ? 'warn' : 'good';
+            return (
+              <>
+                <p className="muted">{h.node?.hostname} · {h.node?.os} · up {h.node?.uptime || 'n/a'} · checked {h.node?.checked_at ? new Date(`${h.node.checked_at}Z`).toLocaleTimeString() : '—'}</p>
+                <h3 className="eyebrow" style={{ marginTop: 10 }}>System</h3>
+                <div className="qualityGrid">
+                  {[
+                    ['CPU Load', sys.cpu_pct == null ? 'n/a' : `${sys.cpu_pct}%`, pctTone(sys.cpu_pct, 70, 90)],
+                    ['Load Avg', sys.load_avg ? sys.load_avg.join(' / ') : 'n/a', 'good'],
+                    ['vCPUs', String(sys.cpus ?? '—'), 'good'],
+                    ['Memory', mem ? `${mem.used_mb} / ${mem.total_mb} MB (${mem.used_pct}%)` : 'n/a', mem ? pctTone(mem.used_pct, 80, 92) : 'warn'],
+                    ['Disk /', disk ? `${disk.used_gb} / ${disk.total_gb} GB (${disk.used_pct}%)` : 'n/a', disk ? pctTone(disk.used_pct, 75, 90) : 'warn'],
+                    ['Free Disk', disk ? `${disk.free_gb} GB` : 'n/a', 'good'],
+                  ].map(([k, v, t]) => <div className={`qualityCell ${t}`} key={k}><span>{k}</span><strong>{v}</strong></div>)}
+                </div>
+                <h3 className="eyebrow" style={{ marginTop: 12 }}>Services</h3>
+                <div className="qualityGrid">
+                  {Object.entries(h.services || {}).map(([name, state]) => (
+                    <div className={`qualityCell ${svcTone(state)}`} key={name}><span>{name}</span><strong>{state}</strong></div>
+                  ))}
+                </div>
+                <h3 className="eyebrow" style={{ marginTop: 12 }}>Telephony</h3>
+                <div className="qualityGrid">
+                  {[
+                    ['Asterisk', tel.asterisk_installed ? (tel.asterisk_running ? 'Running' : 'Installed (stopped)') : 'Not installed', tel.asterisk_running ? 'good' : tel.asterisk_installed ? 'warn' : 'bad'],
+                    ['Active Calls', tel.active_calls == null ? 'n/a' : String(tel.active_calls), 'good'],
+                    ['RTP Range', tel.rtp_range || '—', 'good'],
+                    ['WSS URL', tel.wss_url || '—', 'good'],
+                    ['Browser Profile', tel.browser_profile || 'None', tel.browser_profile ? 'good' : 'warn'],
+                    ['TLS Cert', !tls.present ? 'Missing' : tls.days_remaining == null ? `Present (${tls.domain})` : `${tls.days_remaining}d left`, tlsTone],
+                  ].map(([k, v, t]) => <div className={`qualityCell ${t}`} key={k}><span>{k}</span><strong>{v}</strong></div>)}
+                </div>
+                <h3 className="eyebrow" style={{ marginTop: 12 }}>Carriers</h3>
+                <div className="qualityGrid">
+                  {[
+                    ['Total', String(car.total ?? 0), 'good'],
+                    ['Active', String(car.active ?? 0), (car.active ?? 0) > 0 ? 'good' : 'warn'],
+                    ['Reachable', String(car.reachable ?? 0), (car.reachable ?? 0) > 0 ? 'good' : 'warn'],
+                  ].map(([k, v, t]) => <div className={`qualityCell ${t}`} key={k}><span>{k}</span><strong>{v}</strong></div>)}
+                </div>
+                {car.list?.length > 0 && (
+                  <div className="tableWrap" style={{ marginTop: 12 }}>
+                    <table>
+                      <thead><tr><th>Carrier</th><th>Auth</th><th>Connection</th></tr></thead>
+                      <tbody>{car.list.map((c) => (
+                        <tr key={c.id}><td>{c.name}</td><td>{c.auth_type}</td><td><span className={`agentStatus ${c.conn_status === 'registered' || c.conn_status === 'reachable' ? 'running' : 'offline'}`}>{c.conn_status}</span></td></tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
