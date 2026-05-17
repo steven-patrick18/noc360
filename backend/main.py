@@ -4838,8 +4838,12 @@ def enable_webphone_webrtc(request: Request, db: Session = Depends(get_db), user
 def webphone_pbx_overview(db: Session):
     status = pbx_status_payload()
     carriers = db.query(WebphoneCarrier).all()
+    cfg = default_pbx_config_for_enable()
     return {
         **status,
+        "tls_cert_present": status.get("ssl_status") == "Present",
+        "config_ready": status.get("config_status") == "Configured",
+        "wss_url": f"wss://{cfg['pbx_domain']}:{cfg.get('wss_port')}/ws",
         "carrier_count": len(carriers),
         "carriers": [{"id": c.id, "name": c.name, "auth_type": c.auth_type, "conn_status": c.conn_status or "unknown"} for c in carriers],
         "webphone_profile": (lambda p: webphone_profile_out(p) if p else None)(db.query(WebphoneProfile).order_by(WebphoneProfile.id.desc()).first()),
