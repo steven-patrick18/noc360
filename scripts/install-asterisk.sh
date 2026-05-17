@@ -42,13 +42,31 @@ apt-get update -y
 apt-get install -y asterisk certbot \
   asterisk-modules || apt-get install -y asterisk certbot
 
-log "Issuing TLS certificate for $PBX_HOST (certbot standalone needs :80 free) ..."
+log "Issuing TLS certificate for $PBX_HOST ..."
 if [ ! -f "/etc/letsencrypt/live/$PBX_HOST/fullchain.pem" ]; then
-  # Free port 80 momentarily if Asterisk's http is bound there.
-  systemctl stop asterisk 2>/dev/null || true
-  certbot certonly --standalone --non-interactive --agree-tos -m "$CERT_EMAIL" -d "$PBX_HOST" || {
-    err "certbot failed. Ensure DNS $PBX_HOST -> this VPS and port 80 is free, then re-run / click Enable Telephony again."
-  }
+  CERT_OK=""
+  WEBROOT="/opt/noc360/frontend/dist"
+  # Preferred: webroot challenge served by the already-running nginx. NOC360's
+  # own UI is on :80 here, so standalone can never bind it -- webroot avoids
+  # the fight entirely (no nginx/asterisk downtime).
+  if systemctl is-active --quiet nginx && [ -d "$WEBROOT" ]; then
+    log "Trying webroot challenge via nginx ($WEBROOT) ..."
+    certbot certonly --webroot -w "$WEBROOT" --non-interactive --agree-tos \
+      -m "$CERT_EMAIL" -d "$PBX_HOST" && CERT_OK=1 || true
+  fi
+  # Fallback: standalone on a momentarily-free :80 (dedicated PBX box, or if
+  # the webroot attempt failed). Stop nginx+asterisk, then restore nginx.
+  if [ -z "$CERT_OK" ]; then
+    log "Webroot unavailable/failed; trying standalone (frees :80 briefly) ..."
+    systemctl stop asterisk 2>/dev/null || true
+    NGINX_WAS_UP=""
+    if systemctl is-active --quiet nginx; then NGINX_WAS_UP=1; systemctl stop nginx 2>/dev/null || true; fi
+    certbot certonly --standalone --non-interactive --agree-tos -m "$CERT_EMAIL" -d "$PBX_HOST" && CERT_OK=1 || true
+    [ -n "$NGINX_WAS_UP" ] && { systemctl start nginx 2>/dev/null || true; }
+  fi
+  if [ -z "$CERT_OK" ]; then
+    err "certbot failed for $PBX_HOST. Most common cause: the DNS A-record for $PBX_HOST is not pointing at this VPS yet. Verify with:  dig +short $PBX_HOST   vs   curl -s ifconfig.me   -- then click Enable Telephony again."
+  fi
 fi
 
 log "Opening firewall (ufw) for WSS + RTP ..."
