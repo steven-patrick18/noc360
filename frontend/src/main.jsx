@@ -933,6 +933,10 @@ function App() {
                           onClick={() => {
                             if (key === 'terminal') setTerminalHasMounted(true);
                             setActive(key);
+                            // Auto-close: collapse the sidebar to icons after a selection
+                            // to maximize the content area. The topbar toggle re-expands it.
+                            setIsSidebarCompact(true);
+                            localStorage.setItem('noc360_sidebar_compact', '1');
                           }}
                           style={{ '--nav-index': (groupIndex * 10) + index }}
                           title={item.label}
