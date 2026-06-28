@@ -701,7 +701,7 @@ body.theme-aurora-glass {
   --theme-bg-elevated: #f4f6f9;
   --theme-card-bg: rgba(255, 255, 255, 0.60);
   --theme-card-solid: #ffffff;
-  --theme-sidebar-bg: rgba(255, 255, 255, 0.46);
+  --theme-sidebar-bg: rgba(255, 255, 255, 0.74);
   --theme-topbar-bg: rgba(255, 255, 255, 0.56);
   --theme-text-main: #0f172a;
   --theme-text-soft: #475569;
@@ -799,6 +799,37 @@ body[data-theme="aurora-glass"] nav button.active {
   background: linear-gradient(135deg, color-mix(in srgb, var(--theme-accent) 16%, transparent), color-mix(in srgb, var(--theme-accent-2) 13%, transparent)) !important;
   border-color: color-mix(in srgb, var(--theme-accent) 42%, transparent) !important;
   box-shadow: inset 3px 0 0 var(--theme-accent), 0 8px 24px color-mix(in srgb, var(--theme-accent) 20%, transparent) !important;
+}
+
+/* --- Inactive nav items: readable slate text + accent icons -------------
+   The base .navItem styles are built for a dark sidebar (near-white text,
+   light-cyan icons), which wash out on the light glass sidebar. Restore
+   contrast for this theme. */
+body[data-theme="aurora-glass"] .navItem,
+body[data-theme="aurora-glass"] nav button.navItem,
+body[data-theme="aurora-glass"] .navItem span {
+  color: #334155 !important;
+}
+body[data-theme="aurora-glass"] .navItem svg {
+  color: var(--theme-accent) !important;
+  opacity: 0.85;
+}
+body[data-theme="aurora-glass"] .navItem:hover,
+body[data-theme="aurora-glass"] nav button.navItem:hover {
+  color: var(--theme-accent) !important;
+  background: color-mix(in srgb, var(--theme-accent) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 22%, transparent) !important;
+}
+body[data-theme="aurora-glass"] .navItem.active span,
+body[data-theme="aurora-glass"] nav button.navItem.active {
+  color: var(--theme-text-main) !important;
+}
+body[data-theme="aurora-glass"] .navItem.active svg {
+  color: var(--theme-accent) !important;
+  opacity: 1;
+}
+body[data-theme="aurora-glass"] .navGroupToggle span {
+  color: var(--theme-text-soft) !important;
 }
 
 /* --- Gradient brand wordmark ------------------------------------------- */
