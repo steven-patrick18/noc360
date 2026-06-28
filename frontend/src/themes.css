@@ -684,3 +684,158 @@ body[data-theme][data-custom-bg="1"] .loginBox {
     grid-template-columns: 1fr;
   }
 }
+
+/* ======================================================================
+   AURORA GLASS  —  flagship "wow" theme (default)
+   Frosted glassmorphism surfaces over a soft aurora gradient, with an
+   indigo→violet→cyan glow. Self-contained: every rule is scoped to
+   [data-theme="aurora-glass"], so the other themes are untouched and no
+   application logic changes. Appended last so it overrides the generic
+   clean-mode neutralizers for this theme only.
+   ====================================================================== */
+body[data-theme="aurora-glass"],
+body.theme-aurora-glass {
+  color-scheme: light;
+  --theme-bg-main: #eaecf8;
+  --theme-bg-elevated: #f1f2fc;
+  --theme-card-bg: rgba(255, 255, 255, 0.56);
+  --theme-card-solid: #ffffff;
+  --theme-sidebar-bg: rgba(255, 255, 255, 0.42);
+  --theme-topbar-bg: rgba(255, 255, 255, 0.52);
+  --theme-text-main: #191b2e;
+  --theme-text-soft: #4d5270;
+  --theme-text-muted: #868ba6;
+  --theme-accent: #6366f1;
+  --theme-accent-2: #a855f7;
+  --theme-accent-3: #06b6d4;
+  --theme-success: #10b981;
+  --theme-warning: #f59e0b;
+  --theme-danger: #ef4444;
+  --theme-border: rgba(255, 255, 255, 0.55);
+  --theme-border-strong: rgba(99, 102, 241, 0.42);
+  --theme-radius: 18px;
+  --theme-grid-opacity: 0;
+  --theme-hover-transform: translateY(-3px);
+  --theme-surface-blur: 20px;
+  --theme-shadow:
+    0 10px 30px rgba(46, 33, 99, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --theme-shadow-hover:
+    0 22px 55px rgba(76, 45, 155, 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --theme-card-texture:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 60%);
+  --theme-body-bg:
+    radial-gradient(42% 52% at 10% 6%, rgba(99, 102, 241, 0.32), transparent 60%),
+    radial-gradient(40% 48% at 90% 4%, rgba(168, 85, 247, 0.28), transparent 60%),
+    radial-gradient(46% 54% at 82% 96%, rgba(6, 182, 212, 0.24), transparent 62%),
+    radial-gradient(44% 50% at 14% 92%, rgba(236, 72, 153, 0.20), transparent 60%),
+    linear-gradient(135deg, #eaecf8 0%, #f3edfb 48%, #e7f3fb 100%);
+  /* Override the generic 48px grid background-size: aurora uses smooth full-bleed
+     gradients, not tiled grid lines, so they must not be tiled into cells. */
+  background-size: cover !important;
+}
+
+/* --- Frosted glass on every surface ------------------------------------ */
+body[data-theme="aurora-glass"] .sidebar,
+body[data-theme="aurora-glass"] .topbar,
+body[data-theme="aurora-glass"] .panel,
+body[data-theme="aurora-glass"] .tableWrap,
+body[data-theme="aurora-glass"] .metric,
+body[data-theme="aurora-glass"] .modal,
+body[data-theme="aurora-glass"] .modal-box,
+body[data-theme="aurora-glass"] .loginBox,
+body[data-theme="aurora-glass"] .chatWindow,
+body[data-theme="aurora-glass"] .chatList,
+body[data-theme="aurora-glass"] .ticketMetaPanel,
+body[data-theme="aurora-glass"] .ticketTimeline,
+body[data-theme="aurora-glass"] .infraPanel {
+  backdrop-filter: blur(var(--theme-surface-blur)) saturate(1.45) !important;
+  -webkit-backdrop-filter: blur(var(--theme-surface-blur)) saturate(1.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.62) !important;
+}
+
+/* --- Glow lift on hover ------------------------------------------------- */
+body[data-theme="aurora-glass"] .panel:hover,
+body[data-theme="aurora-glass"] .tableWrap:hover,
+body[data-theme="aurora-glass"] .metric:hover,
+body[data-theme="aurora-glass"] .themeCard:hover {
+  transform: translateY(-3px) !important;
+  border-color: rgba(99, 102, 241, 0.5) !important;
+  box-shadow: var(--theme-shadow-hover) !important;
+}
+
+/* --- Aurora accent bar across metrics/topbar --------------------------- */
+body[data-theme="aurora-glass"] .topbar::after,
+body[data-theme="aurora-glass"] .metric::after {
+  background: linear-gradient(90deg, transparent, var(--theme-accent), var(--theme-accent-2), var(--theme-accent-3), transparent) !important;
+  opacity: 0.9 !important;
+}
+
+/* --- Primary buttons: gradient + glow ---------------------------------- */
+body[data-theme="aurora-glass"] .primary {
+  background: linear-gradient(135deg, var(--theme-accent), var(--theme-accent-2)) !important;
+  border: none !important;
+  color: #ffffff !important;
+  box-shadow: 0 8px 22px rgba(99, 102, 241, 0.34) !important;
+}
+body[data-theme="aurora-glass"] .primary:hover {
+  background: linear-gradient(135deg, var(--theme-accent-2), var(--theme-accent)) !important;
+  box-shadow: 0 13px 32px rgba(124, 58, 237, 0.44) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* --- Secondary buttons: subtle glass lift ------------------------------ */
+body[data-theme="aurora-glass"] button:hover {
+  transform: translateY(-1px) !important;
+  border-color: rgba(99, 102, 241, 0.4) !important;
+  box-shadow: 0 10px 26px rgba(99, 102, 241, 0.16) !important;
+}
+
+/* --- Active nav item: gradient pill + glow ----------------------------- */
+body[data-theme="aurora-glass"] nav button.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(168, 85, 247, 0.14)) !important;
+  border-color: rgba(99, 102, 241, 0.42) !important;
+  box-shadow: inset 3px 0 0 var(--theme-accent), 0 8px 24px rgba(99, 102, 241, 0.2) !important;
+}
+
+/* --- Gradient brand wordmark ------------------------------------------- */
+body[data-theme="aurora-glass"] .brand strong {
+  background: linear-gradient(120deg, var(--theme-accent), var(--theme-accent-2) 55%, var(--theme-accent-3));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* --- Frosted inputs ---------------------------------------------------- */
+body[data-theme="aurora-glass"] input,
+body[data-theme="aurora-glass"] select,
+body[data-theme="aurora-glass"] textarea,
+body[data-theme="aurora-glass"] .search {
+  background: rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(6px) !important;
+  -webkit-backdrop-filter: blur(6px) !important;
+}
+
+/* --- Table header: soft tinted glass ----------------------------------- */
+body[data-theme="aurora-glass"] th {
+  background: rgba(99, 102, 241, 0.08) !important;
+  color: var(--theme-accent) !important;
+}
+
+/* --- Aurora gradient scrollbars ---------------------------------------- */
+body[data-theme="aurora-glass"] *::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--theme-accent), var(--theme-accent-2));
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(var(--theme-accent-2), var(--theme-accent-3));
+  background-clip: padding-box;
+}

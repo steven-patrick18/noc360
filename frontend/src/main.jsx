@@ -55,6 +55,7 @@ const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
 const themeOptions = [
+  { id: 'aurora-glass', name: 'Aurora Glass', description: 'Frosted glass surfaces over a soft aurora gradient with indigo–violet glow.', colors: ['#eef1fb', '#6366f1', '#a855f7'] },
   { id: 'clean-light', name: 'Clean Light', description: 'Bright minimal SaaS workspace with a calm indigo accent.', colors: ['#ffffff', '#4f46e5', '#0ea5e9'] },
   { id: 'slate', name: 'Slate', description: 'Soft cool-gray enterprise light theme with quiet contrast.', colors: ['#f1f5f9', '#0f766e', '#0284c7'] },
   { id: 'clean-dark', name: 'Clean Dark', description: 'Flat modern dark dashboard with no glow.', colors: ['#0b0e14', '#6366f1', '#38bdf8'] },
@@ -62,7 +63,7 @@ const themeOptions = [
   { id: 'graphite', name: 'Graphite', description: 'Neutral low-contrast graphite with a subtle emerald accent.', colors: ['#18181b', '#10b981', '#6ee7b7'] },
 ];
 const themeIds = themeOptions.map((option) => option.id);
-const DEFAULT_THEME_ID = 'clean-light';
+const DEFAULT_THEME_ID = 'aurora-glass';
 const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
 const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
 const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
@@ -71,7 +72,7 @@ const defaultCustomBackground = { image: '', opacity: 55, blur: 0, overlayColor:
 function resolveTheme(themeId) {
   if (themeId !== 'auto') return themeIds.includes(themeId) ? themeId : DEFAULT_THEME_ID;
   const hour = new Date().getHours();
-  return hour >= 7 && hour < 18 ? 'clean-light' : 'clean-dark';
+  return hour >= 7 && hour < 18 ? 'aurora-glass' : 'clean-dark';
 }
 
 function clampNumber(value, min, max, fallback) {
