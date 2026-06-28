@@ -687,8 +687,9 @@ body[data-theme][data-custom-bg="1"] .loginBox {
 
 /* ======================================================================
    AURORA GLASS  —  flagship "wow" theme (default)
-   Frosted glassmorphism surfaces over a soft aurora gradient, with an
-   indigo→violet→cyan glow. Self-contained: every rule is scoped to
+   Frosted glassmorphism surfaces over a soft gradient, in a calm
+   monochrome-slate palette with a single restrained steel-blue accent.
+   Self-contained: every rule is scoped to
    [data-theme="aurora-glass"], so the other themes are untouched and no
    application logic changes. Appended last so it overrides the generic
    clean-mode neutralizers for this theme only.
@@ -696,42 +697,42 @@ body[data-theme][data-custom-bg="1"] .loginBox {
 body[data-theme="aurora-glass"],
 body.theme-aurora-glass {
   color-scheme: light;
-  --theme-bg-main: #eaecf8;
-  --theme-bg-elevated: #f1f2fc;
-  --theme-card-bg: rgba(255, 255, 255, 0.56);
+  --theme-bg-main: #eef1f5;
+  --theme-bg-elevated: #f4f6f9;
+  --theme-card-bg: rgba(255, 255, 255, 0.60);
   --theme-card-solid: #ffffff;
-  --theme-sidebar-bg: rgba(255, 255, 255, 0.42);
-  --theme-topbar-bg: rgba(255, 255, 255, 0.52);
-  --theme-text-main: #191b2e;
-  --theme-text-soft: #4d5270;
-  --theme-text-muted: #868ba6;
-  --theme-accent: #6366f1;
-  --theme-accent-2: #a855f7;
-  --theme-accent-3: #06b6d4;
-  --theme-success: #10b981;
-  --theme-warning: #f59e0b;
-  --theme-danger: #ef4444;
+  --theme-sidebar-bg: rgba(255, 255, 255, 0.46);
+  --theme-topbar-bg: rgba(255, 255, 255, 0.56);
+  --theme-text-main: #0f172a;
+  --theme-text-soft: #475569;
+  --theme-text-muted: #94a3b8;
+  --theme-accent: #0369a1;
+  --theme-accent-2: #334155;
+  --theme-accent-3: #64748b;
+  --theme-success: #059669;
+  --theme-warning: #d97706;
+  --theme-danger: #dc2626;
   --theme-border: rgba(255, 255, 255, 0.55);
-  --theme-border-strong: rgba(99, 102, 241, 0.42);
+  --theme-border-strong: rgba(3, 105, 161, 0.38);
   --theme-radius: 18px;
   --theme-grid-opacity: 0;
   --theme-hover-transform: translateY(-3px);
   --theme-surface-blur: 20px;
   --theme-shadow:
-    0 10px 30px rgba(46, 33, 99, 0.12),
+    0 10px 30px rgba(15, 23, 42, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.65);
   --theme-shadow-hover:
-    0 22px 55px rgba(76, 45, 155, 0.22),
+    0 22px 55px rgba(15, 23, 42, 0.18),
     0 0 0 1px rgba(255, 255, 255, 0.55),
     inset 0 1px 0 rgba(255, 255, 255, 0.75);
   --theme-card-texture:
     linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 60%);
   --theme-body-bg:
-    radial-gradient(42% 52% at 10% 6%, rgba(99, 102, 241, 0.32), transparent 60%),
-    radial-gradient(40% 48% at 90% 4%, rgba(168, 85, 247, 0.28), transparent 60%),
-    radial-gradient(46% 54% at 82% 96%, rgba(6, 182, 212, 0.24), transparent 62%),
-    radial-gradient(44% 50% at 14% 92%, rgba(236, 72, 153, 0.20), transparent 60%),
-    linear-gradient(135deg, #eaecf8 0%, #f3edfb 48%, #e7f3fb 100%);
+    radial-gradient(42% 52% at 10% 6%, rgba(3, 105, 161, 0.12), transparent 60%),
+    radial-gradient(40% 48% at 90% 4%, rgba(71, 85, 105, 0.10), transparent 60%),
+    radial-gradient(46% 54% at 82% 96%, rgba(100, 116, 139, 0.10), transparent 62%),
+    radial-gradient(44% 50% at 14% 92%, rgba(148, 163, 184, 0.09), transparent 60%),
+    linear-gradient(135deg, #eef1f5 0%, #f1f4f8 50%, #eef2f6 100%);
   /* Override the generic 48px grid background-size: aurora uses smooth full-bleed
      gradients, not tiled grid lines, so they must not be tiled into cells. */
   background-size: cover !important;
@@ -762,7 +763,7 @@ body[data-theme="aurora-glass"] .tableWrap:hover,
 body[data-theme="aurora-glass"] .metric:hover,
 body[data-theme="aurora-glass"] .themeCard:hover {
   transform: translateY(-3px) !important;
-  border-color: rgba(99, 102, 241, 0.5) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 45%, transparent) !important;
   box-shadow: var(--theme-shadow-hover) !important;
 }
 
@@ -778,26 +779,26 @@ body[data-theme="aurora-glass"] .primary {
   background: linear-gradient(135deg, var(--theme-accent), var(--theme-accent-2)) !important;
   border: none !important;
   color: #ffffff !important;
-  box-shadow: 0 8px 22px rgba(99, 102, 241, 0.34) !important;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--theme-accent) 32%, transparent) !important;
 }
 body[data-theme="aurora-glass"] .primary:hover {
   background: linear-gradient(135deg, var(--theme-accent-2), var(--theme-accent)) !important;
-  box-shadow: 0 13px 32px rgba(124, 58, 237, 0.44) !important;
+  box-shadow: 0 13px 32px color-mix(in srgb, var(--theme-accent-2) 42%, transparent) !important;
   transform: translateY(-1px) !important;
 }
 
 /* --- Secondary buttons: subtle glass lift ------------------------------ */
 body[data-theme="aurora-glass"] button:hover {
   transform: translateY(-1px) !important;
-  border-color: rgba(99, 102, 241, 0.4) !important;
-  box-shadow: 0 10px 26px rgba(99, 102, 241, 0.16) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 40%, transparent) !important;
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--theme-accent) 16%, transparent) !important;
 }
 
 /* --- Active nav item: gradient pill + glow ----------------------------- */
 body[data-theme="aurora-glass"] nav button.active {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(168, 85, 247, 0.14)) !important;
-  border-color: rgba(99, 102, 241, 0.42) !important;
-  box-shadow: inset 3px 0 0 var(--theme-accent), 0 8px 24px rgba(99, 102, 241, 0.2) !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--theme-accent) 16%, transparent), color-mix(in srgb, var(--theme-accent-2) 13%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 42%, transparent) !important;
+  box-shadow: inset 3px 0 0 var(--theme-accent), 0 8px 24px color-mix(in srgb, var(--theme-accent) 20%, transparent) !important;
 }
 
 /* --- Gradient brand wordmark ------------------------------------------- */
@@ -820,7 +821,7 @@ body[data-theme="aurora-glass"] .search {
 
 /* --- Table header: soft tinted glass ----------------------------------- */
 body[data-theme="aurora-glass"] th {
-  background: rgba(99, 102, 241, 0.08) !important;
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent) !important;
   color: var(--theme-accent) !important;
 }
 

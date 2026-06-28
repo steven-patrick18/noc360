@@ -55,7 +55,7 @@ const statuses = ['Active', 'Pending', 'Inactive'];
 const chargeTypes = ['Usage Charges', 'DID Charges', 'Data Charges', 'Server Charges', 'Port Charges', 'Setup Charges', 'Other Charges'];
 const ledgerCategories = [...chargeTypes, 'Payment', 'Adjustment', 'FX Adjustment'];
 const themeOptions = [
-  { id: 'aurora-glass', name: 'Aurora Glass', description: 'Frosted glass surfaces over a soft aurora gradient with indigo–violet glow.', colors: ['#eef1fb', '#6366f1', '#a855f7'] },
+  { id: 'aurora-glass', name: 'Aurora Glass', description: 'Frosted glass over monochrome slate with a single restrained steel-blue accent.', colors: ['#eef1f5', '#0369a1', '#334155'] },
   { id: 'clean-light', name: 'Clean Light', description: 'Bright minimal SaaS workspace with a calm indigo accent.', colors: ['#ffffff', '#4f46e5', '#0ea5e9'] },
   { id: 'slate', name: 'Slate', description: 'Soft cool-gray enterprise light theme with quiet contrast.', colors: ['#f1f5f9', '#0f766e', '#0284c7'] },
   { id: 'clean-dark', name: 'Clean Dark', description: 'Flat modern dark dashboard with no glow.', colors: ['#0b0e14', '#6366f1', '#38bdf8'] },
