@@ -228,6 +228,8 @@ PAGE_KEYS = [
     "asterisk_sound_manager",
     "bare_metal_os_installer",
     "update_center",
+    "grid_topology",
+    "qos_observatory",
 ]
 PAGE_KEY_ALIASES = {
     "command_center": "dashboard",
@@ -294,7 +296,7 @@ MODULE_PAGE_MAP = {
 }
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager", "bare_metal_os_installer"],
+    "noc_user": ["dashboard", "grid_topology", "qos_observatory", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone", "asterisk_sound_manager", "bare_metal_os_installer"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }

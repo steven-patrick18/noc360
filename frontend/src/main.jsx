@@ -14,6 +14,7 @@ import {
   EyeOff,
   FileAudio,
   FolderOpen,
+  Gauge,
   Globe2,
   LayoutDashboard,
   LogOut,
@@ -36,6 +37,7 @@ import {
   Send,
   Server,
   Settings,
+  Share2,
   Star,
   Terminal as TerminalIcon,
   Ticket,
@@ -195,6 +197,8 @@ const modulePageKeys = {
   bareMetalOsInstaller: 'bare_metal_os_installer',
   updateCenter: 'update_center',
   dangerZone: 'danger_zone',
+  gridTopology: 'grid_topology',
+  qosObservatory: 'qos_observatory',
 };
 
 const modules = {
@@ -214,6 +218,8 @@ const modules = {
   dangerZone: { label: 'Settings', icon: Settings },
   userAccess: { label: 'User Access', icon: Users },
   activityLogs: { label: 'Activity Logs', icon: Activity },
+  gridTopology: { label: 'Grid Topology', icon: Share2 },
+  qosObservatory: { label: 'QoS Observatory', icon: Gauge },
   vos: {
     label: 'VOS Portals',
     icon: Globe2,
@@ -316,8 +322,8 @@ const customerModules = {
 };
 
 const sidebarGroups = [
-  { id: 'overview', label: 'Overview', keys: ['dashboard', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
-  { id: 'network', label: 'Network', keys: ['management', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways'] },
+  { id: 'overview', label: 'Overview', keys: ['dashboard', 'gridTopology', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
+  { id: 'network', label: 'Network', keys: ['management', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways', 'qosObservatory'] },
   { id: 'clientsBilling', label: 'Clients & Billing', keys: ['clients', 'billing', 'myBilling'] },
   { id: 'support', label: 'Support', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
   { id: 'tools', label: 'Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
@@ -1031,6 +1037,10 @@ function App() {
           <UserAccessPage users={data.users} clients={data.clients} reload={loadAll} user={auth.user} />
           ) : activeKey === 'activityLogs' ? (
             <ActivityLogsPage users={data.users} user={auth.user} />
+          ) : activeKey === 'gridTopology' ? (
+            <GridTopologyPage dashboard={dashboard} data={data} user={auth.user} />
+          ) : activeKey === 'qosObservatory' ? (
+            <QosObservatoryPage user={auth.user} />
           ) : activeKey ? (
             <CrudPage
               moduleKey={activeKey}
@@ -6709,6 +6719,214 @@ function ReportsPage({ data, user }) {
         <div className="panel"><p className="muted">{loading ? 'Loading report...' : (message || 'No ledger entries found for selected client/category/date range.')}</p></div>
       )}
       <div className="muted">{visibleRows.length} row{visibleRows.length === 1 ? '' : 's'} loaded.</div>
+    </section>
+  );
+}
+
+function topoTruncate(value, max) {
+  const s = String(value ?? '');
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function topoStatusColor(status) {
+  const s = String(status || '').toLowerCase();
+  if (/(active|online|premium|healthy)/.test(s)) return 'var(--theme-success, #16a34a)';
+  if (/(pending|warming|used|high|standard)/.test(s)) return 'var(--theme-warning, #d97706)';
+  if (/(inactive|offline|conflict|down|grey|fail)/.test(s)) return 'var(--theme-danger, #dc2626)';
+  return 'var(--theme-accent, #2563eb)';
+}
+
+function GridTopologyPage({ dashboard }) {
+  const clients = dashboard?.client_brief || [];
+  const clusters = dashboard?.cluster_brief || [];
+  const rdps = dashboard?.rdp_brief || [];
+  const gateways = dashboard?.routing_brief || [];
+  const carrierNames = Array.from(new Set(gateways.map((g) => g.carrier_ip).filter(Boolean)));
+
+  const colX = [120, 380, 640, 900, 1140];
+  const nodeW = 168;
+  const nodeH = 30;
+  const gapY = 12;
+  const topY = 64;
+  const colCount = Math.max(clients.length, clusters.length, rdps.length, gateways.length, carrierNames.length, 1);
+  const height = topY + colCount * (nodeH + gapY) + 24;
+
+  const layout = (items, colIndex, getLabel, getStatus) => items.map((it, i) => {
+    const y = topY + i * (nodeH + gapY);
+    return { label: getLabel(it), status: getStatus(it), x: colX[colIndex] - nodeW / 2, y, cx: colX[colIndex], cy: y + nodeH / 2 };
+  });
+
+  const clientNodes = layout(clients, 0, (c) => c.client, () => 'active');
+  const clusterNodes = layout(clusters, 1, (c) => c.cluster_name || `Cluster ${c.cluster_no}`, (c) => c.status);
+  const rdpNodes = layout(rdps, 2, (r) => r.rdp_name, (r) => r.usage_status || r.status);
+  const gwNodes = layout(gateways, 3, (g) => g.gateway_name, (g) => g.status);
+  const carrierNodes = layout(carrierNames.map((c) => ({ carrier: c })), 4, (c) => c.carrier, () => 'active');
+
+  const byLabel = (nodes) => Object.fromEntries(nodes.map((n) => [String(n.label), n]));
+  const clientMap = byLabel(clientNodes);
+  const rdpMap = byLabel(rdpNodes);
+  const carrierMap = byLabel(carrierNodes);
+
+  const links = [];
+  clusterNodes.forEach((cl, i) => {
+    const src = clientMap[String(clusters[i].client)];
+    if (src) links.push([src, cl, cl.status]);
+    const rdpName = clusters[i].assigned_rdp;
+    const dst = rdpName && rdpMap[String(rdpName)];
+    if (dst) links.push([cl, dst, cl.status]);
+  });
+  gwNodes.forEach((gw, i) => {
+    const g = gateways[i];
+    [g.media_1_name || g.media1_name, g.media_2_name || g.media2_name].forEach((mn) => {
+      const src = mn && rdpMap[String(mn)];
+      if (src) links.push([src, gw, gw.status]);
+    });
+    const carrier = g.carrier_ip && carrierMap[String(g.carrier_ip)];
+    if (carrier) links.push([gw, carrier, gw.status]);
+  });
+
+  const linkPath = (a, b) => {
+    const x1 = a.cx + nodeW / 2;
+    const x2 = b.cx - nodeW / 2;
+    const mx = (x1 + x2) / 2;
+    return `M ${x1} ${a.cy} C ${mx} ${a.cy}, ${mx} ${b.cy}, ${x2} ${b.cy}`;
+  };
+
+  const columns = [
+    { title: 'Clients', nodes: clientNodes },
+    { title: 'Clusters', nodes: clusterNodes },
+    { title: 'RDP / Media', nodes: rdpNodes },
+    { title: 'Gateways', nodes: gwNodes },
+    { title: 'Carriers', nodes: carrierNodes },
+  ];
+
+  return (
+    <section className="gridTopology">
+      <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h2>Grid Topology</h2>
+          <p className="muted">Live VoIP grid — clients → clusters → RDP/media → routing gateways → carriers. Node colour shows health.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 16, fontSize: 12, fontWeight: 700 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--theme-success)', display: 'inline-block' }} /> Healthy</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--theme-warning)', display: 'inline-block' }} /> Warning</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><i style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--theme-danger)', display: 'inline-block' }} /> Down</span>
+        </div>
+      </div>
+      <div className="tableWrap" style={{ overflow: 'auto', padding: 12 }}>
+        <svg width="1240" height={height} viewBox={`0 0 1240 ${height}`} role="img" aria-label="Grid topology">
+          {columns.map((col, ci) => (
+            <text key={col.title} x={colX[ci]} y={34} textAnchor="middle" fontSize="13" fontWeight="700" fill="var(--theme-text-soft)">{col.title} ({col.nodes.length})</text>
+          ))}
+          {links.map(([a, b, status], i) => (
+            <path key={i} d={linkPath(a, b)} fill="none" stroke={topoStatusColor(status)} strokeOpacity="0.35" strokeWidth="1.5" />
+          ))}
+          {columns.flatMap((col) => col.nodes.map((n, ni) => (
+            <g key={`${col.title}-${ni}`}>
+              <rect x={n.x} y={n.y} width={nodeW} height={nodeH} rx="8" fill="var(--theme-card-solid, #ffffff)" stroke={topoStatusColor(n.status)} strokeWidth="1.5" />
+              <circle cx={n.x + 13} cy={n.cy} r="4" fill={topoStatusColor(n.status)} />
+              <text x={n.x + 26} y={n.cy + 4} fontSize="12" fill="var(--theme-text-main)">{topoTruncate(n.label, 17)}</text>
+            </g>
+          )))}
+        </svg>
+      </div>
+    </section>
+  );
+}
+
+function QosObservatoryPage() {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const load = async (d) => {
+    setLoading(true);
+    setError('');
+    try {
+      setData(await request(`/webphone/carrier-quality?days=${d}`));
+    } catch (err) {
+      setError(err.message || 'Failed to load route quality');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(days); }, [days]);
+
+  const carriers = data?.carriers || [];
+  const premium = carriers.filter((c) => /premium/i.test(c.verdict)).length;
+  const standard = carriers.filter((c) => /standard/i.test(c.verdict)).length;
+  const grey = carriers.filter((c) => /grey/i.test(c.verdict)).length;
+  const totalCalls = carriers.reduce((s, c) => s + (c.total || 0), 0);
+  const avgAsr = carriers.length ? carriers.reduce((s, c) => s + (c.asr_pct || 0), 0) / carriers.length : 0;
+  const verdictClass = (v) => (/premium/i.test(v) ? 'okText' : /grey/i.test(v) ? 'badText' : 'warnText');
+
+  return (
+    <section className="qosObservatory">
+      <div className="panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h2>QoS Observatory</h2>
+          <p className="muted">Continuous per-route voice quality — ASR, ACD, MOS, PDD and FAS suspicion over the last {days} days.</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button type="button" onClick={() => load(days)}><RefreshCcw size={15} /> Refresh</button>
+        </div>
+      </div>
+
+      {error && <div className="panel error">{error}</div>}
+
+      <div className="cards">
+        <div className="metric"><span>Routes Monitored</span><strong>{carriers.length}</strong></div>
+        <div className="metric"><span>Total Calls</span><strong>{totalCalls.toLocaleString()}</strong></div>
+        <div className="metric"><span>Avg ASR</span><strong>{avgAsr.toFixed(1)}%</strong></div>
+        <div className="metric"><span>Premium</span><strong style={{ color: 'var(--theme-success)' }}>{premium}</strong></div>
+        <div className="metric"><span>Standard</span><strong style={{ color: 'var(--theme-warning)' }}>{standard}</strong></div>
+        <div className="metric"><span>Grey-suspect</span><strong style={{ color: 'var(--theme-danger)' }}>{grey}</strong></div>
+      </div>
+
+      <div className="panel">
+        <h3>ASR by route</h3>
+        {carriers.length === 0 ? (
+          <p className="muted">{loading ? 'Loading…' : 'No call data in this window yet.'}</p>
+        ) : (
+          <div className="businessAiChart">
+            {carriers.slice().sort((a, b) => (b.asr_pct || 0) - (a.asr_pct || 0)).map((c) => (
+              <div className="chartBar" key={c.carrier}>
+                <span>{c.carrier}</span>
+                <i style={{ width: `${Math.min(100, c.asr_pct || 0)}%`, background: /grey/i.test(c.verdict || '') ? 'var(--theme-danger)' : 'var(--theme-accent)' }} />
+                <strong>{(c.asr_pct || 0).toFixed(1)}%</strong>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="tableWrap">
+        <table>
+          <thead><tr><th>Route / Carrier</th><th>Verdict</th><th>Calls</th><th>ASR</th><th>ACD</th><th>MOS</th><th>PDD</th><th>FAS%</th><th>Short%</th><th>Why</th></tr></thead>
+          <tbody>
+            {carriers.map((c) => (
+              <tr key={c.carrier}>
+                <td>{c.carrier}</td>
+                <td className={verdictClass(c.verdict)}>{c.verdict}</td>
+                <td>{c.total}</td>
+                <td>{(c.asr_pct || 0).toFixed(1)}%</td>
+                <td>{(c.acd_s || 0).toFixed(0)}s</td>
+                <td>{c.avg_mos != null ? c.avg_mos.toFixed(2) : '—'}</td>
+                <td>{c.avg_pdd_ms != null ? `${c.avg_pdd_ms.toFixed(0)}ms` : '—'}</td>
+                <td className={(c.fas_rate_pct || 0) >= 15 ? 'badText' : ''}>{(c.fas_rate_pct || 0).toFixed(1)}%</td>
+                <td>{(c.short_call_pct || 0).toFixed(1)}%</td>
+                <td className="muted" title={(c.reasons || []).join(' · ')}>{(c.reasons || [])[0] || '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }

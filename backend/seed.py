@@ -15,10 +15,11 @@ PAGE_KEYS = [
     "billing", "my_ledger", "clients", "cdr", "my_cdr", "vos_portals", "dialer_clusters",
     "rdp_media", "routing_gateways", "vos_desktop_launcher", "user_access", "activity_logs",
     "chat_center", "my_chat", "group_chat", "tickets", "my_tickets", "webphone",
+    "grid_topology", "qos_observatory",
 ]
 ROLE_DEFAULT_PAGES = {
     "admin": PAGE_KEYS,
-    "noc_user": ["dashboard", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone"],
+    "noc_user": ["dashboard", "grid_topology", "qos_observatory", "management_portal", "billing", "reports", "vos_portals", "vos_desktop_launcher", "dialer_clusters", "rdp_media", "routing_gateways", "chat_center", "group_chat", "tickets", "webphone"],
     "viewer": ["dashboard", "reports"],
     "customer": ["my_dashboard", "my_ledger", "my_cdr", "my_reports", "my_chat", "my_tickets"],
 }
