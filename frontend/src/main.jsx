@@ -65,7 +65,7 @@ const themeOptions = [
   { id: 'graphite', name: 'Graphite', description: 'Neutral low-contrast graphite with a subtle emerald accent.', colors: ['#18181b', '#10b981', '#6ee7b7'] },
 ];
 const themeIds = themeOptions.map((option) => option.id);
-const DEFAULT_THEME_ID = 'aurora-glass';
+const DEFAULT_THEME_ID = 'clean-light';
 const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
 const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
 const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
@@ -661,6 +661,25 @@ function App() {
     }
   });
 
+  // Auto-minimise the sidebar after 5s idle; the timer resets while you hover/use it.
+  const sidebarIdleRef = useRef(null);
+  const armSidebarIdle = () => {
+    if (sidebarIdleRef.current) clearTimeout(sidebarIdleRef.current);
+    sidebarIdleRef.current = setTimeout(() => {
+      setIsSidebarCompact(true);
+      localStorage.setItem('noc360_sidebar_compact', '1');
+    }, 5000);
+  };
+  useEffect(() => {
+    if (isSidebarCompact) {
+      if (sidebarIdleRef.current) clearTimeout(sidebarIdleRef.current);
+      return undefined;
+    }
+    armSidebarIdle();
+    return () => { if (sidebarIdleRef.current) clearTimeout(sidebarIdleRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSidebarCompact]);
+
   const refreshBillingData = async (ledgerFilters = {}) => {
     if (!auth) return;
     const canBilling = canDo(auth.user, 'billing') || canDo(auth.user, 'my_ledger');
@@ -902,7 +921,11 @@ function App() {
         <span className="callRoute routeOne" />
         <span className="callRoute routeTwo" />
       </div>
-      <aside className="sidebar">
+      <aside
+        className="sidebar"
+        onMouseEnter={() => { if (!isSidebarCompact) armSidebarIdle(); }}
+        onMouseMove={() => { if (!isSidebarCompact) armSidebarIdle(); }}
+      >
         <div className="brand">
           <Server size={30} />
           <div>
