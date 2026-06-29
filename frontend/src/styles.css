@@ -8623,9 +8623,16 @@ body[data-theme] .webphonePage .fasReasons li {
  *  - full-width, readable tables with clean scroll + sticky headers
  * ------------------------------------------------------------------ */
 .modal-overlay:has(.clientDetailModal),
-.modalBackdrop:has(.clientDetailModal) { padding: 0 !important; }
+.modalBackdrop:has(.clientDetailModal) { padding: 0 !important; z-index: 2147483000 !important; }
+
+/* The full-page profile takes over the screen, so hide the app chrome
+   (sidebar + topbar) while it is open — otherwise their sticky stacking
+   context paints over the modal's left edge / header (the cut-off labels). */
+body:has(.modal-box.clientDetailModal) .sidebar,
+body:has(.modal-box.clientDetailModal) .topbar { visibility: hidden !important; }
 
 .modal-box.clientDetailModal {
+  z-index: 2147483001 !important;
   width: 100vw !important;
   max-width: 100vw !important;
   height: 100vh !important;
