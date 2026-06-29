@@ -397,11 +397,36 @@ body[data-theme] tbody tr:hover {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--theme-accent) 58%, transparent) !important;
 }
 
+/* Base status pill: neutral + readable on EVERY theme. Without this, any
+   variant styles.css doesn't give an explicit colour (free, assigned-to-
+   cluster, settled, paid, or any unknown value) inherits a hardcoded dark
+   background and renders invisible on the light theme. This guarantees no
+   status pill is ever dark-on-dark anywhere in the app. */
+body[data-theme] .status {
+  color: var(--theme-text-soft) !important;
+  background: color-mix(in srgb, var(--theme-text-soft) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-text-soft) 28%, transparent) !important;
+}
+
 body[data-theme] .status.active,
-body[data-theme] .status.online {
+body[data-theme] .status.online,
+body[data-theme] .status.settled,
+body[data-theme] .status.paid,
+body[data-theme] .status.free,
+body[data-theme] .status.available,
+body[data-theme] .status.unused {
   color: var(--theme-success) !important;
   border-color: color-mix(in srgb, var(--theme-success) 36%, transparent) !important;
   background: color-mix(in srgb, var(--theme-success) 9%, transparent) !important;
+}
+
+/* "assigned to cluster / reserved" — informational accent (indigo) */
+body[data-theme] .status.assigned-to-cluster,
+body[data-theme] .status.assigned,
+body[data-theme] .status.reserved {
+  color: var(--theme-accent) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 36%, transparent) !important;
+  background: color-mix(in srgb, var(--theme-accent) 10%, transparent) !important;
 }
 
 body[data-theme] .status.pending,
@@ -420,6 +445,68 @@ body[data-theme] .error {
   color: color-mix(in srgb, var(--theme-danger) 52%, #ffffff) !important;
   border-color: color-mix(in srgb, var(--theme-danger) 34%, transparent) !important;
   background: color-mix(in srgb, var(--theme-danger) 9%, transparent) !important;
+}
+
+/* Priority badges (alerts / tickets) hardcode light cyan/pink text on a
+   faint tint -> invisible on the light theme. Same fix as the status pills. */
+body[data-theme] .priorityBadge {
+  color: var(--theme-accent) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 30%, transparent) !important;
+  background: color-mix(in srgb, var(--theme-accent) 9%, transparent) !important;
+}
+body[data-theme] .priorityBadge.high,
+body[data-theme] .priorityBadge.critical {
+  color: var(--theme-danger) !important;
+  border-color: color-mix(in srgb, var(--theme-danger) 34%, transparent) !important;
+  background: color-mix(in srgb, var(--theme-danger) 9%, transparent) !important;
+}
+body[data-theme] .priorityBadge.medium {
+  color: var(--theme-warning) !important;
+  border-color: color-mix(in srgb, var(--theme-warning) 34%, transparent) !important;
+  background: color-mix(in srgb, var(--theme-warning) 9%, transparent) !important;
+}
+
+/* ---------------------------------------------------------------------
+   Inline badge / chip / pill families. Each hardcodes a dark bg or a light
+   text colour on a faint tint in styles.css, so on the light theme they go
+   dark-on-light (jarring) or light-on-light (invisible). Re-map every
+   family + variant to theme colours so all stay readable on any theme.
+--------------------------------------------------------------------- */
+body[data-theme] .ledgerStatusBadge,
+body[data-theme] .updateHealthBadge,
+body[data-theme] .modalDragBadge {
+  color: var(--theme-text-soft) !important;
+  background: color-mix(in srgb, var(--theme-text-soft) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-text-soft) 28%, transparent) !important;
+}
+body[data-theme] .typeBadge,
+body[data-theme] .rolePill {
+  color: var(--theme-accent) !important;
+  background: color-mix(in srgb, var(--theme-accent) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 30%, transparent) !important;
+}
+body[data-theme] .riskBadge,
+body[data-theme] .riskBadge.safe,
+body[data-theme] .ledgerStatusBadge.settled,
+body[data-theme] .ledgerStatusBadge.advance,
+body[data-theme] .updateHealthBadge.success {
+  color: var(--theme-success) !important;
+  background: color-mix(in srgb, var(--theme-success) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-success) 34%, transparent) !important;
+}
+body[data-theme] .riskBadge.medium,
+body[data-theme] .updateHealthBadge.warning {
+  color: var(--theme-warning) !important;
+  background: color-mix(in srgb, var(--theme-warning) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-warning) 34%, transparent) !important;
+}
+body[data-theme] .riskBadge.dangerous,
+body[data-theme] .ledgerStatusBadge.outstanding,
+body[data-theme] .updateHealthBadge.error,
+body[data-theme] .updateHealthBadge.danger {
+  color: var(--theme-danger) !important;
+  background: color-mix(in srgb, var(--theme-danger) 9%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-danger) 34%, transparent) !important;
 }
 
 body[data-theme] .toastSuccess,
