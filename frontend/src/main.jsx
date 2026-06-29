@@ -645,10 +645,8 @@ function App() {
   const [error, setError] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
-  const [theme, setTheme] = useState(() => {
-    const stored = localStorage.getItem('noc360_theme');
-    return stored === 'auto' || themeIds.includes(stored) ? stored : DEFAULT_THEME_ID;
-  });
+  // Single fixed theme — the theme switcher has been removed.
+  const [theme, setTheme] = useState(DEFAULT_THEME_ID);
   const [customBackground, setCustomBackground] = useState(loadCustomBackground);
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
@@ -974,7 +972,6 @@ function App() {
             {auth.user.role !== 'customer' && <div className="topStatusItem"><ReceiptText size={16} /><span>Outstanding</span><strong>{outstandingValue}</strong></div>}
           </div>
           <div className="topActions">
-            <button className="themeTrigger" onClick={() => setThemeOpen(true)} title="Theme Settings"><Palette size={17} /></button>
             <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
             <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh</button>
             <button className="iconButton" onClick={logout} title="Logout"><LogOut size={18} /></button>
@@ -1059,7 +1056,6 @@ function App() {
         </section>
         )}
       </main>
-      {themeOpen && <ThemeSettingsModal selected={theme} customBackground={customBackground} onSelect={updateTheme} onCustomBackgroundChange={updateCustomBackground} onClose={() => setThemeOpen(false)} />}
       {profileOpen && <AccountSettingsModal user={auth.user} onClose={() => setProfileOpen(false)} onUpdated={updateStoredUser} onLogout={logout} />}
     </div>
   );

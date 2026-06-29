@@ -686,55 +686,47 @@ body[data-theme][data-custom-bg="1"] .loginBox {
 }
 
 /* ======================================================================
-   AURORA GLASS  —  flagship "wow" theme (default)
-   Frosted glassmorphism surfaces over a soft gradient, in a calm
-   monochrome-slate palette with a single restrained steel-blue accent.
-   Self-contained: every rule is scoped to
-   [data-theme="aurora-glass"], so the other themes are untouched and no
-   application logic changes. Appended last so it overrides the generic
-   clean-mode neutralizers for this theme only.
+   NOC360 SPECTRUM — single fixed theme (multi-colour SaaS)
+   Bright SaaS canvas with a vivid multi-hue category system: KPI cards
+   cycle through indigo / cyan / emerald / amber / violet / pink, status
+   pills are always legible, gradient brand + buttons. This is the only
+   theme; the switcher is removed. Scoped to [data-theme="aurora-glass"]
+   (the one fixed theme id) so it overrides the generic layer; no app
+   logic depends on the id.
    ====================================================================== */
 body[data-theme="aurora-glass"],
 body.theme-aurora-glass {
   color-scheme: light;
-  --theme-bg-main: #eef1f5;
-  --theme-bg-elevated: #f4f6f9;
-  --theme-card-bg: rgba(255, 255, 255, 0.60);
+  --theme-bg-main: #f5f6fb;
+  --theme-bg-elevated: #ffffff;
+  --theme-card-bg: #ffffff;
   --theme-card-solid: #ffffff;
-  --theme-sidebar-bg: rgba(255, 255, 255, 0.74);
-  --theme-topbar-bg: rgba(255, 255, 255, 0.56);
+  --theme-sidebar-bg: #ffffff;
+  --theme-topbar-bg: rgba(255, 255, 255, 0.92);
   --theme-text-main: #0f172a;
   --theme-text-soft: #475569;
   --theme-text-muted: #94a3b8;
-  --theme-accent: #0369a1;
-  --theme-accent-2: #334155;
-  --theme-accent-3: #64748b;
-  --theme-success: #059669;
-  --theme-warning: #d97706;
-  --theme-danger: #dc2626;
-  --theme-border: rgba(255, 255, 255, 0.55);
-  --theme-border-strong: rgba(3, 105, 161, 0.38);
-  --theme-radius: 18px;
+  --theme-accent: #6366f1;
+  --theme-accent-2: #a855f7;
+  --theme-accent-3: #06b6d4;
+  --theme-success: #10b981;
+  --theme-warning: #f59e0b;
+  --theme-danger: #ef4444;
+  --theme-border: #e7e9f3;
+  --theme-border-strong: rgba(99, 102, 241, 0.45);
+  --theme-radius: 16px;
   --theme-grid-opacity: 0;
   --theme-hover-transform: translateY(-3px);
-  --theme-surface-blur: 20px;
-  --theme-shadow:
-    0 10px 30px rgba(15, 23, 42, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  --theme-shadow-hover:
-    0 22px 55px rgba(15, 23, 42, 0.18),
-    0 0 0 1px rgba(255, 255, 255, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.75);
-  --theme-card-texture:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 60%);
+  --theme-surface-blur: 0px;
+  --theme-shadow: 0 6px 20px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.05);
+  --theme-shadow-hover: 0 16px 40px rgba(79, 70, 229, 0.16);
+  --theme-card-texture: linear-gradient(180deg, rgba(255, 255, 255, 0.6), transparent 62%);
   --theme-body-bg:
-    radial-gradient(42% 52% at 10% 6%, rgba(3, 105, 161, 0.12), transparent 60%),
-    radial-gradient(40% 48% at 90% 4%, rgba(71, 85, 105, 0.10), transparent 60%),
-    radial-gradient(46% 54% at 82% 96%, rgba(100, 116, 139, 0.10), transparent 62%),
-    radial-gradient(44% 50% at 14% 92%, rgba(148, 163, 184, 0.09), transparent 60%),
-    linear-gradient(135deg, #eef1f5 0%, #f1f4f8 50%, #eef2f6 100%);
-  /* Override the generic 48px grid background-size: aurora uses smooth full-bleed
-     gradients, not tiled grid lines, so they must not be tiled into cells. */
+    radial-gradient(38% 44% at 6% 2%, rgba(99, 102, 241, 0.14), transparent 60%),
+    radial-gradient(36% 42% at 96% 4%, rgba(168, 85, 247, 0.12), transparent 60%),
+    radial-gradient(40% 46% at 92% 98%, rgba(6, 182, 212, 0.12), transparent 62%),
+    radial-gradient(40% 44% at 4% 98%, rgba(236, 72, 153, 0.10), transparent 60%),
+    linear-gradient(180deg, #f5f6fb 0%, #f3f4fb 100%);
   background-size: cover !important;
 }
 
@@ -752,9 +744,9 @@ body[data-theme="aurora-glass"] .chatList,
 body[data-theme="aurora-glass"] .ticketMetaPanel,
 body[data-theme="aurora-glass"] .ticketTimeline,
 body[data-theme="aurora-glass"] .infraPanel {
-  backdrop-filter: blur(var(--theme-surface-blur)) saturate(1.45) !important;
-  -webkit-backdrop-filter: blur(var(--theme-surface-blur)) saturate(1.45) !important;
-  border: 1px solid rgba(255, 255, 255, 0.62) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border: 1px solid var(--theme-border) !important;
 }
 
 /* --- Glow lift on hover ------------------------------------------------- */
@@ -773,6 +765,118 @@ body[data-theme="aurora-glass"] .metric::after {
   background: linear-gradient(90deg, transparent, var(--theme-accent), var(--theme-accent-2), var(--theme-accent-3), transparent) !important;
   opacity: 0.9 !important;
 }
+
+/* --- MULTI-COLOUR CATEGORY KPI CARDS -----------------------------------
+   Each card in a .cards grid cycles through six vivid hues (indigo, cyan,
+   emerald, amber, violet, pink) driving its left accent, icon chip, top
+   bar and hover glow. Semantic variants below override the cycle. */
+body[data-theme="aurora-glass"] .cards > .metric { --mc: #6366f1; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 1) { --mc: #6366f1; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 2) { --mc: #06b6d4; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 3) { --mc: #10b981; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 4) { --mc: #f59e0b; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 5) { --mc: #a855f7; }
+body[data-theme="aurora-glass"] .cards > .metric:nth-child(6n + 6) { --mc: #ec4899; }
+
+body[data-theme="aurora-glass"] .cards > .metric {
+  position: relative;
+  background: #ffffff !important;
+  border: 1px solid var(--theme-border) !important;
+  border-left: 4px solid var(--mc) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--mc) 16%, transparent) !important;
+  transition: transform 140ms ease, box-shadow 140ms ease !important;
+}
+body[data-theme="aurora-glass"] .cards > .metric:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--mc) 28%, transparent) !important;
+}
+body[data-theme="aurora-glass"] .cards > .metric svg {
+  color: var(--mc) !important;
+  background: color-mix(in srgb, var(--mc) 13%, transparent) !important;
+  border-radius: 10px !important;
+  padding: 6px !important;
+  box-sizing: content-box !important;
+}
+body[data-theme="aurora-glass"] .cards > .metric span { color: var(--theme-text-soft) !important; }
+body[data-theme="aurora-glass"] .cards > .metric strong { color: var(--theme-text-main) !important; }
+body[data-theme="aurora-glass"] .cards > .metric::after { background: var(--mc) !important; opacity: 0.9 !important; }
+
+/* Semantic metric variants keep their meaning colour (!important var wins) */
+body[data-theme="aurora-glass"] .metric.metricAlert,
+body[data-theme="aurora-glass"] .metric.outstanding,
+body[data-theme="aurora-glass"] .metric.outstandingSummary { --mc: #ef4444 !important; }
+body[data-theme="aurora-glass"] .cards > .metric.metricAlert,
+body[data-theme="aurora-glass"] .cards > .metric.outstandingSummary { background: #fff5f5 !important; }
+body[data-theme="aurora-glass"] .metric.payment,
+body[data-theme="aurora-glass"] .metric.settledSummary,
+body[data-theme="aurora-glass"] .metric.advanceSummary { --mc: #10b981 !important; }
+body[data-theme="aurora-glass"] .metric.risk { --mc: #f59e0b !important; }
+body[data-theme="aurora-glass"] .metric.metricAlert strong,
+body[data-theme="aurora-glass"] .metric.outstandingSummary strong { color: #ef4444 !important; }
+
+/* --- STATUS PILLS — always legible (fixes the dark-blob bug) ------------
+   Robust neutral default + every status meaning. Any unknown status now
+   reads as a clean neutral pill instead of an unreadable dark blob. */
+body[data-theme="aurora-glass"] .status {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 4px 12px !important;
+  border-radius: 999px !important;
+  border: 1px solid #cbd5e1 !important;
+  background: #eef2f7 !important;
+  color: #334155 !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] .status.active,
+body[data-theme="aurora-glass"] .status.online,
+body[data-theme="aurora-glass"] .status.settled,
+body[data-theme="aurora-glass"] .status.paid {
+  color: #047857 !important; background: #d1fae5 !important; border-color: #6ee7b7 !important;
+}
+body[data-theme="aurora-glass"] .status.pending,
+body[data-theme="aurora-glass"] .status.warming,
+body[data-theme="aurora-glass"] .status.used-in-routing,
+body[data-theme="aurora-glass"] .status.high-load {
+  color: #b45309 !important; background: #fef3c7 !important; border-color: #fcd34d !important;
+}
+body[data-theme="aurora-glass"] .status.inactive,
+body[data-theme="aurora-glass"] .status.offline,
+body[data-theme="aurora-glass"] .status.free {
+  color: #475569 !important; background: #e2e8f0 !important; border-color: #cbd5e1 !important;
+}
+body[data-theme="aurora-glass"] .status.conflict,
+body[data-theme="aurora-glass"] .status.outstanding,
+body[data-theme="aurora-glass"] .status.overdue {
+  color: #b91c1c !important; background: #fee2e2 !important; border-color: #fca5a5 !important;
+}
+body[data-theme="aurora-glass"] .status.advance,
+body[data-theme="aurora-glass"] .status.assigned-to-cluster,
+body[data-theme="aurora-glass"] .status.credit {
+  color: #4338ca !important; background: #e0e7ff !important; border-color: #a5b4fc !important;
+}
+
+/* --- Topbar status chips (Sync / Alerts / Outstanding) ----------------- */
+body[data-theme="aurora-glass"] .topStatusItem {
+  background: #f4f5fb !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-main) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] .topStatusItem span { color: var(--theme-text-muted) !important; }
+body[data-theme="aurora-glass"] .topStatusItem svg { color: var(--theme-accent) !important; }
+body[data-theme="aurora-glass"] .topStatusItem strong { color: var(--theme-text-main) !important; }
+body[data-theme="aurora-glass"] .topStatusItem.ready svg,
+body[data-theme="aurora-glass"] .topStatusItem.ready strong { color: var(--theme-success) !important; }
+body[data-theme="aurora-glass"] .topStatusItem.warning { background: #fff1f2 !important; border-color: #fecaca !important; }
+body[data-theme="aurora-glass"] .topStatusItem.warning svg,
+body[data-theme="aurora-glass"] .topStatusItem.warning strong { color: var(--theme-danger) !important; }
 
 /* --- Primary buttons: gradient + glow ---------------------------------- */
 body[data-theme="aurora-glass"] .primary {
@@ -845,9 +949,16 @@ body[data-theme="aurora-glass"] input,
 body[data-theme="aurora-glass"] select,
 body[data-theme="aurora-glass"] textarea,
 body[data-theme="aurora-glass"] .search {
-  background: rgba(255, 255, 255, 0.6) !important;
-  backdrop-filter: blur(6px) !important;
-  -webkit-backdrop-filter: blur(6px) !important;
+  background: #ffffff !important;
+  border: 1px solid var(--theme-border) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body[data-theme="aurora-glass"] input:focus,
+body[data-theme="aurora-glass"] select:focus,
+body[data-theme="aurora-glass"] textarea:focus {
+  border-color: var(--theme-accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accent) 16%, transparent) !important;
 }
 
 /* --- Table header: soft tinted glass ----------------------------------- */
@@ -856,7 +967,76 @@ body[data-theme="aurora-glass"] th {
   color: var(--theme-accent) !important;
 }
 
-/* --- Aurora gradient scrollbars ---------------------------------------- */
+/* --- Relight bespoke sub-panels (built for the old dark theme) ----------
+   These components hardcode dark backgrounds in styles.css; force them to
+   light SaaS surfaces with readable text so every page is consistent. */
+body[data-theme="aurora-glass"] .aiMetric,
+body[data-theme="aurora-glass"] .asteriskResultPanel,
+body[data-theme="aurora-glass"] .asteriskSearchPanel,
+body[data-theme="aurora-glass"] .asteriskServerCard,
+body[data-theme="aurora-glass"] .asteriskUploadBox,
+body[data-theme="aurora-glass"] .asteriskMultiOptions,
+body[data-theme="aurora-glass"] .asteriskExample,
+body[data-theme="aurora-glass"] .asteriskGroupTitle,
+body[data-theme="aurora-glass"] .commandCard,
+body[data-theme="aurora-glass"] .signalPanel,
+body[data-theme="aurora-glass"] .hudCell,
+body[data-theme="aurora-glass"] .messageBubble,
+body[data-theme="aurora-glass"] .secretItem,
+body[data-theme="aurora-glass"] .terminalConnectionCard,
+body[data-theme="aurora-glass"] .terminalConnectionTools,
+body[data-theme="aurora-glass"] .ticketMessage,
+body[data-theme="aurora-glass"] .updateBackupRow,
+body[data-theme="aurora-glass"] .updateCenterLogRow,
+body[data-theme="aurora-glass"] .updateHealthMessage,
+body[data-theme="aurora-glass"] .vosDetailHero > div,
+body[data-theme="aurora-glass"] .vosDetailItem,
+body[data-theme="aurora-glass"] .launcherVersionToggle,
+body[data-theme="aurora-glass"] .weeklyInvoicePanel,
+body[data-theme="aurora-glass"] .weeklyInvoicePreview,
+body[data-theme="aurora-glass"] .weeklyInvoiceSection,
+body[data-theme="aurora-glass"] .weeklyInvoiceViewGrid > div,
+body[data-theme="aurora-glass"] .moneyEngineFilterGrid {
+  background: #ffffff !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-main) !important;
+  box-shadow: var(--theme-shadow) !important;
+}
+/* Light bars / toolbars / forms / tab strips */
+body[data-theme="aurora-glass"] .commandForm,
+body[data-theme="aurora-glass"] .terminalForm,
+body[data-theme="aurora-glass"] .chatComposer,
+body[data-theme="aurora-glass"] .terminalToolbar,
+body[data-theme="aurora-glass"] .terminalConnectionBulkBar,
+body[data-theme="aurora-glass"] .webphoneTabs,
+body[data-theme="aurora-glass"] .moneyEngineFilterGrid {
+  background: #f4f5fb !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-main) !important;
+}
+/* Currency / conversion bars and selected cards */
+body[data-theme="aurora-glass"] .currencyGrid,
+body[data-theme="aurora-glass"] .conversionPreview,
+body[data-theme="aurora-glass"] .settingsForm,
+body[data-theme="aurora-glass"] .inlineForm.settingsForm {
+  background: #f4f5fb !important;
+  border: 1px solid var(--theme-border) !important;
+  color: var(--theme-text-main) !important;
+}
+body[data-theme="aurora-glass"] .selectedAsteriskServer {
+  background: color-mix(in srgb, var(--theme-accent) 8%, #ffffff) !important;
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 40%, transparent) !important;
+}
+/* Warning / info banners → light amber instead of dark */
+body[data-theme="aurora-glass"] .alert,
+body[data-theme="aurora-glass"] .billingAlert {
+  background: #fef6e7 !important;
+  border: 1px solid #fcd34d !important;
+  color: #92400e !important;
+  box-shadow: none !important;
+}
+
+/* --- Gradient scrollbars ----------------------------------------------- */
 body[data-theme="aurora-glass"] *::-webkit-scrollbar {
   width: 11px;
   height: 11px;
