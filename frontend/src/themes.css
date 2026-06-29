@@ -509,6 +509,56 @@ body[data-theme] .updateHealthBadge.danger {
   border-color: color-mix(in srgb, var(--theme-danger) 34%, transparent) !important;
 }
 
+/* ---------------------------------------------------------------------
+   Modal interiors. Detail / invoice / view modals build their own dark
+   header bars, section panels and metric grids with hardcoded colours
+   the theme layer above never reaches -> on the light theme they render
+   as dark islands (e.g. the Saved Weekly Invoice popup). Re-skin modal
+   header/footer chrome + section/detail/grid containers + their cells
+   from theme vars. Scoped to .modal / .modal-box descendants so the
+   blast radius stays inside dialogs; semantic colours (status pills,
+   amounts) keep their own more-specific rules.
+--------------------------------------------------------------------- */
+body[data-theme] .modalHeader,
+body[data-theme] .weeklyInvoiceViewHeader,
+body[data-theme] .themeModal .modalActions {
+  background: var(--theme-bg-elevated) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-main) !important;
+}
+body[data-theme] .modalHeader .eyebrow,
+body[data-theme] .weeklyInvoiceViewHeader .eyebrow {
+  color: var(--theme-text-soft) !important;
+}
+body[data-theme] .modal [class*="Section"],
+body[data-theme] .modal-box [class*="Section"],
+body[data-theme] .modal [class*="DetailBody"],
+body[data-theme] .modal-box [class*="DetailBody"],
+body[data-theme] .modal .weeklyInvoiceNotes,
+body[data-theme] .modal-box .weeklyInvoiceNotes {
+  background: var(--theme-card-bg) !important;
+  border-color: var(--theme-border) !important;
+}
+body[data-theme] .modal [class*="ViewGrid"] > div,
+body[data-theme] .modal-box [class*="ViewGrid"] > div,
+body[data-theme] .modal [class*="DetailGrid"] > div,
+body[data-theme] .modal-box [class*="DetailGrid"] > div,
+body[data-theme] .weeklyInvoiceViewGrid > div {
+  background: var(--theme-bg-elevated) !important;
+  border-color: var(--theme-border) !important;
+}
+body[data-theme] .modal [class*="ViewGrid"] span,
+body[data-theme] .modal-box [class*="ViewGrid"] span,
+body[data-theme] .modal [class*="DetailGrid"] span,
+body[data-theme] .modal-box [class*="DetailGrid"] span,
+body[data-theme] .weeklyInvoiceViewGrid span {
+  color: var(--theme-text-soft) !important;
+}
+body[data-theme] .weeklyInvoiceViewGrid .weeklyInvoiceTotal {
+  background: color-mix(in srgb, var(--theme-success) 13%, var(--theme-bg-elevated)) !important;
+  border-color: color-mix(in srgb, var(--theme-success) 34%, transparent) !important;
+}
+
 body[data-theme] .toastSuccess,
 body[data-theme] .okText,
 body[data-theme] .creditText,
