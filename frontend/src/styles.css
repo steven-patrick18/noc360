@@ -8836,3 +8836,47 @@ body:has(.modal-box.clientDetailModal) .topbar { visibility: hidden !important; 
 }
 .clientDetailModal table { width: 100% !important; }
 .clientDetailModal .billingCards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important; }
+
+/* ===== Ribbon layout: client profile is a normal CENTERED dialog =====
+   The block above assumed a left sidebar (offset the backdrop by 288px, full-
+   height panel, hidden topbar). With the top ribbon that mis-centres the modal
+   and leaks the page behind it. Reset to a clean centered dialog. */
+.modalBackdrop:has(.clientDetailModal),
+.modal-overlay:has(.clientDetailModal) {
+  left: 0 !important;
+  inset: 0 !important;
+  width: 100% !important;
+  padding: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.modal-box.clientDetailModal {
+  position: relative !important;
+  left: auto !important;
+  top: auto !important;
+  transform: none !important;
+  width: min(96vw, 1500px) !important;
+  max-width: 1500px !important;
+  height: auto !important;
+  max-height: 92vh !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--theme-border, #d0d0d0) !important;
+  padding: 0 0 24px !important;
+  overflow-y: auto !important;
+}
+/* Compact, clean hero: name + status pill on one line */
+.modal-box.clientDetailModal .clientHero {
+  padding: 14px 28px !important;
+  background: #ffffff !important;
+  border-bottom: 1px solid var(--theme-border, #d0d0d0) !important;
+  backdrop-filter: none !important;
+}
+.modal-box.clientDetailModal .clientHero > div {
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.modal-box.clientDetailModal .clientHero .eyebrow { width: 100% !important; }
+.modal-box.clientDetailModal .clientHero h2 { margin: 0 !important; }
