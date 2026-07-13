@@ -1362,3 +1362,64 @@ body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb {
   border: 2px solid #f3f3f3 !important;
 }
 body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb:hover { background: #217346 !important; }
+
+/* ===== Excel ribbon colours + light page-context bar ================== */
+body[data-theme="aurora-glass"] .sceneGlow { display: none !important; }
+
+body[data-theme="aurora-glass"] .ribbonBar {
+  background: #217346 !important;
+  border-bottom: 1px solid #17482c !important;
+  color: #ffffff !important;
+}
+body[data-theme="aurora-glass"] .ribbonBrand,
+body[data-theme="aurora-glass"] .ribbonBrand strong,
+body[data-theme="aurora-glass"] .ribbonBrand svg { color: #ffffff !important; }
+body[data-theme="aurora-glass"] .ribbonTab { color: rgba(255, 255, 255, 0.82) !important; border-radius: 0 !important; }
+body[data-theme="aurora-glass"] .ribbonTab:hover { background: rgba(255, 255, 255, 0.14) !important; color: #ffffff !important; }
+body[data-theme="aurora-glass"] .ribbonTab.active { background: #f3f3f3 !important; color: #1a5c38 !important; }
+body[data-theme="aurora-glass"] .ribbonActions .rolePill,
+body[data-theme="aurora-glass"] .ribbonActions .refreshButton,
+body[data-theme="aurora-glass"] .ribbonActions .iconButton {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  color: #ffffff !important;
+}
+body[data-theme="aurora-glass"] .ribbonActions svg { color: #ffffff !important; }
+
+body[data-theme="aurora-glass"] .ribbonItems {
+  background: #f3f3f3 !important;
+  border-bottom: 1px solid #d0d0d0 !important;
+}
+body[data-theme="aurora-glass"] .ribbonItem { color: #1f1f1f !important; border-radius: 3px !important; }
+body[data-theme="aurora-glass"] .ribbonItem svg { color: #217346 !important; }
+body[data-theme="aurora-glass"] .ribbonItem:hover { background: #e6efe9 !important; border-color: #c4d8cc !important; }
+body[data-theme="aurora-glass"] .ribbonItem.active {
+  background: #ffffff !important;
+  border-color: #d0d0d0 !important;
+  color: #1a5c38 !important;
+  box-shadow: inset 0 -2px 0 #217346 !important;
+}
+
+/* Page-context bar is now light (the green ribbon carries the identity) */
+body[data-theme="aurora-glass"] .topbar {
+  background: #ffffff !important;
+  border: none !important;
+  border-bottom: 1px solid #d0d0d0 !important;
+  color: #1f1f1f !important;
+}
+body[data-theme="aurora-glass"] .topbar .eyebrow { color: #767676 !important; }
+body[data-theme="aurora-glass"] .topbar h1,
+body[data-theme="aurora-glass"] .topbar h1 svg { color: #1a5c38 !important; }
+body[data-theme="aurora-glass"] .topbar .topStatusItem {
+  background: #f4f5f6 !important;
+  border: 1px solid #d0d0d0 !important;
+  color: #1f1f1f !important;
+}
+body[data-theme="aurora-glass"] .topbar .topStatusItem span { color: #767676 !important; }
+body[data-theme="aurora-glass"] .topbar .topStatusItem svg,
+body[data-theme="aurora-glass"] .topbar .topStatusItem strong { color: #1f1f1f !important; }
+body[data-theme="aurora-glass"] .topbar .topStatusItem.ready svg,
+body[data-theme="aurora-glass"] .topbar .topStatusItem.ready strong { color: #217346 !important; }
+body[data-theme="aurora-glass"] .topbar .topStatusItem.warning { background: #fdecea !important; border-color: #f5c6cb !important; }
+body[data-theme="aurora-glass"] .topbar .topStatusItem.warning svg,
+body[data-theme="aurora-glass"] .topbar .topStatusItem.warning strong { color: #c0392b !important; }

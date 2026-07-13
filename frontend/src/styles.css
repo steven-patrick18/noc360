@@ -8757,3 +8757,73 @@ body:has(.modal-box.clientDetailModal) .topbar { visibility: hidden !important; 
   border-color: var(--theme-accent, rgba(34, 211, 238, 0.6)) !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accent, #22d3ee) 22%, transparent) !important;
 }
+
+/* ===== Excel-style top ribbon menu (replaces the left sidebar) ===== */
+.app.appRibbon {
+  display: flex !important;
+  flex-direction: column !important;
+  grid-template-columns: none !important;
+  min-height: 100vh;
+}
+.app.appRibbon > main {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  display: block;
+}
+.ribbonBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 46px;
+  flex-shrink: 0;
+  padding: 0 14px;
+  position: relative;
+  z-index: 6;
+}
+.ribbonBrand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ribbonBrand strong { font-size: 16px; font-weight: 800; letter-spacing: 0.02em; }
+.ribbonTabs { display: flex; align-items: stretch; gap: 2px; height: 100%; flex: 1; min-width: 0; overflow-x: auto; }
+.ribbonTab {
+  border: none;
+  background: transparent;
+  padding: 0 16px;
+  height: 100%;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ribbonActions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.ribbonItems {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+.ribbonItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+}
+.ribbonItem .navBadge {
+  margin-left: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #c0392b;
+  color: #fff;
+}

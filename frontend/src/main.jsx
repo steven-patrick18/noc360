@@ -202,24 +202,24 @@ const modulePageKeys = {
 };
 
 const modules = {
-  dashboard: { label: 'Command Center', icon: Activity },
-  businessAi: { label: 'Intelligence Core', icon: Activity },
-  reports: { label: 'Data Intelligence', icon: Download },
-  management: { label: 'Management Portal', icon: LayoutDashboard },
-  billing: { label: 'Money Engine', icon: ReceiptText },
+  dashboard: { label: 'Dashboard', icon: Activity },
+  businessAi: { label: 'Analytics', icon: Activity },
+  reports: { label: 'Reports', icon: Download },
+  management: { label: 'Management', icon: LayoutDashboard },
+  billing: { label: 'Billing', icon: ReceiptText },
   clients: { label: 'Clients', icon: Users },
-  chatCenter: { label: 'Chat Center', icon: MessageSquare },
+  chatCenter: { label: 'Chat', icon: MessageSquare },
   tickets: { label: 'Tickets', icon: Ticket },
   webphone: { label: 'Webphone', icon: Phone },
   terminal: { label: 'Terminal', icon: TerminalIcon },
-  asteriskSoundManager: { label: 'Asterisk Sound Manager', icon: FileAudio },
-  bareMetalOsInstaller: { label: 'Bare Metal OS Installer', icon: Server },
-  updateCenter: { label: 'Update Center', icon: RefreshCcw },
+  asteriskSoundManager: { label: 'Sound Manager', icon: FileAudio },
+  bareMetalOsInstaller: { label: 'OS Installer', icon: Server },
+  updateCenter: { label: 'Updates', icon: RefreshCcw },
   dangerZone: { label: 'Settings', icon: Settings },
-  userAccess: { label: 'User Access', icon: Users },
-  activityLogs: { label: 'Activity Logs', icon: Activity },
-  gridTopology: { label: 'Grid Topology', icon: Share2 },
-  qosObservatory: { label: 'QoS Observatory', icon: Gauge },
+  userAccess: { label: 'Users', icon: Users },
+  activityLogs: { label: 'Activity', icon: Activity },
+  gridTopology: { label: 'Topology', icon: Share2 },
+  qosObservatory: { label: 'Call Quality', icon: Gauge },
   vos: {
     label: 'VOS Portals',
     icon: Globe2,
@@ -244,7 +244,7 @@ const modules = {
   },
   vosDesktop: { label: 'VOS Desktop', icon: Play },
   clusters: {
-    label: 'Dialer Clusters',
+    label: 'Clusters',
     icon: RadioTower,
     endpoint: '/dialer-clusters',
     titleField: 'account_name',
@@ -280,7 +280,7 @@ const modules = {
     ],
   },
   gateways: {
-    label: 'Traffic Control',
+    label: 'Routing',
     icon: Router,
     endpoint: '/routing-gateways',
     titleField: 'gateway_name',
@@ -322,11 +322,11 @@ const customerModules = {
 };
 
 const sidebarGroups = [
-  { id: 'overview', label: 'Overview', keys: ['dashboard', 'gridTopology', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
+  { id: 'overview', label: 'Home', keys: ['dashboard', 'gridTopology', 'myDashboard', 'businessAi', 'reports', 'myReports'] },
   { id: 'network', label: 'Network', keys: ['management', 'vos', 'vosDesktop', 'clusters', 'rdps', 'gateways', 'qosObservatory'] },
-  { id: 'clientsBilling', label: 'Clients & Billing', keys: ['clients', 'billing', 'myBilling'] },
+  { id: 'clientsBilling', label: 'Finance', keys: ['clients', 'billing', 'myBilling', 'myCdr'] },
   { id: 'support', label: 'Support', keys: ['chatCenter', 'myChat', 'tickets', 'myTickets'] },
-  { id: 'tools', label: 'Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager', 'myCdr'] },
+  { id: 'tools', label: 'Tools', keys: ['webphone', 'terminal', 'asteriskSoundManager'] },
   { id: 'admin', label: 'Admin', keys: ['bareMetalOsInstaller', 'updateCenter', 'userAccess', 'activityLogs', 'dangerZone'] },
 ];
 
@@ -645,6 +645,7 @@ function App() {
     }
   });
   const [active, setActive] = useState(auth?.user?.role === 'customer' ? 'myDashboard' : 'dashboard');
+  const [ribbonTab, setRibbonTab] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [management, setManagement] = useState({ summary: null, cluster: [], rdpCluster: [], routing: [] });
   const [data, setData] = useState({ vos: [], vosDesktop: [], clusters: [], rdps: [], gateways: [], clients: [], users: [] });
@@ -796,6 +797,9 @@ function App() {
     return () => window.removeEventListener('noc360-unauthorized', onUnauthorized);
   }, []);
 
+  // Ribbon: after navigating, snap the open tab back to the active page's group.
+  useEffect(() => { setRibbonTab(null); }, [active]);
+
   useEffect(() => {
     const applyTheme = () => {
       const resolvedTheme = resolveTheme(theme);
@@ -914,6 +918,10 @@ function App() {
     .filter((group) => group.items.length);
   const ungroupedModules = Object.entries(activeModules).filter(([key]) => !groupedKeys.has(key));
   if (ungroupedModules.length) visibleSidebarGroups.push({ id: 'other', label: 'Other', items: ungroupedModules });
+  // Excel ribbon: which tab's item-row is showing (defaults to the active page's group).
+  const activeGroupForKey = visibleSidebarGroups.find((group) => group.items.some(([key]) => key === activeKey));
+  const currentTabId = (ribbonTab && visibleSidebarGroups.some((group) => group.id === ribbonTab)) ? ribbonTab : (activeGroupForKey?.id || visibleSidebarGroups[0]?.id);
+  const currentTabGroup = visibleSidebarGroups.find((group) => group.id === currentTabId);
   const toggleSidebarCompact = () => {
     setIsSidebarCompact((current) => {
       const next = !current;
@@ -930,7 +938,7 @@ function App() {
   };
 
   return (
-    <div className={`app ${loading ? 'isSyncing' : ''} ${isSidebarCompact ? 'sidebarCompact' : ''}`}>
+    <div className={`app appRibbon ${loading ? 'isSyncing' : ''}`}>
       <div className="sceneGlow" aria-hidden="true">
         <span className="earthCore" />
         <span className="orbitRing orbitOne" />
@@ -944,67 +952,50 @@ function App() {
         <span className="callRoute routeOne" />
         <span className="callRoute routeTwo" />
       </div>
-      <aside
-        className="sidebar"
-        onMouseEnter={() => { if (!isSidebarCompact) armSidebarIdle(); }}
-        onMouseMove={() => { if (!isSidebarCompact) armSidebarIdle(); }}
-      >
-        <div className="brand">
-          <Server size={30} />
-          <div>
-            <strong>NOC360</strong>
-            <span>Global VoIP Grid</span>
-          </div>
-          <button type="button" className="sidebarToggle" onClick={toggleSidebarCompact} title={isSidebarCompact ? 'Expand sidebar' : 'Compact sidebar'}>
-            {isSidebarCompact ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
-          </button>
+      <header className="ribbonBar">
+        <div className="ribbonBrand">
+          <Server size={22} />
+          <strong>NOC360</strong>
         </div>
-        <nav className="sidebarNav">
-          {visibleSidebarGroups.map((group, groupIndex) => {
-            const hasActiveItem = group.items.some(([key]) => key === activeKey);
-            const isCollapsed = Boolean(collapsedSidebarGroups[group.id]) && !hasActiveItem && !isSidebarCompact;
-            const GroupIcon = isCollapsed ? ChevronRight : ChevronDown;
-            return (
-              <section className="navGroup" key={group.id}>
-                <button type="button" className="navGroupToggle" onClick={() => toggleSidebarGroup(group.id)} title={group.label}>
-                  <GroupIcon size={14} />
-                  <span>{group.label}</span>
-                  <em>{group.items.length}</em>
-                </button>
-                {!isCollapsed && (
-                  <div className="navGroupItems">
-                    {group.items.map(([key, item], index) => {
-                      const Icon = item.icon;
-                      return (
-                        <button
-                          type="button"
-                          key={key}
-                          className={`navItem ${activeKey === key ? 'active' : ''}`}
-                          onClick={() => {
-                            if (key === 'terminal') setTerminalHasMounted(true);
-                            setActive(key);
-                            // Auto-close: collapse the sidebar to icons after a selection
-                            // to maximize the content area. The topbar toggle re-expands it.
-                            setIsSidebarCompact(true);
-                            localStorage.setItem('noc360_sidebar_compact', '1');
-                          }}
-                          style={{ '--nav-index': (groupIndex * 10) + index }}
-                          title={item.label}
-                        >
-                          <Icon size={18} />
-                          <span>{item.label}</span>
-                          {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
-                          <i className="navPulse" />
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-            );
-          })}
+        <nav className="ribbonTabs">
+          {visibleSidebarGroups.map((group) => (
+            <button
+              type="button"
+              key={group.id}
+              className={`ribbonTab ${group.id === currentTabId ? 'active' : ''}`}
+              onClick={() => setRibbonTab(group.id)}
+            >
+              {group.label}
+            </button>
+          ))}
         </nav>
-      </aside>
+        <div className="ribbonActions">
+          <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
+          <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={16} /> Refresh</button>
+          <button className="iconButton" onClick={logout} title="Logout"><LogOut size={16} /></button>
+        </div>
+      </header>
+      <div className="ribbonItems">
+        {(currentTabGroup?.items || []).map(([key, item]) => {
+          const Icon = item.icon;
+          return (
+            <button
+              type="button"
+              key={key}
+              className={`ribbonItem ${activeKey === key ? 'active' : ''}`}
+              onClick={() => {
+                if (key === 'terminal') setTerminalHasMounted(true);
+                setActive(key);
+              }}
+              title={item.label}
+            >
+              <Icon size={16} />
+              <span>{item.label}</span>
+              {moduleBadges[key] > 0 && <b className="navBadge">{moduleBadges[key]}</b>}
+            </button>
+          );
+        })}
+      </div>
 
       <main>
         <header className="topbar">
@@ -1016,11 +1007,6 @@ function App() {
             <div className={`topStatusItem ${loading ? 'syncing' : 'ready'}`}><Activity size={16} /><span>Sync</span><strong>{loading ? 'Syncing' : 'Ready'}</strong></div>
             <div className={alertCount > 0 ? 'topStatusItem warning' : 'topStatusItem'}><Bell size={16} /><span>Alerts</span><strong>{alertCount}</strong></div>
             {auth.user.role !== 'customer' && <div className="topStatusItem"><ReceiptText size={16} /><span>Outstanding</span><strong>{outstandingValue}</strong></div>}
-          </div>
-          <div className="topActions">
-            <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
-            <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={18} /> Refresh</button>
-            <button className="iconButton" onClick={logout} title="Logout"><LogOut size={18} /></button>
           </div>
         </header>
 
