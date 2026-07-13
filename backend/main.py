@@ -1246,9 +1246,32 @@ def run_startup_maintenance(db: Session):
 
 @app.on_event("startup")
 def startup():
+    if SECRET_KEY == "noc360-local-dev-secret":
+        logger.warning(
+            "SECRET_KEY is the built-in default — JWTs can be forged. Set SECRET_KEY "
+            "in backend/.env (it is loaded automatically) before running in production."
+        )
     create_database()
     with SessionLocal() as db:
         run_startup_maintenance(db)
+
+
+@app.on_event("startup")
+async def start_terminal_session_sweeper():
+    # Detached terminal sessions are otherwise only swept when a new websocket
+    # connects; this periodic sweep reclaims idle paramiko/SSH sessions even when
+    # no new connections arrive, preventing file-descriptor / sshd exhaustion.
+    sweep_interval = min(60, max(15, TERMINAL_IDLE_TIMEOUT_SECONDS // 2))
+
+    async def sweeper():
+        while True:
+            await asyncio.sleep(sweep_interval)
+            try:
+                await asyncio.to_thread(cleanup_terminal_live_sessions)
+            except Exception:
+                logger.warning("Terminal session sweep failed", exc_info=True)
+
+    asyncio.create_task(sweeper())
 
 
 @app.get("/")
@@ -6251,6 +6274,10 @@ def weekly_invoice_final_outstanding(invoice: WeeklyInvoice):
 
 
 def payment_inr_amount(row: ClientLedger):
+    # Only credit rows are money received. A debit filed under "Payment"
+    # (reversal / bounced payment / chargeback) must NOT reduce outstanding.
+    if row.entry_type != "Credit":
+        return 0.0
     value = row_credit_inr(row)
     if value:
         return abs(float(value))
@@ -7991,6 +8018,8 @@ def create_user(payload: UserCreate, request: Request, db: Session = Depends(get
         raise HTTPException(status_code=400, detail="Username and password are required")
     if payload.role not in {"admin", "noc_user", "customer", "viewer"}:
         raise HTTPException(status_code=400, detail="Invalid role")
+    if payload.role == "admin" and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can create admin users")
     if payload.client_id and not db.get(Client, payload.client_id):
         raise HTTPException(status_code=400, detail="Client does not exist")
     record = User(username=username, password_hash=hash_password(payload.password), full_name=payload.full_name, email=payload.email, role=payload.role, client_id=payload.client_id, status=payload.status)
@@ -8007,6 +8036,11 @@ def update_user(record_id: int, payload: UserUpdate, request: Request, db: Sessi
     old_value = sanitize_activity_value(record)
     if payload.role not in {"admin", "noc_user", "customer", "viewer"}:
         raise HTTPException(status_code=400, detail="Invalid role")
+    super_admin_username = os.getenv("NOC360_SUPER_ADMIN_USERNAME", "admin")
+    if user.role != "admin" and (payload.role == "admin" or record.role == "admin"):
+        raise HTTPException(status_code=403, detail="Only an admin can modify admin users")
+    if record.username == super_admin_username and user.username != super_admin_username:
+        raise HTTPException(status_code=403, detail="The super admin account can only be modified by the super admin")
     if payload.client_id and not db.get(Client, payload.client_id):
         raise HTTPException(status_code=400, detail="Client does not exist")
     for key, value in payload.model_dump().items():
@@ -8033,6 +8067,11 @@ def reset_user_password(record_id: int, payload: PasswordResetIn, request: Reque
     record = get_record(db, User, record_id)
     if not normalize(payload.password):
         raise HTTPException(status_code=400, detail="Password is required")
+    super_admin_username = os.getenv("NOC360_SUPER_ADMIN_USERNAME", "admin")
+    if user.role != "admin" and record.role == "admin":
+        raise HTTPException(status_code=403, detail="Only an admin can reset an admin password")
+    if record.username == super_admin_username and user.username != super_admin_username:
+        raise HTTPException(status_code=403, detail="Only the super admin can reset the super admin password")
     record.password_hash = hash_password(payload.password)
     saved = save_record(db, record)
     log_activity(db, user, "reset_password", "user_access", "User", saved.id, f"Reset password for user {saved.username}", new_value={"username": saved.username, "password_changed": True}, request=request, commit=True)
@@ -8050,6 +8089,17 @@ def get_user_permissions(record_id: int, db: Session = Depends(get_db), user: Us
 @app.post("/users/{record_id}/permissions", response_model=list[PagePermissionOut])
 def save_user_permissions(record_id: int, payload: list[PagePermissionIn], request: Request, db: Session = Depends(get_db), user: User = Depends(require_page("user_access", "can_edit"))):
     get_record(db, User, record_id)
+    # Prevent privilege escalation: a non-admin cannot edit their own permission
+    # matrix, nor grant any page/action they do not already hold themselves.
+    if user.role != "admin":
+        if record_id == user.id:
+            raise HTTPException(status_code=403, detail="You cannot modify your own permissions")
+        actor_perms = permission_dict(db, user)
+        for item in payload:
+            granted = actor_perms.get(item.page_key) or {}
+            for action in ("can_view", "can_create", "can_edit", "can_delete", "can_export"):
+                if getattr(item, action) and not granted.get(action):
+                    raise HTTPException(status_code=403, detail=f"You cannot grant '{action}' on '{item.page_key}' because you do not hold it yourself")
     old_value = [sanitize_activity_value(row) for row in db.query(PagePermission).filter(PagePermission.user_id == record_id).order_by(PagePermission.page_key.asc()).all()]
     db.query(PagePermission).filter(PagePermission.user_id == record_id).delete()
     for item in payload:

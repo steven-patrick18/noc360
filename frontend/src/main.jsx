@@ -340,8 +340,8 @@ async function request(path, options = {}) {
   const headers = { ...(isFormData ? {} : { 'Content-Type': 'application/json' }), ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers,
     ...options,
+    headers,
   });
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';
@@ -352,6 +352,9 @@ async function request(path, options = {}) {
       localStorage.removeItem('noc360_token');
       localStorage.removeItem('noc360_user');
       if (window.location.pathname !== '/login') window.history.pushState({}, '', '/login');
+      // Drop React auth state too, otherwise the app stays on the dead session
+      // until a manual reload (pushState alone doesn't re-render an SPA).
+      window.dispatchEvent(new Event('noc360-unauthorized'));
     }
     throw new Error(message);
   }
@@ -362,7 +365,7 @@ async function requestBlob(path, options = {}) {
   const token = localStorage.getItem('noc360_token');
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE_URL}${path}`, { headers, ...options });
+  const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
   if (!response.ok) {
     const message = await response.text().catch(() => '') || `Request failed (${response.status})`;
     throw new Error(message);
@@ -630,9 +633,16 @@ function ledgerQuery(filters = {}, defaultLimit = true) {
 function App() {
   useGlobalModalInteractivity();
   const [auth, setAuth] = useState(() => {
-    const token = localStorage.getItem('noc360_token');
-    const user = localStorage.getItem('noc360_user');
-    return token && user ? { token, user: JSON.parse(user) } : null;
+    try {
+      const token = localStorage.getItem('noc360_token');
+      const user = localStorage.getItem('noc360_user');
+      return token && user ? { token, user: JSON.parse(user) } : null;
+    } catch {
+      // A corrupt/partial noc360_user must not white-screen the whole app.
+      localStorage.removeItem('noc360_token');
+      localStorage.removeItem('noc360_user');
+      return null;
+    }
   });
   const [active, setActive] = useState(auth?.user?.role === 'customer' ? 'myDashboard' : 'dashboard');
   const [dashboard, setDashboard] = useState(null);
@@ -652,6 +662,7 @@ function App() {
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
   const [isSidebarCompact, setIsSidebarCompact] = useState(() => localStorage.getItem('noc360_sidebar_compact') === '1');
   const loadAllRequestRef = useRef(0);
+  const billingRequestRef = useRef(0);
   const [collapsedSidebarGroups, setCollapsedSidebarGroups] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('noc360_sidebar_groups') || '{}') || {};
@@ -682,13 +693,18 @@ function App() {
 
   const refreshBillingData = async (ledgerFilters = {}) => {
     if (!auth) return;
+    // Guard against out-of-order responses: rapid filter/pagination changes can
+    // resolve in a different order, so a stale response must not clobber newer state.
+    const reqId = (billingRequestRef.current += 1);
+    const isCurrent = () => billingRequestRef.current === reqId;
     const canBilling = canDo(auth.user, 'billing') || canDo(auth.user, 'my_ledger');
     if (!canBilling) {
-      setBilling({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
+      if (isCurrent()) setBilling({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
       return null;
     }
     if (auth.user.role === 'customer') {
       const billingRate = await request('/settings/billing-rate');
+      if (!isCurrent()) return { total: 0, page: 1, page_size: 50, total_pages: 1 };
       setBilling({ rows: [], summary: null, ledger: [], ledgerPage: { total: 0, page: 1, page_size: 50, total_pages: 1 }, ledgerSummary: null });
       setSettings(billingRate);
       return { total: 0, page: 1, page_size: 50, total_pages: 1 };
@@ -705,6 +721,7 @@ function App() {
     const pageMeta = Array.isArray(ledgerPage)
       ? { total: items.length, page: 1, page_size: items.length, total_pages: 1 }
       : { total: ledgerPage.total || 0, page: ledgerPage.page || 1, page_size: ledgerPage.page_size || items.length || 0, total_pages: ledgerPage.total_pages || 1 };
+    if (!isCurrent()) return pageMeta;
     setBilling({ rows: billingRows, summary: billingSummary, ledger: items, ledgerPage: pageMeta, ledgerSummary });
     setSettings(billingRate);
     return pageMeta;
@@ -772,6 +789,12 @@ function App() {
   useEffect(() => {
     loadAll();
   }, [auth?.token]);
+
+  useEffect(() => {
+    const onUnauthorized = () => setAuth(null);
+    window.addEventListener('noc360-unauthorized', onUnauthorized);
+    return () => window.removeEventListener('noc360-unauthorized', onUnauthorized);
+  }, []);
 
   useEffect(() => {
     const applyTheme = () => {
