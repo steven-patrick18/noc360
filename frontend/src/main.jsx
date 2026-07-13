@@ -65,7 +65,7 @@ const themeOptions = [
   { id: 'graphite', name: 'Graphite', description: 'Neutral low-contrast graphite with a subtle emerald accent.', colors: ['#18181b', '#10b981', '#6ee7b7'] },
 ];
 const themeIds = themeOptions.map((option) => option.id);
-const DEFAULT_THEME_ID = 'clean-light';
+const DEFAULT_THEME_ID = 'aurora-glass';
 const CUSTOM_BACKGROUND_KEY = 'noc360_theme_custom_background';
 const MAX_CUSTOM_BACKGROUND_BYTES = 2 * 1024 * 1024;
 const MAX_CUSTOM_BACKGROUND_SOURCE_BYTES = 10 * 1024 * 1024;
@@ -1022,7 +1022,7 @@ function App() {
           ) : auth.user.role === 'customer' && activeKey === 'myBilling' ? (
             <BillingPage billing={billing} data={data} reload={loadAll} refreshBilling={refreshBillingData} user={auth.user} settings={settings} />
           ) : auth.user.role === 'customer' && activeKey === 'myCdr' ? (
-            <CustomerCdrPage user={auth.user} />
+            <CustomerCdrPage user={auth.user} settings={settings} />
           ) : auth.user.role === 'customer' && activeKey === 'myReports' ? (
             <ClientInvoiceLedgerView user={auth.user} pageKey="my_reports" title="My Reports" />
           ) : activeKey === 'dashboard' ? (
@@ -8528,17 +8528,20 @@ function ClientDetailModal({ detail, onClose, canExport = true }) {
   );
 }
 
-function CustomerCdrPage({ user }) {
+function CustomerCdrPage({ user, settings }) {
   const [rows, setRows] = useState([]);
+  const rate = Number(settings?.usd_to_inr_rate) || 83;
   const canExport = canDo(user, 'my_cdr', 'can_export');
   useEffect(() => {
     request('/cdr').then(setRows).catch(() => setRows([]));
   }, []);
+  // Clients see INR only; CDR stores cost in USD, so convert with the billing rate.
+  const costInr = (row) => inr((row.cost || 0) * rate);
   return (
     <section>
-      <div className="toolbar">{canExport && <button onClick={() => exportRows('my-cdr.csv', rows)}><Download size={16} /> Export CSV</button>}</div>
-      <div className="tableWrap"><table><thead><tr><th>Call Date</th><th>Caller</th><th>Destination</th><th>Duration</th><th>Disposition</th><th>Cost</th><th>Route</th><th>Gateway</th></tr></thead><tbody>{rows.map((row) => (
-        <tr key={row.id}><td>{String(row.call_date).replace('T', ' ').slice(0, 19)}</td><td>{row.caller_id}</td><td>{row.destination}</td><td>{row.duration}</td><td>{row.disposition}</td><td>{usd(row.cost)}</td><td>{row.route}</td><td>{row.gateway}</td></tr>
+      <div className="toolbar">{canExport && <button onClick={() => exportRows('my-cdr.csv', rows.map((r) => ({ ...r, cost: Math.round((r.cost || 0) * rate * 100) / 100 })))}><Download size={16} /> Export CSV</button>}</div>
+      <div className="tableWrap"><table><thead><tr><th>Call Date</th><th>Caller</th><th>Destination</th><th>Duration</th><th>Disposition</th><th>Cost (INR)</th><th>Route</th><th>Gateway</th></tr></thead><tbody>{rows.map((row) => (
+        <tr key={row.id}><td>{String(row.call_date).replace('T', ' ').slice(0, 19)}</td><td>{row.caller_id}</td><td>{row.destination}</td><td>{row.duration}</td><td>{row.disposition}</td><td>{costInr(row)}</td><td>{row.route}</td><td>{row.gateway}</td></tr>
       ))}</tbody></table></div>
     </section>
   );

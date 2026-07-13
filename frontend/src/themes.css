@@ -823,48 +823,42 @@ body[data-theme][data-custom-bg="1"] .loginBox {
 }
 
 /* ======================================================================
-   NOC360 SPECTRUM — single fixed theme (multi-colour SaaS)
-   Bright SaaS canvas with a vivid multi-hue category system: KPI cards
-   cycle through indigo / cyan / emerald / amber / violet / pink, status
-   pills are always legible, gradient brand + buttons. This is the only
-   theme; the switcher is removed. Scoped to [data-theme="aurora-glass"]
-   (the one fixed theme id) so it overrides the generic layer; no app
-   logic depends on the id.
+   NOC360 EXCEL — single fixed theme (spreadsheet / Excel look)
+   Flat white worksheet with thin grey gridlines, an Excel-green ribbon and
+   column headers, dense rows and Calibri/Segoe type. One fixed theme; the
+   switcher is removed. Scoped to [data-theme="aurora-glass"] (the fixed
+   id); no app logic depends on the id.
    ====================================================================== */
 body[data-theme="aurora-glass"],
 body.theme-aurora-glass {
   color-scheme: light;
-  --theme-bg-main: #f5f6fb;
+  --theme-bg-main: #f3f3f3;
   --theme-bg-elevated: #ffffff;
   --theme-card-bg: #ffffff;
   --theme-card-solid: #ffffff;
-  --theme-sidebar-bg: #ffffff;
-  --theme-topbar-bg: rgba(255, 255, 255, 0.92);
-  --theme-text-main: #0f172a;
-  --theme-text-soft: #475569;
-  --theme-text-muted: #94a3b8;
-  --theme-accent: #6366f1;
-  --theme-accent-2: #a855f7;
-  --theme-accent-3: #06b6d4;
-  --theme-success: #10b981;
-  --theme-warning: #f59e0b;
-  --theme-danger: #ef4444;
-  --theme-border: #e7e9f3;
-  --theme-border-strong: rgba(99, 102, 241, 0.45);
-  --theme-radius: 16px;
+  --theme-sidebar-bg: #f3f3f3;
+  --theme-topbar-bg: #217346;
+  --theme-text-main: #1f1f1f;
+  --theme-text-soft: #444444;
+  --theme-text-muted: #767676;
+  --theme-accent: #217346;
+  --theme-accent-2: #107c41;
+  --theme-accent-3: #2b8a5f;
+  --theme-success: #217346;
+  --theme-warning: #9c6500;
+  --theme-danger: #c0392b;
+  --theme-border: #d0d0d0;
+  --theme-border-strong: #217346;
+  --theme-radius: 3px;
   --theme-grid-opacity: 0;
-  --theme-hover-transform: translateY(-3px);
+  --theme-hover-transform: none;
   --theme-surface-blur: 0px;
-  --theme-shadow: 0 6px 20px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.05);
-  --theme-shadow-hover: 0 16px 40px rgba(79, 70, 229, 0.16);
-  --theme-card-texture: linear-gradient(180deg, rgba(255, 255, 255, 0.6), transparent 62%);
-  --theme-body-bg:
-    radial-gradient(38% 44% at 6% 2%, rgba(99, 102, 241, 0.14), transparent 60%),
-    radial-gradient(36% 42% at 96% 4%, rgba(168, 85, 247, 0.12), transparent 60%),
-    radial-gradient(40% 46% at 92% 98%, rgba(6, 182, 212, 0.12), transparent 62%),
-    radial-gradient(40% 44% at 4% 98%, rgba(236, 72, 153, 0.10), transparent 60%),
-    linear-gradient(180deg, #f5f6fb 0%, #f3f4fb 100%);
-  background-size: cover !important;
+  --theme-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --theme-shadow-hover: 0 2px 6px rgba(0, 0, 0, 0.12);
+  --theme-card-texture: none;
+  --theme-body-bg: #f3f3f3;
+  background-size: auto !important;
+  font-family: 'Calibri', 'Segoe UI', 'Aptos', 'Arial', sans-serif !important;
 }
 
 /* --- Frosted glass on every surface ------------------------------------ */
@@ -1188,3 +1182,183 @@ body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(var(--theme-accent-2), var(--theme-accent-3));
   background-clip: padding-box;
 }
+
+/* ======================================================================
+   EXCEL OVERRIDES — flatten the earlier SaaS enhancement into a real
+   spreadsheet look. Appended last so it wins by source order. Scoped to
+   the one fixed theme id; no app logic depends on it.
+   ====================================================================== */
+body[data-theme="aurora-glass"] * {
+  font-family: 'Calibri', 'Segoe UI', 'Aptos', 'Arial', sans-serif !important;
+  border-radius: 0 !important;
+}
+body[data-theme="aurora-glass"] .panel,
+body[data-theme="aurora-glass"] .tableWrap,
+body[data-theme="aurora-glass"] .metric,
+body[data-theme="aurora-glass"] .modal,
+body[data-theme="aurora-glass"] .modal-box {
+  border-radius: 3px !important;
+}
+
+/* --- Excel green ribbon topbar ----------------------------------------- */
+body[data-theme="aurora-glass"] .topbar {
+  background: #217346 !important;
+  border: none !important;
+  border-bottom: 1px solid #17482c !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
+}
+body[data-theme="aurora-glass"] .topbar .eyebrow,
+body[data-theme="aurora-glass"] .topbar h1,
+body[data-theme="aurora-glass"] .topbar h1 svg { color: #ffffff !important; }
+body[data-theme="aurora-glass"] .topStatusItem {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  color: #ffffff !important;
+}
+body[data-theme="aurora-glass"] .topStatusItem span,
+body[data-theme="aurora-glass"] .topStatusItem strong,
+body[data-theme="aurora-glass"] .topStatusItem svg { color: #ffffff !important; }
+body[data-theme="aurora-glass"] .topStatusItem.warning {
+  background: rgba(192, 57, 43, 0.92) !important;
+  border-color: #9a2c1f !important;
+}
+body[data-theme="aurora-glass"] .topActions .refreshButton,
+body[data-theme="aurora-glass"] .topActions .iconButton,
+body[data-theme="aurora-glass"] .topActions .accountTrigger {
+  background: rgba(255, 255, 255, 0.15) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  color: #ffffff !important;
+}
+body[data-theme="aurora-glass"] .topActions svg { color: #ffffff !important; }
+
+/* --- Spreadsheet tables: gridlines on every cell, dense rows ----------- */
+body[data-theme="aurora-glass"] table { border-collapse: collapse !important; }
+body[data-theme="aurora-glass"] th,
+body[data-theme="aurora-glass"] td {
+  border: 1px solid #d0d0d0 !important;
+  padding: 4px 8px !important;
+  font-size: 12.5px !important;
+}
+body[data-theme="aurora-glass"] thead th,
+body[data-theme="aurora-glass"] table th {
+  background: #217346 !important;
+  color: #ffffff !important;
+  border-color: #17482c !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+body[data-theme="aurora-glass"] tbody tr:nth-child(even) td { background: #f4f8f5 !important; }
+body[data-theme="aurora-glass"] tbody tr:hover td { background: #e2f0e8 !important; box-shadow: none !important; }
+
+/* --- Metric / KPI cells: flat Excel summary boxes (no multi-colour) ----- */
+body[data-theme="aurora-glass"] .cards > .metric { --mc: #217346 !important; }
+body[data-theme="aurora-glass"] .metric,
+body[data-theme="aurora-glass"] .cards > .metric {
+  background: #ffffff !important;
+  border: 1px solid #d0d0d0 !important;
+  border-top: 3px solid #217346 !important;
+  border-radius: 3px !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] .metric svg,
+body[data-theme="aurora-glass"] .cards > .metric svg {
+  background: transparent !important;
+  color: #217346 !important;
+  padding: 0 !important;
+}
+body[data-theme="aurora-glass"] .metric strong { color: #1f1f1f !important; }
+body[data-theme="aurora-glass"] .metric span { color: #444444 !important; }
+body[data-theme="aurora-glass"] .metric.metricAlert { border-top-color: #c0392b !important; }
+body[data-theme="aurora-glass"] .metric.metricAlert strong { color: #c0392b !important; }
+body[data-theme="aurora-glass"] .metric::after { display: none !important; }
+body[data-theme="aurora-glass"] .metric:hover,
+body[data-theme="aurora-glass"] .cards > .metric:hover {
+  transform: none !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* --- Flat Excel buttons ------------------------------------------------ */
+body[data-theme="aurora-glass"] .primary {
+  background: #217346 !important;
+  border: 1px solid #17482c !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] .primary:hover {
+  background: #1a5c38 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] button:not(.primary):not(.navItem):not(.navGroupToggle) {
+  background: #ffffff !important;
+  border: 1px solid #c8c8c8 !important;
+  color: #1f1f1f !important;
+  box-shadow: none !important;
+}
+body[data-theme="aurora-glass"] button:not(.primary):not(.navItem):not(.navGroupToggle):hover {
+  background: #f0f0f0 !important;
+  border-color: #217346 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* --- Panels flat ------------------------------------------------------- */
+body[data-theme="aurora-glass"] .panel,
+body[data-theme="aurora-glass"] .tableWrap {
+  border: 1px solid #d0d0d0 !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+}
+body[data-theme="aurora-glass"] .panel:hover,
+body[data-theme="aurora-glass"] .tableWrap:hover { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06) !important; }
+
+/* --- Sidebar Excel grey ------------------------------------------------ */
+body[data-theme="aurora-glass"] .sidebar {
+  background: #f3f3f3 !important;
+  border-right: 1px solid #d0d0d0 !important;
+}
+body[data-theme="aurora-glass"] .navItem,
+body[data-theme="aurora-glass"] .navItem span { color: #1f1f1f !important; }
+body[data-theme="aurora-glass"] .navItem svg { color: #217346 !important; opacity: 1; }
+body[data-theme="aurora-glass"] .navItem:hover {
+  background: #e6efe9 !important;
+  border-color: transparent !important;
+  color: #1a5c38 !important;
+}
+body[data-theme="aurora-glass"] .navItem.active,
+body[data-theme="aurora-glass"] nav button.navItem.active {
+  background: #d6e8de !important;
+  border-color: transparent !important;
+  box-shadow: inset 3px 0 0 #217346 !important;
+  color: #1a5c38 !important;
+}
+body[data-theme="aurora-glass"] .navItem.active span { color: #1a5c38 !important; }
+
+/* --- Brand: Excel green, no gradient ----------------------------------- */
+body[data-theme="aurora-glass"] .brand strong {
+  background: none !important;
+  -webkit-text-fill-color: #217346 !important;
+  color: #217346 !important;
+}
+
+/* --- Inputs flat ------------------------------------------------------- */
+body[data-theme="aurora-glass"] input,
+body[data-theme="aurora-glass"] select,
+body[data-theme="aurora-glass"] textarea,
+body[data-theme="aurora-glass"] .search {
+  background: #ffffff !important;
+  border: 1px solid #c8c8c8 !important;
+}
+body[data-theme="aurora-glass"] input:focus,
+body[data-theme="aurora-glass"] select:focus,
+body[data-theme="aurora-glass"] textarea:focus {
+  border-color: #217346 !important;
+  box-shadow: 0 0 0 2px rgba(33, 115, 70, 0.22) !important;
+}
+
+/* --- Grey Excel scrollbars --------------------------------------------- */
+body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb {
+  background: #b8b8b8 !important;
+  border: 2px solid #f3f3f3 !important;
+}
+body[data-theme="aurora-glass"] *::-webkit-scrollbar-thumb:hover { background: #217346 !important; }
