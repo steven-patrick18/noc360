@@ -2486,22 +2486,35 @@ def collect_update_center_troubleshoot():
     }
 
 
+def schedule_update_center_restart():
+    # Restart the backend service (and reload nginx) in a DETACHED child so the
+    # running update job can persist its "completed" state and flush logs before
+    # this process is replaced. Restarting inline killed the job mid-workflow, so
+    # it never reached "completed" and the UI looked stuck.
+    command = f"sleep 2; systemctl restart {UPDATE_CENTER_SERVICE_NAME}; systemctl reload nginx"
+    try:
+        subprocess.Popen(["/bin/sh", "-c", command], start_new_session=True)
+        push_update_center_log("Service restart scheduled — new code loads in a few seconds.", "success")
+    except Exception as exc:
+        push_update_center_log(f"Could not schedule service restart (run 'systemctl restart {UPDATE_CENTER_SERVICE_NAME}' manually): {exc}", "error")
+
+
 def run_update_center_workflow(job_type: str):
     merge_update_center_state({"job_status": "running", "job_type": job_type, "logs": []})
     push_update_center_log(f"Starting {job_type} workflow")
     try:
         require_update_center_project()
         backup_dir = build_update_center_backup()
+        pip_bin = str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "pip")
+        python_bin = str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "python")
         if job_type == "update":
             steps = [
-                ("Fetching update", ["git", "fetch", "origin"], UPDATE_CENTER_PROJECT_PATH, 120),
-                ("Resetting code to origin/main", ["git", "reset", "--hard", f"origin/{UPDATE_CENTER_BRANCH}"], UPDATE_CENTER_PROJECT_PATH, 120),
-                ("Installing backend dependencies", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "pip"), "install", "-r", "requirements.txt"], UPDATE_CENTER_BACKEND_PATH, 600),
+                ("Fetching update from GitHub", ["git", "fetch", "origin"], UPDATE_CENTER_PROJECT_PATH, 120),
+                ("Hard-resetting code to origin/main", ["git", "reset", "--hard", f"origin/{UPDATE_CENTER_BRANCH}"], UPDATE_CENTER_PROJECT_PATH, 120),
+                ("Installing backend dependencies", [pip_bin, "install", "-r", "requirements.txt"], UPDATE_CENTER_BACKEND_PATH, 600),
                 ("Installing frontend dependencies", ["npm", "install"], UPDATE_CENTER_FRONTEND_PATH, 600),
                 ("Building frontend", ["npm", "run", "build"], UPDATE_CENTER_FRONTEND_PATH, 900),
-                ("Running backend syntax check", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "python"), "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
-                ("Restarting noc360 service", ["systemctl", "restart", UPDATE_CENTER_SERVICE_NAME], UPDATE_CENTER_PROJECT_PATH, 60),
-                ("Reloading nginx", ["systemctl", "reload", "nginx"], UPDATE_CENTER_PROJECT_PATH, 60),
+                ("Running backend syntax check", [python_bin, "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
             ]
         else:
             last_backup = read_update_center_state().get("last_backup_path") or str(backup_dir)
@@ -2512,9 +2525,7 @@ def run_update_center_workflow(job_type: str):
             steps = [
                 ("Installing frontend dependencies", ["npm", "install"], UPDATE_CENTER_FRONTEND_PATH, 600),
                 ("Building frontend", ["npm", "run", "build"], UPDATE_CENTER_FRONTEND_PATH, 900),
-                ("Running backend syntax check", [str(UPDATE_CENTER_BACKEND_PATH / "venv" / "bin" / "python"), "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
-                ("Restarting noc360 service", ["systemctl", "restart", UPDATE_CENTER_SERVICE_NAME], UPDATE_CENTER_PROJECT_PATH, 60),
-                ("Reloading nginx", ["systemctl", "reload", "nginx"], UPDATE_CENTER_PROJECT_PATH, 60),
+                ("Running backend syntax check", [python_bin, "-m", "py_compile", "main.py", "models.py", "schemas.py", "seed.py"], UPDATE_CENTER_BACKEND_PATH, 180),
             ]
         for label, command, cwd, timeout in steps:
             push_update_center_log(label)
@@ -2523,6 +2534,7 @@ def run_update_center_workflow(job_type: str):
                 push_update_center_log(result["output"])
             if not result["ok"]:
                 raise RuntimeError(result["output"] or f"{label} failed")
+        # Mark completed and persist BEFORE restarting (the restart replaces this process).
         checked = perform_update_center_check()
         merge_update_center_state({
             **checked,
@@ -2530,7 +2542,8 @@ def run_update_center_workflow(job_type: str):
             "job_type": job_type,
             "last_update_at": datetime.utcnow().isoformat(),
         })
-        push_update_center_log(f"{job_type.title()} workflow completed successfully", "success")
+        push_update_center_log(f"{job_type.title()} applied successfully. Loading new code…", "success")
+        schedule_update_center_restart()
     except Exception as exc:
         merge_update_center_state({"job_status": "failed", "job_type": job_type})
         push_update_center_log(str(exc), "error")

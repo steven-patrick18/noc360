@@ -2464,6 +2464,8 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
   const isCustomer = user.role === 'customer';
   const canGroup = !isCustomer && canDo(user, 'group_chat');
   const canCreateGroup = !isCustomer && canDo(user, 'group_chat', 'can_create');
+  const streamRef = useRef(null);
+  const groupStreamRef = useRef(null);
 
   const loadRooms = async () => {
     setError('');
@@ -2507,6 +2509,30 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
       .then(setGroupMessages)
       .catch((err) => setError(err.message));
   }, [selectedGroup?.id]);
+
+  // Live updates: poll the open room/group so new messages appear without a refresh.
+  useEffect(() => {
+    if (!selectedRoom?.id) return undefined;
+    const timer = window.setInterval(() => {
+      request(`/chat/rooms/${selectedRoom.id}/messages`).then(setMessages).catch(() => {});
+      loadRooms().catch(() => {});
+    }, 4000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRoom?.id]);
+
+  useEffect(() => {
+    if (!selectedGroup?.id) return undefined;
+    const timer = window.setInterval(() => {
+      request(`/chat/groups/${selectedGroup.id}/messages`).then(setGroupMessages).catch(() => {});
+    }, 4000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroup?.id]);
+
+  // Auto-scroll to newest message when the count grows (not on identical polls).
+  useEffect(() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }, [messages.length]);
+  useEffect(() => { const el = groupStreamRef.current; if (el) el.scrollTop = el.scrollHeight; }, [groupMessages.length]);
 
   const sendMessage = async () => {
     if (!draft.trim() || !selectedRoom) return;
@@ -2565,7 +2591,7 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
             <div><span className="eyebrow">{roomTitle}</span><h2>{selectedRoom?.client_name || user.client_name || 'Select Client'}</h2></div>
             <span className="typeBadge">{messages.length} messages</span>
           </div>
-          <div className="messageStream">
+          <div className="messageStream" ref={streamRef}>
             {!selectedRoom && <p className="muted">{isCustomer ? 'No chat room is linked to your customer account.' : 'Select a client from the left to open chat.'}</p>}
             {selectedRoom && messages.length === 0 && <p className="muted">No messages yet. Start the conversation.</p>}
             {messages.map((message) => (
@@ -2605,7 +2631,7 @@ function ChatCenterPage({ user, clients, onSummaryRefresh }) {
           </aside>
           <div className="chatWindow panel">
             <div className="chatHeader"><div><span className="eyebrow">Internal NOC Team</span><h2>{selectedGroup?.name || 'Select Group'}</h2></div></div>
-            <div className="messageStream">
+            <div className="messageStream" ref={groupStreamRef}>
               {groupMessages.length === 0 && <p className="muted">No group messages yet.</p>}
               {groupMessages.map((message) => (
                 <div key={message.id} className={`messageBubble ${message.sender_id === user.id ? 'mine' : 'theirs'}`}>
@@ -2661,6 +2687,20 @@ function TicketsPage({ user, clients, onSummaryRefresh }) {
       return;
     }
     request(`/tickets/${selected.id}/messages`).then(setMessages).catch((err) => setError(err.message));
+  }, [selected?.id]);
+
+  // Live updates: poll the ticket list + open ticket so new tickets/replies appear
+  // without a manual refresh (lightweight — does not trigger the full app reload).
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      request('/tickets').then((rows) => {
+        setTickets(rows);
+        setSelected((current) => rows.find((ticket) => ticket.id === current?.id) || current);
+      }).catch(() => {});
+      if (selected?.id) request(`/tickets/${selected.id}/messages`).then(setMessages).catch(() => {});
+    }, 6000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
   const createTicket = async () => {
