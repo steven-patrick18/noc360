@@ -6220,6 +6220,14 @@ def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = Tru
     raw_live_final_outstanding = round(final_outstanding - payments_after_generation, 2)
     live_settled = raw_live_final_outstanding <= 0 or abs(raw_live_final_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR
     live_final_outstanding = 0.0 if live_settled else raw_live_final_outstanding
+    # When a db session is available, surface LIVE payment figures from the ledger
+    # so the invoice display always reflects payments (see payment_rows_after_invoice).
+    total_payments = invoice.total_payments_till_today
+    display_final = final_outstanding
+    if db is not None:
+        payments_this_week = ledger_payment_total_inr(db, invoice.client_id, invoice.week_start_date, invoice.week_end_date)
+        total_payments = ledger_payment_total_inr(db, invoice.client_id, None, date.today())
+        display_final = live_final_outstanding
     data = {
         "id": invoice.id,
         "client_id": invoice.client_id,
@@ -6235,18 +6243,18 @@ def weekly_invoice_response(invoice: WeeklyInvoice, include_internal: bool = Tru
         "opening_balance": invoice.opening_balance,
         "current_week_payable": current_week_payable,
         "payments_this_week": payments_this_week,
-        "payments_after_week": invoice.payments_after_week,
-        "total_payments_till_today": invoice.total_payments_till_today,
+        "payments_after_week": payments_after_generation,
+        "total_payments_till_today": total_payments,
         "ledger_balance": invoice.ledger_balance or final_outstanding,
-        "final_outstanding": final_outstanding,
+        "final_outstanding": display_final,
         "saved_final_outstanding": final_outstanding,
         "payments_after_invoice": payments_after_generation,
         "raw_live_final_outstanding": raw_live_final_outstanding,
         "live_final_outstanding": live_final_outstanding,
         "live_status": "Settled" if live_settled else "Outstanding",
         "live_fx_adjusted": bool(live_settled and raw_live_final_outstanding != 0 and abs(raw_live_final_outstanding) <= INVOICE_DISPLAY_SETTLEMENT_TOLERANCE_INR),
-        "advance_remaining": round(max(0, -final_outstanding), 2),
-        "final_payable": final_outstanding,
+        "advance_remaining": round(max(0, -display_final), 2),
+        "final_payable": display_final,
         "notes": invoice.notes,
         "created_by": invoice.created_by,
         "created_at": invoice.created_at,
@@ -6306,19 +6314,35 @@ def payments_after_invoice(db: Session, invoice: WeeklyInvoice | None):
 
 
 def payment_rows_after_invoice(db: Session, invoice: WeeklyInvoice | None):
-    if not invoice or not invoice.created_at:
+    # Credits (payments) DATED after the invoice's billing week reduce its
+    # outstanding. Keyed on entry_date (the payment's actual date), NOT created_at,
+    # so a payment counts even when it was recorded before the invoice was
+    # generated. This is what makes payments reliably reflect against invoices.
+    if not invoice:
         return []
-    rows = (
+    return (
         db.query(ClientLedger)
         .filter(
             ClientLedger.client_id == invoice.client_id,
-            ClientLedger.created_at > invoice.created_at,
-            or_(ClientLedger.category == "Payment", ClientLedger.entry_type == "Credit"),
+            ClientLedger.entry_type == "Credit",
+            ClientLedger.entry_date > invoice.week_end_date,
         )
-        .order_by(ClientLedger.created_at.asc(), ClientLedger.id.asc())
+        .order_by(ClientLedger.entry_date.asc(), ClientLedger.id.asc())
         .all()
     )
-    return rows
+
+
+def ledger_payment_total_inr(db: Session, client_id: int, start_date, end_date):
+    query = db.query(ClientLedger).filter(
+        ClientLedger.client_id == client_id,
+        ClientLedger.entry_type == "Credit",
+        ClientLedger.category == "Payment",
+    )
+    if start_date is not None:
+        query = query.filter(ClientLedger.entry_date >= start_date)
+    if end_date is not None:
+        query = query.filter(ClientLedger.entry_date <= end_date)
+    return round(sum(abs(float(row_credit_inr(row) or 0)) for row in query.all()), 2)
 
 
 def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):

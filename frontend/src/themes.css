@@ -1423,3 +1423,19 @@ body[data-theme="aurora-glass"] .topbar .topStatusItem.ready strong { color: #21
 body[data-theme="aurora-glass"] .topbar .topStatusItem.warning { background: #fdecea !important; border-color: #f5c6cb !important; }
 body[data-theme="aurora-glass"] .topbar .topStatusItem.warning svg,
 body[data-theme="aurora-glass"] .topbar .topStatusItem.warning strong { color: #c0392b !important; }
+
+/* ===== Excel: clean, light client profile hero ===== */
+body[data-theme="aurora-glass"] .clientHero {
+  background: #f4f6f9 !important;
+  border: 1px solid #d0d0d0 !important;
+  box-shadow: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  padding: 14px 18px !important;
+  border-radius: 3px !important;
+}
+body[data-theme="aurora-glass"] .clientHero .eyebrow { color: #767676 !important; }
+body[data-theme="aurora-glass"] .clientHero h2 { color: #1a5c38 !important; font-size: 22px !important; margin: 2px 0 6px !important; }
+body[data-theme="aurora-glass"] .clientHero > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

@@ -8827,3 +8827,12 @@ body:has(.modal-box.clientDetailModal) .topbar { visibility: hidden !important; 
   background: #c0392b;
   color: #fff;
 }
+
+/* Client profile: fill the screen instead of a narrow 1100px band */
+.modal-box.clientDetailModal,
+.clientDetailModal {
+  width: min(96vw, 1560px) !important;
+  max-width: 1560px !important;
+}
+.clientDetailModal table { width: 100% !important; }
+.clientDetailModal .billingCards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important; }
