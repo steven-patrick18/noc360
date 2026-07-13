@@ -39,6 +39,8 @@ import {
   Settings,
   Share2,
   Star,
+  Sun,
+  Moon,
   Terminal as TerminalIcon,
   Ticket,
   Trash2,
@@ -658,6 +660,12 @@ function App() {
   const [themeOpen, setThemeOpen] = useState(false);
   // Single fixed theme — the theme switcher has been removed.
   const [theme, setTheme] = useState(DEFAULT_THEME_ID);
+  // Dark / light mode toggle (the only theme option).
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('noc360_dark') === '1');
+  useEffect(() => {
+    document.body.setAttribute('data-mode', darkMode ? 'dark' : 'light');
+    localStorage.setItem('noc360_dark', darkMode ? '1' : '0');
+  }, [darkMode]);
   const [customBackground, setCustomBackground] = useState(loadCustomBackground);
   const [toast, setToast] = useState('');
   const [terminalHasMounted, setTerminalHasMounted] = useState(false);
@@ -970,6 +978,7 @@ function App() {
           ))}
         </nav>
         <div className="ribbonActions">
+          <button className="iconButton darkToggle" onClick={() => setDarkMode((current) => !current)} title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>{darkMode ? <Sun size={16} /> : <Moon size={16} />}</button>
           <button className="rolePill accountTrigger" onClick={() => setProfileOpen(true)} title="Account Settings">{auth.user.username || auth.user.role}</button>
           <button className="refreshButton" onClick={loadAll} title="Refresh live master data"><RefreshCcw size={16} /> Refresh</button>
           <button className="iconButton" onClick={logout} title="Logout"><LogOut size={16} /></button>

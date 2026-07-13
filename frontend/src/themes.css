@@ -1439,3 +1439,133 @@ body[data-theme="aurora-glass"] .clientHero {
 body[data-theme="aurora-glass"] .clientHero .eyebrow { color: #767676 !important; }
 body[data-theme="aurora-glass"] .clientHero h2 { color: #1a5c38 !important; font-size: 22px !important; margin: 2px 0 6px !important; }
 body[data-theme="aurora-glass"] .clientHero > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+
+/* ======================================================================
+   EXCEL DARK MODE  —  toggled via body[data-mode="dark"]
+   Excel keeps its green ribbon + green column headers; only the surfaces
+   (canvas, cards, cells, inputs) flip to dark. Two attribute selectors so
+   these always win over the light Excel rules.
+   ====================================================================== */
+body[data-theme="aurora-glass"][data-mode="dark"] {
+  color-scheme: dark;
+  --theme-bg-main: #1b1b1b;
+  --theme-bg-elevated: #252526;
+  --theme-card-bg: #252526;
+  --theme-card-solid: #252526;
+  --theme-text-main: #e6e6e6;
+  --theme-text-soft: #b6b6b6;
+  --theme-text-muted: #8a8a8a;
+  --theme-border: #3a3a3a;
+  --theme-body-bg: #1b1b1b;
+}
+/* Surfaces */
+body[data-theme="aurora-glass"][data-mode="dark"] .panel,
+body[data-theme="aurora-glass"][data-mode="dark"] .tableWrap,
+body[data-theme="aurora-glass"][data-mode="dark"] .modal,
+body[data-theme="aurora-glass"][data-mode="dark"] .modal-box,
+body[data-theme="aurora-glass"][data-mode="dark"] .chatWindow,
+body[data-theme="aurora-glass"][data-mode="dark"] .chatList,
+body[data-theme="aurora-glass"][data-mode="dark"] .ticketMetaPanel,
+body[data-theme="aurora-glass"][data-mode="dark"] .ticketTimeline,
+body[data-theme="aurora-glass"][data-mode="dark"] .infraPanel {
+  background: #252526 !important;
+  border-color: #3a3a3a !important;
+  color: #e6e6e6 !important;
+}
+/* Tables: dark cells + gridlines, green header kept */
+body[data-theme="aurora-glass"][data-mode="dark"] th,
+body[data-theme="aurora-glass"][data-mode="dark"] td { border-color: #3a3a3a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] td { background: #252526 !important; color: #e2e2e2 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] tbody tr:nth-child(even) td { background: #2b2b2c !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] tbody tr:hover td { background: #343436 !important; }
+/* Metric / KPI cards */
+body[data-theme="aurora-glass"][data-mode="dark"] .metric,
+body[data-theme="aurora-glass"][data-mode="dark"] .cards > .metric {
+  background: #252526 !important;
+  border-color: #3a3a3a !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] .metric strong { color: #f2f2f2 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .metric span { color: #a6a6a6 !important; }
+/* Ribbon item strip (tabs bar stays green) */
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonItems {
+  background: #2b2b2c !important;
+  border-bottom-color: #3a3a3a !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonItem { color: #e2e2e2 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonItem svg { color: #4ade80 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonItem:hover { background: #343436 !important; border-color: #4a4a4a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonItem.active { background: #1b1b1b !important; color: #4ade80 !important; border-color: #3a3a3a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .ribbonTab.active { background: #2b2b2c !important; color: #4ade80 !important; }
+/* Page context bar */
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar {
+  background: #252526 !important;
+  border-bottom-color: #3a3a3a !important;
+  color: #e6e6e6 !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar .eyebrow { color: #8a8a8a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar h1,
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar h1 svg { color: #4ade80 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar .topStatusItem { background: #2f2f30 !important; border-color: #3a3a3a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar .topStatusItem span { color: #9a9a9a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar .topStatusItem strong,
+body[data-theme="aurora-glass"][data-mode="dark"] .topbar .topStatusItem svg { color: #e6e6e6 !important; }
+/* Inputs */
+body[data-theme="aurora-glass"][data-mode="dark"] input,
+body[data-theme="aurora-glass"][data-mode="dark"] select,
+body[data-theme="aurora-glass"][data-mode="dark"] textarea,
+body[data-theme="aurora-glass"][data-mode="dark"] .search {
+  background: #1e1e1e !important;
+  border-color: #3a3a3a !important;
+  color: #e6e6e6 !important;
+}
+/* Secondary buttons */
+body[data-theme="aurora-glass"][data-mode="dark"] button:not(.primary):not(.ribbonTab):not(.navItem):not(.navGroupToggle) {
+  background: #2f2f30 !important;
+  border-color: #4a4a4a !important;
+  color: #e6e6e6 !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] button:not(.primary):not(.ribbonTab):not(.navItem):not(.navGroupToggle):hover {
+  background: #3a3a3b !important;
+}
+/* Relit sub-panels back to dark */
+body[data-theme="aurora-glass"][data-mode="dark"] .aiMetric,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskResultPanel,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskSearchPanel,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskServerCard,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskUploadBox,
+body[data-theme="aurora-glass"][data-mode="dark"] .commandCard,
+body[data-theme="aurora-glass"][data-mode="dark"] .signalPanel,
+body[data-theme="aurora-glass"][data-mode="dark"] .messageBubble,
+body[data-theme="aurora-glass"][data-mode="dark"] .secretItem,
+body[data-theme="aurora-glass"][data-mode="dark"] .terminalConnectionCard,
+body[data-theme="aurora-glass"][data-mode="dark"] .terminalConnectionTools,
+body[data-theme="aurora-glass"][data-mode="dark"] .ticketMessage,
+body[data-theme="aurora-glass"][data-mode="dark"] .updateBackupRow,
+body[data-theme="aurora-glass"][data-mode="dark"] .updateCenterLogRow,
+body[data-theme="aurora-glass"][data-mode="dark"] .vosDetailItem,
+body[data-theme="aurora-glass"][data-mode="dark"] .weeklyInvoicePanel,
+body[data-theme="aurora-glass"][data-mode="dark"] .weeklyInvoicePreview,
+body[data-theme="aurora-glass"][data-mode="dark"] .weeklyInvoiceSection,
+body[data-theme="aurora-glass"][data-mode="dark"] .moneyEngineFilterGrid,
+body[data-theme="aurora-glass"][data-mode="dark"] .currencyGrid,
+body[data-theme="aurora-glass"][data-mode="dark"] .conversionPreview,
+body[data-theme="aurora-glass"][data-mode="dark"] .settingsForm,
+body[data-theme="aurora-glass"][data-mode="dark"] .commandForm,
+body[data-theme="aurora-glass"][data-mode="dark"] .terminalForm,
+body[data-theme="aurora-glass"][data-mode="dark"] .chatComposer,
+body[data-theme="aurora-glass"][data-mode="dark"] .terminalToolbar,
+body[data-theme="aurora-glass"][data-mode="dark"] .webphoneTabs {
+  background: #252526 !important;
+  border-color: #3a3a3a !important;
+  color: #e6e6e6 !important;
+}
+/* Client profile hero */
+body[data-theme="aurora-glass"][data-mode="dark"] .clientHero,
+body[data-theme="aurora-glass"][data-mode="dark"] .modal-box.clientDetailModal .clientHero {
+  background: #252526 !important;
+  border-color: #3a3a3a !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] .clientHero h2 { color: #4ade80 !important; }
+/* Scrollbars */
+body[data-theme="aurora-glass"][data-mode="dark"] *::-webkit-scrollbar-thumb { background: #4a4a4a !important; border-color: #1b1b1b !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .darkToggle svg { color: #ffd666 !important; }
