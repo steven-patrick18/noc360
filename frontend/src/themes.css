@@ -1569,3 +1569,102 @@ body[data-theme="aurora-glass"][data-mode="dark"] .clientHero h2 { color: #4ade8
 /* Scrollbars */
 body[data-theme="aurora-glass"][data-mode="dark"] *::-webkit-scrollbar-thumb { background: #4a4a4a !important; border-color: #1b1b1b !important; }
 body[data-theme="aurora-glass"][data-mode="dark"] .darkToggle svg { color: #ffd666 !important; }
+
+/* ======================================================================
+   READABILITY FIXES — dark-theme leftover text colours on the light shell
+   Base rules hardcode light text (#aebbd0 labels, #d7fff4/#e7faff asterisk)
+   that vanish on white. Force readable colours (light + dark mode).
+   ====================================================================== */
+/* App-wide muted / labels / eyebrows / fieldLabels / metric labels */
+body[data-theme="aurora-glass"] .metric span,
+body[data-theme="aurora-glass"] .eyebrow,
+body[data-theme="aurora-glass"] label span:first-child,
+body[data-theme="aurora-glass"] .fieldLabel,
+body[data-theme="aurora-glass"] .muted {
+  color: #4b5563 !important;
+}
+/* Asterisk Sound Manager bespoke text */
+body[data-theme="aurora-glass"] .asteriskExample code { color: #216e45 !important; }
+body[data-theme="aurora-glass"] .asteriskExample span,
+body[data-theme="aurora-glass"] .asteriskUploadBox label span { color: #4b5563 !important; }
+body[data-theme="aurora-glass"] .asteriskUploadBox .asteriskMultiOptions span { color: #1f2937 !important; }
+body[data-theme="aurora-glass"] .asteriskUploadBox .asteriskMultiOptions small { color: #6b7280 !important; }
+body[data-theme="aurora-glass"] .asteriskServerCardMain strong { color: #1f2937 !important; }
+body[data-theme="aurora-glass"] .asteriskServerCardMain span,
+body[data-theme="aurora-glass"] .asteriskServerCardMain small { color: #5b6472 !important; }
+body[data-theme="aurora-glass"] .asteriskMultiOptions label {
+  background: #f6f7f9 !important;
+  border: 1px solid #e2e4ea !important;
+}
+body[data-theme="aurora-glass"] .asteriskMultiOptions label:hover { background: #eef0f4 !important; }
+
+/* --- Dark mode counterparts --- */
+body[data-theme="aurora-glass"][data-mode="dark"] .metric span,
+body[data-theme="aurora-glass"][data-mode="dark"] .eyebrow,
+body[data-theme="aurora-glass"][data-mode="dark"] label span:first-child,
+body[data-theme="aurora-glass"][data-mode="dark"] .fieldLabel,
+body[data-theme="aurora-glass"][data-mode="dark"] .muted {
+  color: #a6a6a6 !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskExample code { color: #6ee7a8 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskExample span,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskUploadBox label span { color: #a6a6a6 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskUploadBox .asteriskMultiOptions span { color: #e6e6e6 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskUploadBox .asteriskMultiOptions small { color: #9a9a9a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskServerCardMain strong { color: #f0f0f0 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskServerCardMain span,
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskServerCardMain small { color: #b6b6b6 !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskMultiOptions label {
+  background: #2b2b2c !important;
+  border: 1px solid #3a3a3a !important;
+}
+
+/* More dark-theme light-text leftovers made readable on the light Excel shell */
+body[data-theme="aurora-glass"] .asteriskFilesTable td:first-child,
+body[data-theme="aurora-glass"] .bareMetalStepLog strong,
+body[data-theme="aurora-glass"] .signalPanel h3,
+body[data-theme="aurora-glass"] .weeklyCalcHeader span,
+body[data-theme="aurora-glass"] .weeklyInvoiceSection h3,
+body[data-theme="aurora-glass"] .conversionPreview span,
+body[data-theme="aurora-glass"] .autoLoginToggle,
+body[data-theme="aurora-glass"] .loading,
+body[data-theme="aurora-glass"] .chatList button b,
+body[data-theme="aurora-glass"] .priorityBadge,
+body[data-theme="aurora-glass"] .typeBadge,
+body[data-theme="aurora-glass"] .launcherAgentPanel b,
+body[data-theme="aurora-glass"] .launcherAgentPanel strong,
+body[data-theme="aurora-glass"] .webphonePage h2,
+body[data-theme="aurora-glass"] .webphonePage h3,
+body[data-theme="aurora-glass"] .webphonePage .eyebrow {
+  color: #1f2937 !important;
+}
+/* On-white leftovers: VOS launcher stats, aux dialpad keys, agent status */
+body[data-theme="aurora-glass"] .launcherStats span,
+body[data-theme="aurora-glass"] .vosDesktopHero .launcherStats span { color: #1f2937 !important; }
+body[data-theme="aurora-glass"] .dtmfKey.dtmfAux .kDigit,
+body[data-theme="aurora-glass"] .dtmfAux .kDigit { color: #475569 !important; }
+body[data-theme="aurora-glass"] .agentStatus.offline { color: #dc2626 !important; }
+body[data-theme="aurora-glass"] .agentStatus.online { color: #16a34a !important; }
+body[data-theme="aurora-glass"][data-mode="dark"] .launcherStats span { color: #e6e6e6 !important; }
+body[data-theme="aurora-glass"] code,
+body[data-theme="aurora-glass"] .commandDetailGrid code { color: #216e45 !important; }
+body[data-theme="aurora-glass"] .usdReference { color: #64748b !important; }
+
+/* Dark-mode counterparts */
+body[data-theme="aurora-glass"][data-mode="dark"] .asteriskFilesTable td:first-child,
+body[data-theme="aurora-glass"][data-mode="dark"] .bareMetalStepLog strong,
+body[data-theme="aurora-glass"][data-mode="dark"] .signalPanel h3,
+body[data-theme="aurora-glass"][data-mode="dark"] .weeklyCalcHeader span,
+body[data-theme="aurora-glass"][data-mode="dark"] .weeklyInvoiceSection h3,
+body[data-theme="aurora-glass"][data-mode="dark"] .conversionPreview span,
+body[data-theme="aurora-glass"][data-mode="dark"] .autoLoginToggle,
+body[data-theme="aurora-glass"][data-mode="dark"] .loading,
+body[data-theme="aurora-glass"][data-mode="dark"] .chatList button b,
+body[data-theme="aurora-glass"][data-mode="dark"] .launcherAgentPanel b,
+body[data-theme="aurora-glass"][data-mode="dark"] .launcherAgentPanel strong,
+body[data-theme="aurora-glass"][data-mode="dark"] .webphonePage h2,
+body[data-theme="aurora-glass"][data-mode="dark"] .webphonePage h3,
+body[data-theme="aurora-glass"][data-mode="dark"] .eyebeamPhone .eyebeamTimer {
+  color: #e6e6e6 !important;
+}
+body[data-theme="aurora-glass"][data-mode="dark"] code { color: #6ee7a8 !important; }
