@@ -6359,17 +6359,21 @@ def invoice_outstanding_snapshot(db: Session, invoice: WeeklyInvoice | None):
         }
     invoice_amount = round(weekly_invoice_final_outstanding(invoice), 2)
     later_payments = payments_after_invoice(db, invoice)
-    raw_final = round(invoice_amount - later_payments, 2)
-    settled = raw_final <= 0
+    # Anchor the client's outstanding to the TRUE ledger balance (net debit-credit),
+    # which is authoritative and matches the running balance for every client. The
+    # stored per-invoice arithmetic (opening-balance chaining) had drifted from
+    # reality (overstating some clients, hiding advances on others).
+    totals = client_financial_totals(db, invoice.client_id)
+    raw_final = totals["raw_outstanding_inr"]
     return {
         "latest_invoice_week": f"{invoice.week_start_date.isoformat()} to {invoice.week_end_date.isoformat()}",
         "invoice_id": invoice.id,
         "latest_invoice": weekly_invoice_response(invoice, include_internal=False, db=db),
         "invoice_amount": invoice_amount,
         "payments_after_invoice": later_payments,
-        "final_outstanding": 0.0 if settled else raw_final,
+        "final_outstanding": totals["outstanding_inr"],
         "raw_final_outstanding": raw_final,
-        "status": "Settled" if settled else "Outstanding",
+        "status": totals["ledger_status"],
     }
 
 
