@@ -3447,7 +3447,15 @@ def open_ssh_client(connection: dict):
     return client
 
 
-def read_ssh_channel(channel):
+def read_ssh_channel(channel, max_wait: float = 0.5):
+    # IMPORTANT: this runs inside asyncio.to_thread. It must be time-bounded:
+    # an infinite poll loop permanently occupies a thread of the small default
+    # executor (asyncio task.cancel() cannot stop a running thread), so after a
+    # few terminal sessions the pool is exhausted and every new session hangs
+    # forever at "Connecting..." (open_ssh_client never gets a thread).
+    # Returning "" after max_wait releases the thread; the caller loops again,
+    # and cancelled callers simply stop rescheduling.
+    waited = 0.0
     while True:
         if channel.recv_ready():
             return channel.recv(4096).decode("utf-8", errors="replace")
@@ -3455,7 +3463,10 @@ def read_ssh_channel(channel):
             return channel.recv_stderr(4096).decode("utf-8", errors="replace")
         if channel.closed or channel.exit_status_ready():
             return None
+        if waited >= max_wait:
+            return ""
         time.sleep(0.05)
+        waited += 0.05
 
 
 def cleanup_terminal_live_sessions(force_key: str | None = None):
